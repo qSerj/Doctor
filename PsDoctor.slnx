@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PsDoctor.App/PsDoctor.App.csproj" />
+    <Project Path="src/PsDoctor.Cli/PsDoctor.Cli.csproj" />
+    <Project Path="src/PsDoctor.Core/PsDoctor.Core.csproj" />
+    <Project Path="src/PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PsDoctor.Core.Tests/PsDoctor.Core.Tests.csproj" />
+  </Folder>
+</Solution>
