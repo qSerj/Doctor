@@ -31,4 +31,4 @@ dotnet test PsDoctor.slnx
 
 ## Документация
 
-Карта документов — [docs/README.md](docs/README.md). Поведение продукта целиком — [design/behaviour.md](design/behaviour.md).
+Карта документов — [docs/README.md](docs/README.md). Поведение продукта целиком — [design/behaviour.md](design/initial/behaviour.md).
