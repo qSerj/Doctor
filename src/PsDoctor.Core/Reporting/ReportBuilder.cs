@@ -2,6 +2,7 @@ using System.Globalization;
 using PsDoctor.Core.Format;
 using PsDoctor.Core.Media;
 using PsDoctor.Core.Model;
+using PsDoctor.Core.Rules;
 using Учёт = PsDoctor.Core.Inventory.Inventory;
 
 namespace PsDoctor.Core.Reporting;
@@ -53,6 +54,7 @@ public static class ReportBuilder
         ParseResult parse,
         Учёт inventory,
         FormatDictionary dictionary,
+        IReadOnlyList<Finding> findings,
         string doctorVersion,
         DateTimeOffset producedAtUtc,
         IValueMasker masker)
@@ -60,6 +62,7 @@ public static class ReportBuilder
         ArgumentNullException.ThrowIfNull(parse);
         ArgumentNullException.ThrowIfNull(inventory);
         ArgumentNullException.ThrowIfNull(dictionary);
+        ArgumentNullException.ThrowIfNull(findings);
         ArgumentNullException.ThrowIfNull(masker);
 
         var document = parse.Document!;
@@ -83,8 +86,19 @@ public static class ReportBuilder
             BuildHeader(show.Header, masker),
             BuildInventory(inventory, masker),
             BuildDictionary(dictionary, masker),
-            Findings: []);
+            findings.Select(f => BuildFinding(f, masker)).ToArray());
     }
+
+    private static ReportFinding BuildFinding(Finding finding, IValueMasker masker) =>
+        new(
+            // Идентификатор правила — наш собственный и обязан быть устойчивым:
+            // по нему сравниваются прогоны, собирается статистика и пишутся тесты.
+            masker.Keep(finding.RuleId)!,
+            BuildAddress(finding.Address, masker),
+            masker.Keep(finding.Level.ToString())!,
+            masker.Keep(finding.Confidence.ToString())!,
+            finding.PassedThreshold,
+            finding.Numbers);
 
     private static ReportParse BuildParse(ParseResult parse, IValueMasker masker) =>
         new(

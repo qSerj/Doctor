@@ -3,6 +3,7 @@ using PsDoctor.Core.Format;
 using PsDoctor.Core.Media;
 using PsDoctor.Core.Model;
 using PsDoctor.Core.Reporting;
+using PsDoctor.Core.Rules;
 using Xunit;
 using Учёт = PsDoctor.Core.Inventory.Inventory;
 
@@ -45,12 +46,15 @@ public sealed class ReportTests
             [new MediaReference("image/фото.png")] = new(MediaProbeStatus.Ok, new PixelSize(3840, 2160), 1_000_000, "png", true, "direct"),
         });
 
+        var inventory = Учёт.Build(show, catalog);
+
         return ReportBuilder.Build(
             "C:/проекты/шоу.psh",
             123456,
             parse,
-            Учёт.Build(show, catalog),
+            inventory,
             FormatDictionary.From(parse.Document!),
+            AcceptanceRules.Run(inventory, RuleContext.Bare),
             "1.2.3",
             Момент,
             masker);
@@ -77,13 +81,41 @@ public sealed class ReportTests
     }
 
     [Fact]
-    public void Список_находок_присутствует_и_пуст()
+    public void Находка_несёт_правило_адрес_уровень_уверенность_и_числа()
     {
-        // Поле есть с первого дня: потребитель, написанный сегодня, не переписывается на Э2.
-        var json = Json(Build(PassThroughMasker.Instance));
+        var findings = Json(Build(PassThroughMasker.Instance)).GetProperty("findings");
 
-        Assert.Equal(JsonValueKind.Array, json.GetProperty("findings").ValueKind);
-        Assert.Equal(0, json.GetProperty("findings").GetArrayLength());
+        Assert.True(findings.GetArrayLength() > 0);
+
+        var находка = findings.EnumerateArray().Single(f => f.GetProperty("ruleId").GetString() == "oversized-stills");
+
+        Assert.Equal("Self", находка.GetProperty("level").GetString());
+        Assert.Equal("High", находка.GetProperty("confidence").GetString());
+        Assert.Equal("Media", находка.GetProperty("address").GetProperty("kind").GetString());
+        Assert.Equal(3840, находка.GetProperty("numbers").GetProperty("currentWidthPx").GetInt32());
+    }
+
+    [Fact]
+    public void Ни_одна_находка_порога_не_проходит()
+    {
+        // Порогов нет ни у одного правила, и это решённое поведение, а не недоделка:
+        // правило считается и пишется, но кода возврата не меняет.
+        var findings = Json(Build(PassThroughMasker.Instance)).GetProperty("findings");
+
+        Assert.All(
+            findings.EnumerateArray(),
+            f => Assert.False(f.GetProperty("passedThreshold").GetBoolean()));
+    }
+
+    [Fact]
+    public void Идентификаторы_правил_в_обезличенном_срезе_остаются_как_есть()
+    {
+        // По ним сравниваются прогоны и собирается статистика — скрывать их незачем и вредно.
+        var findings = Json(Build(new AliasMasker("соль"))).GetProperty("findings");
+
+        Assert.Contains(
+            findings.EnumerateArray(),
+            f => f.GetProperty("ruleId").GetString() == "oversized-stills");
     }
 
     [Fact]

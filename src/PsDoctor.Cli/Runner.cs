@@ -4,6 +4,7 @@ using PsDoctor.Core.Format;
 using PsDoctor.Core.Media;
 using PsDoctor.Core.Model;
 using PsDoctor.Core.Reporting;
+using PsDoctor.Core.Rules;
 using PsDoctor.Infrastructure;
 using Учёт = PsDoctor.Core.Inventory.Inventory;
 
@@ -12,10 +13,10 @@ namespace PsDoctor.Cli;
 /// <summary>Коды возврата. Решены раундом; прогон пачки отдаёт максимум по файлам.</summary>
 public static class ExitCodes
 {
-    /// <summary>Разобран, находок, прошедших порог, нет. На Э1 это единственный успешный исход.</summary>
+    /// <summary>Разобран, находок, прошедших порог, нет. Пока порогов нет — единственный успешный исход.</summary>
     public const int Clean = 0;
 
-    /// <summary>Есть находки, прошедшие порог. На Э1 недостижим: правил приёмки ещё нет.</summary>
+    /// <summary>Есть находки, прошедшие порог. Недостижим, пока порогов нет ни у одного правила.</summary>
     public const int Findings = 1;
 
     /// <summary>Это не файл шоу или он не читается.</summary>
@@ -128,12 +129,16 @@ public static class Runner
             var inventory = Учёт.Build(show, catalog);
             var dictionary = FormatDictionary.From(parse.Document);
 
-            var report = ReportBuilder.Build(path, fileBytes, parse, inventory, dictionary, Version(), now, masker);
+            var context = new RuleContext(RuleSettings.Default, Path.GetDirectoryName(Path.GetFullPath(path)));
+            var findings = AcceptanceRules.Run(inventory, context);
+
+            var report = ReportBuilder.Build(path, fileBytes, parse, inventory, dictionary, findings, Version(), now, masker);
             ReportWriter.Write(stdout, report, options.Pretty);
 
-            // Находок на Э1 не бывает: правил приёмки ещё нет. Механика кода 1 подключена,
-            // чтобы потребитель, написанный сегодня, не переписывался на Э2.
-            return report.Findings.Count > 0 ? ExitCodes.Findings : ExitCodes.Clean;
+            // Единицу дают только находки, прошедшие порог. Порогов пока нет ни у одного правила,
+            // поэтому исход остаётся нулевым: правила считаются и пишутся, но кода не меняют.
+            // Так разделение 0 и 1 осмысленно с первого дня, а не с того, как пороги наберутся.
+            return findings.Any(f => f.PassedThreshold) ? ExitCodes.Findings : ExitCodes.Clean;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
