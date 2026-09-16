@@ -39,7 +39,7 @@ public sealed class BattleRulesTests
             }
         }
 
-        Assert.True(checkedAny, "рядом с боевыми проектами нет ни одного ожидаемого числа срабатываний");
+        Assert.True(checkedAny || !BattleProject.IsCalibrated(), "рядом с боевыми проектами нет ни одного ожидаемого числа срабатываний");
     }
 
     [Fact]

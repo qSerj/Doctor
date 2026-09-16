@@ -93,8 +93,10 @@ public sealed class FormatDictionaryTests
     [Fact]
     public void Каждая_известная_форма_встречается_в_боевом_материале()
     {
+        // Список отсутствующих форм снят с откалиброванного двора. На другом наборе проектов
+        // он другой по определению, и сверка с ним ничего бы не доказала.
         var paths = BattleProject.FindShowFiles();
-        if (paths.Count == 0)
+        if (paths.Count == 0 || !BattleProject.IsCalibrated())
         {
             return;
         }

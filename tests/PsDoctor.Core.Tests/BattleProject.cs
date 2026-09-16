@@ -58,6 +58,23 @@ internal static class BattleProject
         return Directory.Exists(Path.Combine(directory, "image")) ? directory : null;
     }
 
+    /// <summary>Имя метки откалиброванного двора: <c>inbound/.calibrated</c>.</summary>
+    public const string CalibratedMarker = ".calibrated";
+
+    /// <summary>
+    /// Откалиброван ли двор на этой машине: лежит ли в нём метка <see cref="CalibratedMarker"/>.
+    /// Метка — свойство машины, а не проекта: содержимое двора не версионируется, и метка тоже.
+    /// Там, где она есть, тесты на ожидаемые числа строги — пропажа всех <c>ожидаемое.json</c>
+    /// считается поломкой, а не отсутствием материала. Там, где её нет, материал может быть, но
+    /// не сверен, и такие тесты не выполняются: иначе они падали бы на любой машине, кроме той,
+    /// где числа снимали.
+    /// </summary>
+    public static bool IsCalibrated()
+    {
+        var root = FindRepositoryRoot();
+        return root is not null && File.Exists(Path.Combine(root, "inbound", CalibratedMarker));
+    }
+
     /// <summary>
     /// Неопознающая подпись проекта для сообщений об ошибках: порядковый номер, а не имя.
     /// Имя содержит название клиентской работы и в вывод тестов попадать не должно.

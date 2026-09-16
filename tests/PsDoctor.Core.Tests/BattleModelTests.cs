@@ -66,7 +66,7 @@ public sealed class BattleModelTests
             expected.Check("модификаторов", show.DeclaredModifierCount, label);
         }
 
-        Assert.True(checkedAny, "рядом с боевыми проектами нет ни одного файла " + ExpectedNumbers.FileName);
+        Assert.True(checkedAny || !BattleProject.IsCalibrated(), "рядом с боевыми проектами нет ни одного файла " + ExpectedNumbers.FileName);
     }
 
     [Fact]

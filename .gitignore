@@ -15,3 +15,7 @@ reports/
 
 # Память проекта: свой закрытый репозиторий
 /Memorex/
+
+# Особенности конкретной машины: пути, инструменты, оболочка. Шаблон — CLAUDE.local.md.example.
+/CLAUDE.local.md
+.claude/settings.local.json

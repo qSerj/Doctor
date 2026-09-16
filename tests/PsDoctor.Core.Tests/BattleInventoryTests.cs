@@ -41,7 +41,7 @@ public sealed class BattleInventoryTests
             expected.Check("маскирующихСлоёв", inventory.Layers.Masking, label);
         }
 
-        Assert.True(checkedAny, "боевого материала с ожидаемыми числами рядом нет");
+        Assert.True(checkedAny || !BattleProject.IsCalibrated(), "боевого материала с ожидаемыми числами рядом нет");
     }
 
     [Fact]
