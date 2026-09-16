@@ -3,6 +3,7 @@ param(
     [string] $ProcessName = 'proshow',
     [string] $Dialog = 'Old Show format detected.',
     [string] $Button = '^(OK|ОК)$',
+    [ValidateSet('command', 'click')] [string] $Method = 'command',
     [int] $WaitSec = 60
 )
 . "$PSScriptRoot\Win32.ps1"
@@ -15,7 +16,9 @@ if (-not $btn) { "кнопки $Button в диалоге нет; его окна
 
 "диалог: " + (Format-Window $dlg)
 "кнопка: " + (Format-Window $btn)
-"отправлено: " + (Invoke-Button $btn)
+"передний план: " + (Format-Window (Get-WindowInfo ([Lab.Win32]::GetForegroundWindow())))
+if ($Method -eq 'click') { "BM_CLICK отправлен: " + (Invoke-ButtonClick $btn) }
+else { "WM_COMMAND отправлен: " + (Invoke-Button $btn) }
 
 $before = @($dlg.Hwnd)
 $clock = [Diagnostics.Stopwatch]::StartNew()

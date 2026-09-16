@@ -17,6 +17,8 @@ public delegate bool EnumProc(System.IntPtr hwnd, System.IntPtr lParam);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetParent(System.IntPtr hwnd);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr hwnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
 [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetClassName(System.IntPtr hwnd, System.Text.StringBuilder s, int n);
 [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hwnd, System.Text.StringBuilder s, int n);
 '@
@@ -59,6 +61,13 @@ function Get-ChildControls([IntPtr] $Hwnd) {
 function Invoke-Button($Button) {
     $wParam = [IntPtr]($Button.Id -band 0xFFFF)   # старшее слово BN_CLICKED = 0
     [Lab.Win32]::PostMessage([Lab.Win32]::GetParent($Button.Hwnd), 0x0111, $wParam, $Button.Hwnd)
+}
+
+# Нажать кнопку: BM_CLICK самой кнопке, и уже она шлёт WM_COMMAND родителю со своим id и окном.
+# Нужно там, где id кнопок не различаются (у диалогов ProShow AGDSDocParent id всех кнопок 0).
+# Документация Win32 предупреждает, что в неактивном диалоге BM_CLICK может не сработать.
+function Invoke-ButtonClick($Button) {
+    [Lab.Win32]::PostMessage($Button.Hwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
 }
 
 function Format-Window($W) {

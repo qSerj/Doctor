@@ -32,8 +32,9 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 try {
     # Уходит вся папка guest (обёртка и общие помощники) и выбранный скрипт под именем job.ps1.
     $bom = [Text.UTF8Encoding]::new($true)
-    foreach ($file in Get-ChildItem (Join-Path $PSScriptRoot 'guest') -Filter *.ps1) {
-        [IO.File]::WriteAllText("$stage\$($file.Name)", [IO.File]::ReadAllText($file.FullName), $bom)
+    foreach ($file in Get-ChildItem (Join-Path $PSScriptRoot 'guest') -File) {
+        if ($file.Extension -eq '.ps1') { [IO.File]::WriteAllText("$stage\$($file.Name)", [IO.File]::ReadAllText($file.FullName), $bom) }
+        else { Copy-Item $file.FullName $stage }
     }
     [IO.File]::WriteAllText("$stage\job.ps1", [IO.File]::ReadAllText((Resolve-Path $Script)), $bom)
     [IO.File]::WriteAllText("$stage\job.json", ($Parameters | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
