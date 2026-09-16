@@ -19,23 +19,21 @@ public sealed class ShowFileTests
     }
 
     [Fact]
-    public void Кодировка_1251_доступна_после_регистрации_провайдера()
+    public void Каждый_боевой_проект_начинается_с_сигнатуры()
     {
-        var bytes = new byte[] { 0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2 };
-        Assert.Equal("Привет", ShowFileEncoding.Cp1251.GetString(bytes));
-    }
-
-    [Fact]
-    public void Боевой_проект_начинается_с_сигнатуры()
-    {
-        var path = BattleProject.FindShowFile();
-        if (path is null)
+        var paths = BattleProject.FindShowFiles();
+        if (paths.Count == 0)
         {
-            // Закрытого хранилища рядом нет — проверять нечего.
+            // Боевого материала рядом нет — проверять нечего.
             return;
         }
 
-        using var reader = ShowFileEncoding.OpenRead(path);
-        Assert.True(ShowFile.LooksLikeShowFile(reader.ReadLine() ?? string.Empty));
+        for (var i = 0; i < paths.Count; i++)
+        {
+            using var reader = ShowFileEncoding.OpenRead(paths[i]);
+            Assert.True(
+                ShowFile.LooksLikeShowFile(reader.ReadLine() ?? string.Empty),
+                BattleProject.Label(i) + ": первая строка не совпала с сигнатурой");
+        }
     }
 }

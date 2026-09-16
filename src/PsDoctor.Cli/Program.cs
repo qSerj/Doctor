@@ -1,5 +1,4 @@
-using PsDoctor.Core;
-using PsDoctor.Infrastructure;
+using System.Text;
 
 namespace PsDoctor.Cli;
 
@@ -7,29 +6,10 @@ internal static class Program
 {
     public static int Main(string[] args)
     {
-        if (args.Length != 1)
-        {
-            Console.Error.WriteLine("psdoctor <путь к .psh>");
-            Console.Error.WriteLine("На Э0 умеет только опознать файл шоу. Разбор появится на Э1.");
-            return 2;
-        }
+        // Отчёт машинный и несёт кириллицу: без этого консоль Windows превратит её в мусор,
+        // а перенаправленный в файл отчёт станет нечитаемым для следующего инструмента.
+        Console.OutputEncoding = Encoding.UTF8;
 
-        var path = args[0];
-        if (!File.Exists(path))
-        {
-            Console.Error.WriteLine($"Файл не найден: {path}");
-            return 1;
-        }
-
-        using var reader = ShowFileEncoding.OpenRead(path);
-        var firstLine = reader.ReadLine() ?? string.Empty;
-        if (!ShowFile.LooksLikeShowFile(firstLine))
-        {
-            Console.Error.WriteLine("Это не файл шоу: первая строка не совпала с сигнатурой.");
-            return 1;
-        }
-
-        Console.WriteLine($"Файл шоу опознан: {Path.GetFileName(path)}");
-        return 0;
+        return Runner.Run(args, Console.Out, Console.Error, DateTimeOffset.UtcNow);
     }
 }

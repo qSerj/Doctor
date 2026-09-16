@@ -6,6 +6,8 @@
     <Project Path="src/PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/PsDoctor.Cli.Tests/PsDoctor.Cli.Tests.csproj" />
     <Project Path="tests/PsDoctor.Core.Tests/PsDoctor.Core.Tests.csproj" />
+    <Project Path="tests/PsDoctor.Infrastructure.Tests/PsDoctor.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>
