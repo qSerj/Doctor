@@ -24,6 +24,12 @@ public sealed class ScenarioExecutor
     /// <summary>Сколько ждать итога действия. У ожиданий таймаут записан в сценарии.</summary>
     public static readonly TimeSpan DefaultActionTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Сколько ждать итога <c>render</c>: он проходит три окна подряд, и первое из них программа показывает
+    /// после похода в сеть за списком форматов. Само время рендера сюда не входит — это <c>wait render-done</c>.
+    /// </summary>
+    public static readonly TimeSpan RenderActionTimeout = TimeSpan.FromMinutes(5);
+
     private readonly IScenarioActions actions;
     private readonly IFactRecorder facts;
     private readonly TimeSpan actionTimeout;
@@ -140,7 +146,8 @@ public sealed class ScenarioExecutor
                 {
                     Apply(signal);
                 }
-                if (!task.IsCompleted && now - start >= owner.actionTimeout)
+                var limit = step is RenderStep ? RenderActionTimeout : owner.actionTimeout;
+                if (!task.IsCompleted && now - start >= limit)
                 {
                     await stepCancellation.CancelAsync();
                     await SettleAsync(task);

@@ -273,6 +273,27 @@ public sealed class ScenarioExecutorTests
     }
 
     [Fact]
+    public async Task У_рендера_свой_таймаут_действия_он_дольше_общего()
+    {
+        // Общий таймаут действия — минута, а render проходит три окна подряд, и первое из них программа
+        // показывает после похода в сеть. Своего таймаута ему хватает, общего — нет.
+        var stand = new Stand();
+        stand.Actions.On<RenderStep>(async token =>
+        {
+            stand.Send(new TimeTick(Seconds(200)));
+            await Task.Delay(30, token);
+            return ActionResult.Done;
+        });
+        // Ожидание конца рендера здесь не проверяется: сигналы кончаются, и оно срывается своей причиной.
+        stand.OnStepStarted(2, () => stand.Signals.Writer.Complete());
+
+        var outcome = await stand.RunAsync("render\nwait render-done 3600");
+
+        Assert.Equal(["render"], stand.Actions.Called);
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 2, StepFailures.SignalsEnded), outcome);
+    }
+
+    [Fact]
     public async Task Окно_самого_рендера_не_считается_концом_рендера()
     {
         // У окна рендера есть кнопки «Pause» и «Cancel», то есть это диалог; но значит оно начало, а не конец.

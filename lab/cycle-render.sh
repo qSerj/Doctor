@@ -8,7 +8,10 @@
 #
 # Перед каждым прогоном проект заново кладётся на стенд, а прежний выходной файл удаляется: иначе окно сохранения
 # спросит о перезаписи, и сценарий остановится на неожиданном диалоге. Длительность шоу берётся из отчёта самого
-# доктора (`ShowDurationMs` раздела звука) по копии проекта на хосте, длительность фильма — ffprobe.
+# доктора по копии проекта на хосте, длительность фильма — ffprobe.
+#
+# Команды в гостевую систему идут pwsh -EncodedCommand: имя выходного файла кириллическое, а через cmd по SSH
+# кириллица не проходит.
 # Переменные: LAB_HOST, LAB_KEY, LAB_EXCHANGE, PROJECT_SOURCE (обязательна), PROJECT_DIR (C:\lab\p8),
 # SHOW_FILE (обязательна), HOST_PROJECT (каталог той же копии на хосте), FFPROBE, OUT.
 set -euo pipefail
@@ -30,15 +33,24 @@ out="${OUT:-$repo/artifacts/lab/cycle-render/$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$out"
 ssh_opts=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$lab_key")
 
+# PowerShell в гостевой системе: скрипт кодируется в base64 от UTF-16LE, иначе кириллица не доедет.
+guest_ps() {
+  local encoded
+  encoded="$(printf '%s' "[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$1" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+  ssh "${ssh_opts[@]}" "user@$host" "pwsh -NoProfile -NonInteractive -EncodedCommand $encoded"
+}
+
 dotnet build "$repo/src/PsDoctor.Cli" --nologo -v q >/dev/null
 psdoctor=(dotnet "$repo/src/PsDoctor.Cli/bin/Debug/net10.0/psdoctor.dll")
 
 # Длительность шоу по отчёту доктора — одна на все прогоны: проект между ними не меняется.
+# Длительность шоу — время слайдов плюс время переходов: на пробном рендере 17.09.2026 их сумма совпала с
+# длительностью фильма по ffprobe до миллисекунды (168 912 + 72 000 = 240 912). Поле showDurationMs раздела
+# звука переходы не считает и для сверки не годится.
 show_ms="$("${psdoctor[@]}" "$host_project/$show" | "$PYTHON" -c 'import json,sys
-for line in sys.stdin:
-    data = json.loads(line)
-    if "audio" in data:
-        print(data["audio"]["showDurationMs"]); break')"
+data = json.loads(sys.stdin.readline())["inventory"]["slides"]
+print(data["totalTimeMs"] + data["totalTransTimeMs"])')"
 echo "длительность шоу по отчёту: $show_ms мс" >&2
 
 # Выходной файл программа называет сама: каталог проекта, имя по умолчанию.
@@ -58,14 +70,19 @@ SCN
 passed=0
 for run in $(seq 1 "$runs"); do
   guest_out="$project_dir\\$output_name"
-  ssh "${ssh_opts[@]}" "user@$host" "robocopy \"$source_dir\" \"$project_dir\" /MIR /R:3 /W:1 /NJH /NJS /NP /NFL /NDL >nul & del /q \"$guest_out\" >nul 2>&1 & exit /b 0"
+  # Заодно убирается след аварийного снятия программы: при чистом выходе она сама удаляет autosave.psh и
+  # pshowtoken, а после taskkill они остаются, и следующий прогон встречает диалог «Recover Auto-saved Show?».
+  guest_ps "robocopy '$source_dir' '$project_dir' /MIR /R:3 /W:1 /NJH /NJS /NP /NFL /NDL | Out-Null
+\$след = \"\$env:LOCALAPPDATA\\VirtualStore\\Program Files (x86)\\Photodex\\ProShow Producer\"
+Remove-Item '$guest_out', \"\$след\\autosave.psh\", \"\$след\\pshowtoken\" -ErrorAction SilentlyContinue
+exit 0"
   journal="$out/run-$run.jsonl"
   set +e
   "${psdoctor[@]}" observe run "$scenario" --follow > "$journal" 2> "$out/run-$run.err"
   code=$?
   set -e
   # Фильм забирается на хост через папку обмена: ffprobe и сравнение — здесь.
-  ssh "${ssh_opts[@]}" "user@$host" "copy /y \"$guest_out\" \"\\\\VBoxSvr\\exchange\\render-$run.mp4\" >nul & exit /b 0"
+  guest_ps "Copy-Item '$guest_out' '\\\\VBoxSvr\\exchange\\render-$run.mp4' -Force -ErrorAction SilentlyContinue; exit 0"
   film="$exchange/render-$run.mp4"
   film_ms=""
   if [ -f "$film" ]; then
