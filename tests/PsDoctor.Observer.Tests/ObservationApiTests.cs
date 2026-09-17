@@ -157,6 +157,10 @@ public sealed class ObservationApiTests : IAsyncLifetime
         Assert.Equal(SessionEndReasons.ProgramExited, конец.Data.GetProperty("reason").GetString());
         // Факт завершения сценария пишется раньше факта закрытия сеанса: сценарий дорабатывает на пришедших сигналах.
         Assert.True(факты.FindIndex(f => f.Kind == ScenarioFactKinds.ScenarioFinished) < факты.Count - 1);
+        // Итог сеанса — один раз, после прекращения наблюдения и перед последним фактом.
+        Assert.Equal(1, _запуск.Runs[0].Conclusions);
+        Assert.True(_запуск.Runs[0].ConcludedAfterDispose);
+        Assert.Equal(ProgramFactKinds.ServiceFiles, факты[^2].Kind);
 
         // Сколько фактов получил клиент, столько строк в журнале на диске.
         var журнал = File.ReadAllLines(Path.Combine(_каталог, принят.Session + ".jsonl"));
@@ -270,6 +274,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
         var факты = await поток;
 
         Assert.True(_запуск.Runs[0].Disposed);
+        Assert.Equal(1, _запуск.Runs[0].Conclusions);
         Assert.DoesNotContain(факты, f => f.Kind == ProgramFactKinds.ProcessExited);
         Assert.Equal("cancelled", Статус(факты.Single(f => f.Kind == ScenarioFactKinds.ScenarioFinished)));
         Assert.Equal(SessionEndReasons.Stopped, факты[^1].Data.GetProperty("reason").GetString());
@@ -312,14 +317,14 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Шаг_без_реализации_срывается_как_неумение()
+    public async Task Рендер_срывается_если_окно_вывода_не_встало()
     {
         var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"\nrender");
 
         var факты = await ДоКонцаСценария(принят);
 
         var срыв = факты.Single(f => f.Kind == ScenarioFactKinds.StepFailed);
-        Assert.Equal(StepFailures.Unsupported, срыв.Data.GetProperty("reason").GetString());
+        Assert.Equal(WindowActionFailures.NoOutputWindow, срыв.Data.GetProperty("reason").GetString());
         Assert.Equal("failed", Статус(факты[^1]));
     }
 

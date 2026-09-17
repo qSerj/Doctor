@@ -47,6 +47,18 @@ public static class ProgramFactKinds
     /// <summary>Действие <c>close</c> отправило главному окну <c>WM_CLOSE</c>.</summary>
     public const string CloseRequested = "close-requested";
 
+    /// <summary>Действие <c>render</c> послало главному окну команду меню; данные — <see cref="RenderRequested"/>.</summary>
+    public const string RenderRequested = "render-requested";
+
+    /// <summary>Снимок служебных файлов программы снят до запуска; данные — <see cref="ServiceFilesTaken"/>.</summary>
+    public const string ServiceFilesBefore = "service-files-before";
+
+    /// <summary>Разница служебных файлов за сеанс; данные — <see cref="ServiceFilesDiff"/>.</summary>
+    public const string ServiceFiles = "service-files";
+
+    /// <summary>События журнала Windows о программе за время сеанса; данные — <see cref="WindowsEventsRead"/>.</summary>
+    public const string WindowsEvents = "windows-events";
+
     public const string SessionFinished = "session-finished";
 }
 
@@ -152,6 +164,36 @@ public sealed record DialogPressed(long Dialog, long Button, string Text, string
 
 public sealed record CloseRequested(long Handle);
 
+/// <param name="Command">Номер пункта меню, посланный <c>WM_COMMAND</c>.</param>
+public sealed record RenderRequested(long Handle, int Command);
+
+/// <summary>
+/// Окна и кнопки ProShow, которые узнаются по имени. Ядру они нужны для правила <c>wait render-done</c>,
+/// запуску — чтобы пройти путь рендера. Разведка на стенде 17.09.2026, ProShow Producer 9.0.3797.
+/// </summary>
+/// <remarks>
+/// Путь рендера: <c>WM_COMMAND</c> 9356 главному окну → окно вывода <see cref="OutputWindow"/> с кнопкой
+/// <see cref="CreateButton"/> → системное окно сохранения <see cref="SaveDialog"/>, где имя и каталог уже
+/// умолчальные (каталог проекта) → окно <see cref="RenderingWindow"/> на время рендера → диалог об окончании
+/// с кнопкой <see cref="OkButton"/>. Текст в окнах программы нарисован и не читается, поэтому удача рендера
+/// определяется выходным файлом, а не диалогом.
+/// </remarks>
+public static class ProShowWindows
+{
+    /// <summary>Пункт меню «Video for Web, Devices and Computers»: открывает окно вывода без открытия меню.</summary>
+    public const int PublishVideoCommand = 9356;
+
+    public const string OutputWindow = "Video for Web, Devices and Computers";
+
+    public const string SaveDialog = "Save Video File";
+
+    public const string RenderingWindow = "Rendering Video";
+
+    public const string CreateButton = "Create";
+
+    public const string OkButton = "Ok";
+}
+
 /// <summary>Причины срыва действий с окнами.</summary>
 public static class WindowActionFailures
 {
@@ -169,6 +211,15 @@ public static class WindowActionFailures
 
     /// <summary>Кнопка нажата, а диалог не закрылся.</summary>
     public const string NotClosed = "not-closed";
+
+    /// <summary>Команда меню послана, а окно вывода так и не встало.</summary>
+    public const string NoOutputWindow = "no-output-window";
+
+    /// <summary>«Create» нажата, а системного окна сохранения нет.</summary>
+    public const string NoSaveDialog = "no-save-dialog";
+
+    /// <summary>Окно сохранения закрыто, а окно рендера не появилось.</summary>
+    public const string NoRenderWindow = "no-render-window";
 
     /// <summary>Главного окна нет.</summary>
     public const string NoWindow = "no-window";
@@ -207,6 +258,18 @@ public interface IProgramRun : IDisposable
 
     /// <summary>То же, что крестик главного окна. Не дожидается выхода и программу не убивает.</summary>
     ActionResult Close();
+
+    /// <summary>
+    /// Запускает рендер: команда меню главному окну, «Create» в окне вывода, кнопка согласия в окне сохранения.
+    /// Возвращается, когда встало окно рендера; окончания не ждёт — это <c>wait render-done</c>.
+    /// </summary>
+    Task<ActionResult> RenderAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Итог сеанса фактами: разница служебных файлов и события журнала Windows за время сеанса. Сеанс вызывает
+    /// один раз, после <see cref="IDisposable.Dispose"/> и до последнего факта. Не бросает: сбой — поле факта.
+    /// </summary>
+    void Conclude();
 }
 
 /// <summary>События запуска, из которых сеанс делает сигналы сценарию. Факты запуск пишет сам.</summary>

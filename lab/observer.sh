@@ -9,6 +9,7 @@
 # Переменные: LAB_HOST (192.168.56.5), LAB_KEY (~/.ssh/lab_ed25519), LAB_EXCHANGE (~/Lab/exchange),
 # OBSERVER_PORT (8100), OBSERVER_KEY (~/Lab/secrets/observer.key)
 set -euo pipefail
+. "$(dirname "$0")/portable.sh"
 
 host="${LAB_HOST:-192.168.56.5}"
 lab_key="${LAB_KEY:-$HOME/.ssh/lab_ed25519}"
@@ -37,8 +38,8 @@ dotnet publish src/PsDoctor.Observer -c Release -r win-x64 --self-contained fals
 
 step "доставка в папку обмена"
 mkdir -p "$stage"/{bin,lab,packages}
-rsync -a --delete artifacts/lab/observer/ "$stage/bin/"
-rsync -a --delete lab/guest/Deploy-Observer.ps1 lab/guest/Test-Stand.ps1 "$stage/lab/"
+sync_dir artifacts/lab/observer "$stage/bin"
+cp -f lab/guest/Deploy-Observer.ps1 lab/guest/Test-Stand.ps1 "$stage/lab/"
 if [ "$tests" = 1 ]; then
   # Исходники — то, что видит git, без двора и памяти: они в .gitignore и на стенд не уходят.
   rm -rf "$stage/src.new"; mkdir -p "$stage/src.new"
@@ -70,7 +71,7 @@ for _ in $(seq 1 30); do
 done
 [ -n "$body" ] || { echo "нет ответа $url" >&2; exit 1; }
 echo "$body"
-commit="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')"
+commit="$(printf '%s' "$body" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["commit"])')"
 [ "$commit" = "$revision" ] || { echo "коммит на стенде $commit, собран $revision" >&2; exit 1; }
 unauthorized="$(curl -s -o /dev/null -w '%{http_code}' -m 2 "$url")"
 [ "$unauthorized" = 401 ] || { echo "без ключа ответ $unauthorized, ожидался 401" >&2; exit 1; }

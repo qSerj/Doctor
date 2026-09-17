@@ -3,6 +3,9 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.Diagnostics.EventLog" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../PsDoctor.Core/PsDoctor.Core.csproj" />
   </ItemGroup>
 </Project>

@@ -177,6 +177,13 @@ public sealed class ObserveCommandTests : IAsyncLifetime
         // Окна у подмены нет: close срывается, и на этом проверяется код «сценарий не выполнен».
         public ActionResult Close() => ActionResult.Failed(WindowActionFailures.NoWindow);
 
+        public Task<ActionResult> RenderAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(ActionResult.Failed(WindowActionFailures.NoWindow));
+
+        public void Conclude()
+        {
+        }
+
         public void Dispose()
         {
         }

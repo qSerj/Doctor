@@ -165,6 +165,12 @@ public sealed class ObservationSession : IProgramEvents
     /// <summary>Действие <c>close</c>.</summary>
     public ActionResult Close() => Program()?.Close() ?? ActionResult.Failed(WindowActionFailures.NoProgram);
 
+    /// <summary>Действие <c>render</c>.</summary>
+    public Task<ActionResult> RenderAsync(CancellationToken cancellationToken) =>
+        Program() is { } run
+            ? run.RenderAsync(cancellationToken)
+            : Task.FromResult(ActionResult.Failed(WindowActionFailures.NoProgram));
+
     void IProgramEvents.TitleChanged(string? text)
     {
         lock (gate)
@@ -245,6 +251,13 @@ public sealed class ObservationSession : IProgramEvents
             run = program;
         }
         run?.Dispose();
+        // Итог — после прекращения наблюдения: разница служебных файлов снимается, когда программа уже не пишет,
+        // если она вышла. Запуск, опоздавший к закрытию, итога не даёт: журнал к тому времени закрыт.
+        // Обход файлов и чтение журнала — секунды, и не на потоке, сообщившем о выходе программы.
+        if (run is not null)
+        {
+            await Task.Run(run.Conclude).ConfigureAwait(false);
+        }
 
         Log.Record(ProgramFactKinds.SessionFinished, new { reason });
         Log.Complete();

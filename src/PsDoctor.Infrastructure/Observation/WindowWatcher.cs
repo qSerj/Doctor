@@ -161,36 +161,56 @@ public sealed class WindowWatcher : IDisposable
         var present = owned.Select(w => w.Hwnd).ToHashSet();
         foreach (var (hwnd, processId) in owned)
         {
-            if (Known(hwnd))
+            if (IsDialog(hwnd))
             {
                 continue;
             }
             var windowClass = ClassName(hwnd);
             if (!DialogClasses.Contains(windowClass))
             {
-                lock (gate)
+                if (!Announced(hwnd))
                 {
-                    others[hwnd] = windowClass;
+                    lock (gate)
+                    {
+                        others[hwnd] = windowClass;
+                    }
+                    facts.Record(ProgramFactKinds.WindowOpened, new OwnedWindow(hwnd.ToInt64(), windowClass, Text(hwnd)), processId);
                 }
-                facts.Record(ProgramFactKinds.WindowOpened, new OwnedWindow(hwnd.ToInt64(), windowClass, Text(hwnd)), processId);
                 continue;
             }
 
             var dialog = Describe(hwnd, windowClass, processId);
             if (dialog.Buttons.Count == 0)
             {
+                // Окно класса диалога без кнопок — ещё не диалог. Заглушки ProShow («Please Wait» о чтении переходов
+                // и о списке форматов) кнопок не получают никогда, и останавливать на них сценарий нечестно: нажимать
+                // в них нечего, а исчезают они сами. Такое окно пишется обычным окном и сигналом сценарию не становится.
+                var announce = false;
                 lock (gate)
                 {
-                    pending[hwnd] = pending.GetValueOrDefault(hwnd) + 1;
-                    if (pending[hwnd] < PollsForButtons)
+                    if (!others.ContainsKey(hwnd))
                     {
-                        continue;
+                        pending[hwnd] = pending.GetValueOrDefault(hwnd) + 1;
+                        if (pending[hwnd] >= PollsForButtons)
+                        {
+                            pending.Remove(hwnd);
+                            others[hwnd] = windowClass;
+                            announce = true;
+                        }
                     }
                 }
+                if (announce)
+                {
+                    facts.Record(ProgramFactKinds.WindowOpened, new OwnedWindow(hwnd.ToInt64(), windowClass, Text(hwnd)), processId);
+                }
+                continue;
             }
+            // Кнопки появились — окно становится диалогом, даже если о нём уже записан факт обычного окна:
+            // опрос не бросается ни на одном окне класса диалога.
             lock (gate)
             {
                 pending.Remove(hwnd);
+                others.Remove(hwnd);
                 dialogs.Add(dialog);
             }
             facts.Record(ProgramFactKinds.DialogOpened, dialog, processId);
@@ -224,11 +244,20 @@ public sealed class WindowWatcher : IDisposable
         }
     }
 
-    private bool Known(IntPtr hwnd)
+    private bool IsDialog(IntPtr hwnd)
     {
         lock (gate)
         {
-            return others.ContainsKey(hwnd) || dialogs.Exists(d => d.Handle == hwnd.ToInt64());
+            return dialogs.Exists(dialog => dialog.Handle == hwnd.ToInt64());
+        }
+    }
+
+    /// <summary>Об окне уже записан факт обычного окна.</summary>
+    private bool Announced(IntPtr hwnd)
+    {
+        lock (gate)
+        {
+            return others.ContainsKey(hwnd);
         }
     }
 

@@ -134,6 +134,24 @@ public sealed class FakeLauncher : IProgramLauncher
             return Task.FromResult(ActionResult.Done);
         }
 
+        /// <summary>Сколько раз просили запустить рендер.</summary>
+        public int RenderRequests { get; private set; }
+
+        /// <summary>Вызывается вместо настоящего пути рендера: тест открывает окна, как это делает программа.</summary>
+        public Action? OnRender { get; set; }
+
+        public Task<ActionResult> RenderAsync(CancellationToken cancellationToken)
+        {
+            RenderRequests++;
+            facts.Record(ProgramFactKinds.RenderRequested, new RenderRequested(0x100, ProShowWindows.PublishVideoCommand), ProcessId);
+            if (OnRender is null)
+            {
+                return Task.FromResult(ActionResult.Failed(WindowActionFailures.NoOutputWindow));
+            }
+            OnRender();
+            return Task.FromResult(ActionResult.Done);
+        }
+
         public ActionResult Close()
         {
             CloseRequests++;
@@ -164,6 +182,19 @@ public sealed class FakeLauncher : IProgramLauncher
             events.MainExited(code);
             facts.Record(ProgramFactKinds.JobAccounting, new JobAccounting(1, 0, 0, 1, 0, 0, 1100, 1100));
             events.AllExited();
+        }
+
+        /// <summary>Сколько раз сеанс просил итог; итог — пустая разница служебных файлов.</summary>
+        public int Conclusions { get; private set; }
+
+        /// <summary>Итог просили, когда наблюдение уже прекращено.</summary>
+        public bool ConcludedAfterDispose { get; private set; }
+
+        public void Conclude()
+        {
+            Conclusions++;
+            ConcludedAfterDispose = Disposed;
+            facts.Record(ProgramFactKinds.ServiceFiles, new ServiceFilesDiff([], 0, 0, 0, false, [], [], []));
         }
 
         public void Dispose() => Disposed = true;

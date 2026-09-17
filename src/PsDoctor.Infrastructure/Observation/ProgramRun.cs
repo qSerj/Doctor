@@ -24,20 +24,27 @@ public sealed class ProgramRun : IProgramRun
     /// <summary>Сколько ждать, пока нажатый диалог закроется.</summary>
     public static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>Сколько ждать каждого окна на пути рендера: список форматов программа сперва ищет в сети.</summary>
+    public static readonly TimeSpan RenderStepTimeout = TimeSpan.FromSeconds(120);
+
     private readonly JobRun job;
     private readonly WindowWatcher windows;
     private readonly IFactRecorder facts;
+    private readonly SessionHygiene? hygiene;
+    private bool aliveAtStop;
 
-    private ProgramRun(JobRun job, WindowWatcher windows, IFactRecorder facts)
+    private ProgramRun(JobRun job, WindowWatcher windows, IFactRecorder facts, SessionHygiene? hygiene)
     {
         this.job = job;
         this.windows = windows;
         this.facts = facts;
+        this.hygiene = hygiene;
     }
 
     public int ProcessId => job.ProcessId;
 
     /// <inheritdoc cref="JobRun.Start"/>
+    /// <param name="hygiene">Гигиена сеанса: снимок «до» снимается здесь, перед запуском; <c>null</c> — без неё.</param>
     public static ProgramRun Start(
         string application,
         string commandLine,
@@ -45,12 +52,14 @@ public sealed class ProgramRun : IProgramRun
         IFactRecorder facts,
         IProgramEvents events,
         TimeSpan? sampleInterval = null,
-        TimeSpan? windowInterval = null)
+        TimeSpan? windowInterval = null,
+        SessionHygiene? hygiene = null)
     {
+        hygiene?.Begin();
         var job = JobRun.Start(application, commandLine, workingDirectory, facts, events, sampleInterval);
         var windows = new WindowWatcher(job.LiveProcessIds, job.ProcessId, facts, events, windowInterval);
         windows.Start();
-        return new ProgramRun(job, windows, facts);
+        return new ProgramRun(job, windows, facts, hygiene);
     }
 
     public IReadOnlyList<DialogInfo> Dialogs() => windows.Dialogs();
@@ -64,18 +73,20 @@ public sealed class ProgramRun : IProgramRun
             return ActionResult.Failed(WindowActionFailures.NoDialog);
         }
 
-        var dialog = IntPtr.Zero;
-        var target = IntPtr.Zero;
-        for (var i = open.Count - 1; i >= 0 && target == IntPtr.Zero; i--)
+        for (var i = open.Count - 1; i >= 0; i--)
         {
-            dialog = new IntPtr(open[i].Handle);
-            target = WindowWatcher.FindButton(dialog, button);
+            var dialog = new IntPtr(open[i].Handle);
+            if (WindowWatcher.FindButton(dialog, button) is { } target && target != IntPtr.Zero)
+            {
+                return await PressButtonAsync(dialog, target, button, cancellationToken).ConfigureAwait(false);
+            }
         }
-        if (target == IntPtr.Zero)
-        {
-            return ActionResult.Failed(WindowActionFailures.NoButton);
-        }
+        return ActionResult.Failed(WindowActionFailures.NoButton);
+    }
 
+    /// <summary>Нажатие найденной кнопки: Invoke с повтором при сбое и ожидание, пока окно закроется.</summary>
+    private async Task<ActionResult> PressButtonAsync(IntPtr dialog, IntPtr target, string button, CancellationToken cancellationToken)
+    {
         var before = Cursor();
         var attempts = 0;
         string result;
@@ -136,10 +147,87 @@ public sealed class ProgramRun : IProgramRun
         return ActionResult.Done;
     }
 
+    /// <summary>
+    /// Путь рендера, снятый на стенде 17.09.2026: команда меню главному окну открывает окно вывода без открытия
+    /// самого меню (меню программа рисует сама, и мышь для него не нужна), «Create» ведёт к системному окну
+    /// сохранения, где имя файла и каталог уже умолчальные — каталог проекта. Действие возвращается, когда встало
+    /// окно рендера; окончания оно не ждёт.
+    /// </summary>
+    public async Task<ActionResult> RenderAsync(CancellationToken cancellationToken)
+    {
+        var main = windows.MainWindow;
+        if (main == IntPtr.Zero || !IsWindow(main))
+        {
+            return ActionResult.Failed(WindowActionFailures.NoWindow);
+        }
+
+        PostMessageW(main, WmCommand, new IntPtr(ProShowWindows.PublishVideoCommand), IntPtr.Zero);
+        facts.Record(
+            ProgramFactKinds.RenderRequested,
+            new RenderRequested(main.ToInt64(), ProShowWindows.PublishVideoCommand),
+            job.ProcessId);
+
+        if (await AwaitDialogAsync(ProShowWindows.OutputWindow, cancellationToken).ConfigureAwait(false) is not { } output)
+        {
+            return ActionResult.Failed(WindowActionFailures.NoOutputWindow);
+        }
+        var create = WindowWatcher.FindButton(new IntPtr(output.Handle), ProShowWindows.CreateButton);
+        if (create == IntPtr.Zero)
+        {
+            return ActionResult.Failed(WindowActionFailures.NoButton);
+        }
+        var created = await PressButtonAsync(new IntPtr(output.Handle), create, ProShowWindows.CreateButton, cancellationToken).ConfigureAwait(false);
+        if (!created.Succeeded)
+        {
+            return created;
+        }
+
+        if (await AwaitDialogAsync(ProShowWindows.SaveDialog, cancellationToken).ConfigureAwait(false) is not { } save)
+        {
+            return ActionResult.Failed(WindowActionFailures.NoSaveDialog);
+        }
+        // Кнопку согласия системного окна ищем по id, а не по тексту: он переводится языком системы.
+        var accept = GetDlgItem(new IntPtr(save.Handle), IdOk);
+        if (accept == IntPtr.Zero)
+        {
+            return ActionResult.Failed(WindowActionFailures.NoButton);
+        }
+        var accepted = await PressButtonAsync(new IntPtr(save.Handle), accept, Text(accept), cancellationToken).ConfigureAwait(false);
+        if (!accepted.Succeeded)
+        {
+            return accepted;
+        }
+
+        return await AwaitDialogAsync(ProShowWindows.RenderingWindow, cancellationToken).ConfigureAwait(false) is null
+            ? ActionResult.Failed(WindowActionFailures.NoRenderWindow)
+            : ActionResult.Done;
+    }
+
+    /// <summary>Ждёт открытый диалог с таким заголовком; <c>null</c> — не дождался за <see cref="RenderStepTimeout"/>.</summary>
+    private async Task<DialogInfo?> AwaitDialogAsync(string title, CancellationToken cancellationToken)
+    {
+        var waiting = Stopwatch.StartNew();
+        while (true)
+        {
+            if (windows.Dialogs().LastOrDefault(dialog => dialog.Title == title) is { } found)
+            {
+                return found;
+            }
+            if (waiting.Elapsed >= RenderStepTimeout)
+            {
+                return null;
+            }
+            await Task.Delay(RetryPause, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public void Conclude() => hygiene?.Conclude(aliveAtStop);
+
     /// <summary>Прекращает наблюдение. Программа, если жива, продолжает работать.</summary>
     public void Dispose()
     {
         windows.Dispose();
+        aliveAtStop = job.LiveProcessIds().Count > 0;
         job.Dispose();
     }
 }

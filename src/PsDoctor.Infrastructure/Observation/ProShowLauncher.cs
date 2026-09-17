@@ -46,6 +46,44 @@ public sealed class ProShowLauncher : IProgramLauncher
             Directory.Exists(directory) ? directory : null,
             facts,
             events,
-            sampleInterval);
+            sampleInterval,
+            hygiene: new SessionHygiene(ServicePlaces(ProgramPath, showPath), ImageNames, facts));
+    }
+
+    /// <summary>Образы куста ProShow: программа, видеомодуль, ffmpeg и ffprobe под чужими именами.</summary>
+    public static readonly IReadOnlyList<string> ImageNames = ["proshow", "fvideo", "device-enc"];
+
+    /// <summary>
+    /// Места служебных файлов — те же, что в опыте 03, и ещё два. Каталог программы берётся на уровень выше exe
+    /// (<c>Photodex</c>), и его зеркало в <c>VirtualStore</c>: куда пишет неповышенная программа, решает UAC.
+    /// Временный каталог — только файлы ffmpeg программы (<c>py*</c>, <c>px*</c>, <c>dpx*</c>, опыт 07): прочего там
+    /// много и оно чужое. Каталог файла шоу — без вложенных, ради <c>.pxc</c>, <c>.bak</c> и автосохранения рядом.
+    /// </summary>
+    public static IReadOnlyList<ServiceFilePlace> ServicePlaces(string programPath, string showPath)
+    {
+        var vendor = Path.GetDirectoryName(Path.GetDirectoryName(programPath)) ?? Path.GetDirectoryName(programPath)!;
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var temp = Path.GetTempPath();
+        var places = new List<ServiceFilePlace>
+        {
+            new(vendor, true),
+            new(Path.Combine(local, "VirtualStore", vendor[Path.GetPathRoot(vendor)!.Length..]), true),
+            new(Path.Combine(roaming, "Photodex"), true),
+            new(Path.Combine(local, "Photodex"), true),
+            new(Path.Combine(common, "Photodex"), true),
+            new(Path.Combine(documents, "ProShow Producer"), true),
+            new(Path.Combine(documents, "ProShow"), true),
+            new(temp, false, "py*"),
+            new(temp, false, "px*"),
+            new(temp, false, "dpx*"),
+        };
+        if (Path.GetDirectoryName(showPath) is { Length: > 0 } show)
+        {
+            places.Add(new ServiceFilePlace(show, false));
+        }
+        return places;
     }
 }

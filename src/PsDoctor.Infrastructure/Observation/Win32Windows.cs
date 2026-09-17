@@ -9,6 +9,10 @@ internal static class Win32Windows
 {
     public const uint GwOwner = 4;
     public const uint WmClose = 0x0010;
+    public const uint WmCommand = 0x0111;
+
+    /// <summary>Кнопка согласия системного диалога: у окна сохранения она подписана языком системы.</summary>
+    public const int IdOk = 1;
 
     [return: MarshalAs(UnmanagedType.Bool)]
     public delegate bool EnumProc(IntPtr hwnd, IntPtr parameter);
@@ -62,6 +66,9 @@ internal static class Win32Windows
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
 
     public static string ClassName(IntPtr hwnd)
     {

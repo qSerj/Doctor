@@ -111,6 +111,67 @@ public sealed class ProgramRunTests
         }
     }
 
+    // Окно системного класса диалога без единой кнопки — как заглушки ProShow «Please Wait»; кнопка в нём
+    // появляется через три секунды, то есть много позже трёх опросов, на которых решается, диалог это или нет.
+    private const string СкриптЗаглушки = """
+        Add-Type -Namespace Проба -Name Окна -MemberDefinition @'
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        public static extern System.IntPtr CreateWindowExW(int exStyle, string className, string windowName, int style,
+            int x, int y, int width, int height, System.IntPtr parent, System.IntPtr menu, System.IntPtr instance, System.IntPtr param);
+        '@
+        $видимое = 0x10000000
+        $всплывающее = -2147483648   # WS_POPUP
+        $главное = [Проба.Окна]::CreateWindowExW(0, '#32770', 'psdoctor-главное', $видимое -bor 0x00CF0000, 10, 10, 320, 200, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+        $заглушка = [Проба.Окна]::CreateWindowExW(0, '#32770', 'psdoctor-заглушка', $видимое -bor $всплывающее, 40, 40, 280, 120, $главное, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Seconds 3
+        $null = [Проба.Окна]::CreateWindowExW(0, 'Button', 'Готово', $видимое -bor 0x40000000, 10, 60, 100, 24, $заглушка, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Seconds 30
+        """;
+
+    [Fact]
+    public async Task Окно_класса_диалога_без_кнопок_не_диалог_пока_кнопка_не_появится()
+    {
+        if (!OperatingSystem.IsWindows() || Process.GetCurrentProcess().SessionId == 0)
+        {
+            return;
+        }
+        var часы = Stopwatch.StartNew();
+        var журнал = new FactLog(new FactJournalWriter(new StringWriter(), "тест", () => часы.Elapsed));
+        var события = new События();
+        var powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        var закодирован = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(СкриптЗаглушки));
+
+        using var запуск = ProgramRun.Start(powershell, $"\"{powershell}\" -NoProfile -EncodedCommand {закодирован}", null, журнал, события);
+        try
+        {
+            // Пока кнопок нет — обычное окно и никакого сигнала сценарию: заглушка не должна останавливать сценарий.
+            var окно = await Дождаться(() => журнал.After(0)
+                .Where(f => f.Kind == ProgramFactKinds.WindowOpened)
+                .Select(f => Данные<OwnedWindow>(f))
+                .FirstOrDefault(w => w.Title == "psdoctor-заглушка"));
+            Assert.Equal("#32770", окно.Class);
+            Assert.Empty(запуск.Dialogs());
+            Assert.DoesNotContain(события.Диалоги, d => d.Title == "psdoctor-заглушка");
+
+            // Кнопка появилась — то же окно становится диалогом, и сценарий его видит.
+            var диалог = await Дождаться(() => события.Диалоги.FirstOrDefault(d => d.Title == "psdoctor-заглушка"));
+            Assert.Equal(окно.Handle, диалог.Handle);
+            Assert.Equal(["Готово"], диалог.Buttons);
+            Assert.Equal(диалог.Handle, Assert.Single(запуск.Dialogs()).Handle);
+        }
+        finally
+        {
+            try
+            {
+                using var программа = Process.GetProcessById(запуск.ProcessId);
+                программа.Kill(entireProcessTree: true);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+    }
+
     [Fact]
     public async Task Нажатие_без_диалога_и_закрытие_без_окна_срываются()
     {

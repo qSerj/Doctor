@@ -10,6 +10,7 @@
 # Переменные: LAB_HOST, LAB_KEY, PROJECT_SOURCE (\\VBoxSvr\exchange\projects\p1), PROJECT_DIR (C:\lab\p1),
 # SHOW_FILE (обязательна), PSDOCTOR_OBSERVER_URL, PSDOCTOR_OBSERVER_KEY_FILE, OUT (каталог журналов).
 set -euo pipefail
+. "$(dirname "$0")/portable.sh"
 
 runs="${1:-10}"
 host="${LAB_HOST:-192.168.56.5}"
@@ -44,7 +45,7 @@ for run in $(seq 1 "$runs"); do
   printf '%s\n' "$scenario" | "${psdoctor[@]}" observe run - --follow > "$journal" 2> "$out/run-$run.err"
   code=$?
   set -e
-  summary="$(python3 - "$journal" "$run" "$code" "$show" <<'EOF'
+  summary="$("$PYTHON" - "$journal" "$run" "$code" "$show" <<'EOF'
 import json, sys
 path, run, code, show = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 facts = [json.loads(line) for line in open(path, encoding='utf-8') if line.strip()]

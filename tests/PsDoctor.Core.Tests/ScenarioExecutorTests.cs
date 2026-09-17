@@ -12,6 +12,10 @@ public sealed class ScenarioExecutorTests
 
     private static readonly DialogInfo MissingFont = new(0x20, "Message", [], ["Ok to All", "Ok"]);
 
+    private static readonly DialogInfo Rendering = new(0x30, ProShowWindows.RenderingWindow, [], ["Pause", "Cancel"], "AGDSDocParent");
+
+    private static readonly DialogInfo RenderComplete = new(0x40, "Message", [], ["Ok"], "AGDSDocParent");
+
     [Fact]
     public async Task Диалог_во_время_запуска_засчитывается_следующему_ожиданию_диалога()
     {
@@ -220,14 +224,6 @@ public sealed class ScenarioExecutorTests
     }
 
     [Fact]
-    public async Task Ожидание_конца_рендера_не_умеет()
-    {
-        var outcome = await new Stand().RunAsync("wait render-done 3600");
-
-        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 1, StepFailures.Unsupported), outcome);
-    }
-
-    [Fact]
     public async Task Отмена_прерывает_ожидание()
     {
         var stand = new Stand();
@@ -251,6 +247,42 @@ public sealed class ScenarioExecutorTests
             ["scenario-started", "step-started", "step-done", "step-started", "step-done", "scenario-finished"],
             stand.Facts.Select(fact => fact.Kind));
         Assert.Equal(Enumerable.Range(1, 6).Select(number => (long)number), stand.Facts.Select(fact => fact.Number));
+    }
+
+    [Fact]
+    public async Task Рендер_кончается_диалогом_вставшим_после_исчезновения_окна_рендера()
+    {
+        var stand = new Stand();
+        stand.Actions.On<RenderStep>(() => stand.Send(new DialogOpened(Seconds(5), Rendering)));
+        stand.OnStepStarted(2, () =>
+        {
+            stand.Send(new TimeTick(Seconds(400)));
+            stand.Send(new DialogClosed(Seconds(420), Rendering.Handle));
+            stand.Send(new DialogOpened(Seconds(421), RenderComplete));
+        });
+
+        var outcome = await stand.RunAsync("render\nwait render-done 3600\npress \"Ok\"");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        Assert.Equal(["render", "press"], stand.Actions.Called);
+        // Диалог об окончании засчитан ожиданию и не стал неожиданным для следующего нажатия.
+        var done = stand.Facts.Single(fact => fact.Kind == ScenarioFactKinds.StepDone && Line(fact) == 2);
+        Assert.Equal("Ok", done.Data.GetProperty("dialog").GetProperty("buttons")[0].GetString());
+        Assert.Equal(416, done.Data.GetProperty("seconds").GetDouble());
+        Assert.DoesNotContain(stand.Facts, fact => fact.Kind == ScenarioFactKinds.UnexpectedDialog);
+    }
+
+    [Fact]
+    public async Task Окно_самого_рендера_не_считается_концом_рендера()
+    {
+        // У окна рендера есть кнопки «Pause» и «Cancel», то есть это диалог; но значит оно начало, а не конец.
+        var stand = new Stand();
+        stand.Actions.On<RenderStep>(() => stand.Send(new DialogOpened(Seconds(5), Rendering)));
+        stand.OnStepStarted(2, () => stand.Send(new TimeTick(Seconds(70))));
+
+        var outcome = await stand.RunAsync("render\nwait render-done 60");
+
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 2, StepFailures.Timeout), outcome);
     }
 
     private static TimeSpan Seconds(int seconds) => TimeSpan.FromSeconds(seconds);

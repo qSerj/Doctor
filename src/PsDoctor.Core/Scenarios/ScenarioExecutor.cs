@@ -66,6 +66,11 @@ public sealed class ScenarioExecutor
         private bool exited;
         private TimeSpan? quietSince;
 
+        // Ход рендера: хэндл открытого окна рендера, признак того, что оно закрылось, и первый диалог после него.
+        private long? rendering;
+        private bool renderingClosed;
+        private DialogInfo? renderDone;
+
         public async Task<ScenarioOutcome> ExecuteAsync(Scenario scenario)
         {
             owner.facts.Record(ScenarioFactKinds.ScenarioStarted, new { steps = scenario.Steps.Count });
@@ -83,7 +88,7 @@ public sealed class ScenarioExecutor
                     {
                         Apply(signal);
                     }
-                    if (step is not WaitDialogStep && unclaimed.Count > 0)
+                    if (step is not (WaitDialogStep or WaitRenderDoneStep) && unclaimed.Count > 0)
                     {
                         owner.facts.Record(ScenarioFactKinds.UnexpectedDialog, new { line = step.Line, dialog = unclaimed[0] });
                         return Finish(ScenarioStatus.Stopped, step.Line, StepFailures.UnexpectedDialog);
@@ -164,11 +169,6 @@ public sealed class ScenarioExecutor
 
         private async Task<StepVerdict> RunWaitAsync(WaitStep step, TimeSpan start)
         {
-            if (step is WaitRenderDoneStep)
-            {
-                return new StepVerdict(StepFailures.Unsupported);
-            }
-
             while (true)
             {
                 if (Check(step, start) is { } verdict)
@@ -179,7 +179,7 @@ public sealed class ScenarioExecutor
                 if (inbox.TryDequeue(out var signal))
                 {
                     Apply(signal);
-                    if (signal is DialogOpened opened && step is not WaitDialogStep)
+                    if (signal is DialogOpened opened && step is not (WaitDialogStep or WaitRenderDoneStep))
                     {
                         return new StepVerdict(StepFailures.UnexpectedDialog, opened.Dialog);
                     }
@@ -203,6 +203,14 @@ public sealed class ScenarioExecutor
                     var dialog = unclaimed[0];
                     unclaimed.RemoveAt(0);
                     return new StepVerdict(null, dialog);
+                // Рендер кончился, когда окно рендера исчезло и вслед за ним встал диалог. Какой это диалог —
+                // об окончании или об ошибке, — по нему не понять: текст в окнах программы нарисован. Диалог
+                // засчитывается шагу и ждёт следующего: его кнопка нажимается отдельным press.
+                case WaitRenderDoneStep when renderDone is { } finished:
+                    renderDone = null;
+                    renderingClosed = false;
+                    unclaimed.RemoveAll(open => open.Handle == finished.Handle);
+                    return new StepVerdict(null, finished);
                 case WaitTitleStep wait when title is not null && title.Contains(wait.Substring, StringComparison.Ordinal):
                 case WaitExitStep when exited:
                 case WaitIdleStep idle when quietSince is { } since && now - since >= idle.Quiet:
@@ -227,10 +235,24 @@ public sealed class ScenarioExecutor
             {
                 case DialogOpened opened:
                     unclaimed.Add(opened.Dialog);
+                    if (opened.Dialog.Title == ProShowWindows.RenderingWindow)
+                    {
+                        rendering = opened.Dialog.Handle;
+                        renderingClosed = false;
+                    }
+                    else if (renderingClosed)
+                    {
+                        renderDone ??= opened.Dialog;
+                    }
                     break;
                 case DialogClosed closed:
                     // Диалог, закрывшийся сам, никого не ждёт: нажимать в нём уже нечего.
                     unclaimed.RemoveAll(dialog => dialog.Handle == closed.Handle);
+                    if (rendering == closed.Handle)
+                    {
+                        rendering = null;
+                        renderingClosed = true;
+                    }
                     break;
                 case TitleChanged changed:
                     title = changed.Title;

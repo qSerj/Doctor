@@ -20,6 +20,8 @@ public sealed class WindowScenarioTests : IAsyncLifetime
 
     private static readonly DialogInfo СтарыйФормат = new(0x10, "Old Show format detected.", ["This show was created with an older version of ProShow."], ["ОК"], "#32770", 1000);
     private static readonly DialogInfo Шрифт = new(0x20, "Message", [], ["Ok to All", "Ok"], "AGDSDocParent", 1000);
+    private static readonly DialogInfo ОкноРендера = new(0x30, ProShowWindows.RenderingWindow, [], ["Pause", "Cancel"], "AGDSDocParent", 1000);
+    private static readonly DialogInfo РендерГотов = new(0x40, "Message", [], ["Ok"], "AGDSDocParent", 1000);
 
     private readonly string _каталог = Directory.CreateTempSubdirectory("psdoctor-окна-").FullName;
     private readonly FakeLauncher _запуск = new();
@@ -71,6 +73,37 @@ public sealed class WindowScenarioTests : IAsyncLifetime
             .Select(f => f.Data.GetProperty("dialog").GetProperty("title").GetString());
         Assert.Equal(["Old Show format detected.", "Message"], засчитаны);
         Assert.Equal(SessionEndReasons.ProgramExited, факты[^1].Data.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task Сценарий_с_рендером_ждёт_диалога_после_окна_рендера_и_нажимает_его()
+    {
+        var принят = await _клиент.RunAsync(string.Join('\n',
+            Запуск, "wait title \"1.psh\" 600", "render", "wait render-done 3600", "press \"Ok\"", "close", "wait exit 60"));
+        var программа = await Программа();
+        // Программа ведёт себя как ProShow: рендер открывает своё окно, а по окончании закрывает его и говорит «готово».
+        программа.OnRender = () =>
+        {
+            программа.OpenDialog(ОкноРендера);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(20);
+                программа.CloseDialog(ОкноРендера.Handle);
+                программа.OpenDialog(РендерГотов);
+            });
+        };
+        программа.Title("ProShow Producer - Профиль - 1.psh");
+
+        var факты = await ДоКонцаСеанса(принят.Session);
+
+        Assert.Equal("completed", Итог(факты).GetProperty("status").GetString());
+        Assert.Equal(1, программа.RenderRequests);
+        Assert.Equal(["Ok"], программа.Pressed);
+        Assert.Contains(факты, f => f.Kind == ProgramFactKinds.RenderRequested);
+        // Окно рендера ожиданию не зачлось: зачёлся диалог, вставший после его исчезновения.
+        var засчитан = факты.Single(f => f.Kind == ScenarioFactKinds.StepDone && f.Data.GetProperty("line").GetInt32() == 4);
+        Assert.Equal(РендерГотов.Handle, засчитан.Data.GetProperty("dialog").GetProperty("handle").GetInt64());
+        Assert.DoesNotContain(факты, f => f.Kind == ScenarioFactKinds.UnexpectedDialog);
     }
 
     [Fact]
