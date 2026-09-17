@@ -174,6 +174,8 @@ public static class Runner
         writer.WriteLine("  --version              версия доктора");
         writer.WriteLine("  --help                 эта справка");
         writer.WriteLine();
+        writer.WriteLine("psdoctor observe --help — команды к наблюдателю на стенде.");
+        writer.WriteLine();
         writer.WriteLine("Отчёт машинный и идёт в stdout, по строке на файл. Доктор ничего не лечит и никуда не пишет.");
         writer.WriteLine($"Коды возврата: {ExitCodes.Clean} — разобран, находок нет; {ExitCodes.Findings} — есть находки; "
             + $"{ExitCodes.NotAShowFile} — не файл шоу; {ExitCodes.Environment} — сбой окружения.");

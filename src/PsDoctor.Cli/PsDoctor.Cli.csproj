@@ -8,5 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../PsDoctor.Core/PsDoctor.Core.csproj" />
     <ProjectReference Include="../PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
+    <ProjectReference Include="../PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />
   </ItemGroup>
 </Project>

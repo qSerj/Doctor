@@ -4,4 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>PsDoctor.Observer</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../PsDoctor.Core/PsDoctor.Core.csproj" />
+    <ProjectReference Include="../PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
+  </ItemGroup>
 </Project>

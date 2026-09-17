@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/PsDoctor.Observer/PsDoctor.Observer.csproj" />
+    <ProjectReference Include="../../src/PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />
   </ItemGroup>
 </Project>

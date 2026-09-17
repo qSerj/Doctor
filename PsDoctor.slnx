@@ -4,6 +4,7 @@
     <Project Path="src/PsDoctor.Cli/PsDoctor.Cli.csproj" />
     <Project Path="src/PsDoctor.Core/PsDoctor.Core.csproj" />
     <Project Path="src/PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
+    <Project Path="src/PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />
     <Project Path="src/PsDoctor.Observer/PsDoctor.Observer.csproj" />
   </Folder>
   <Folder Name="/tests/">
