@@ -76,6 +76,20 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Dialogs_без_сеанса_отказ_при_живом_строка_на_диалог()
+    {
+        var (безСеанса, _, _) = await Observe("dialogs");
+        await Observe("run", "--step", "launch \"C:\\lab\\p\\1.psh\"");
+
+        var (code, stdout, _) = await Observe("dialogs");
+
+        Assert.Equal(ObserveExitCodes.Refused, безСеанса);
+        Assert.Equal(ObserveExitCodes.Done, code);
+        var диалог = JsonSerializer.Deserialize<DialogInfo>(Assert.Single(stdout), ObservationJson.Options)!;
+        Assert.Equal(Запуск.Диалог.Buttons, диалог.Buttons);
+    }
+
+    [Fact]
     public async Task Отказ_наблюдателя_даёт_двойку_и_тело_в_stdout()
     {
         var (code, stdout, _) = await Observe("run", "--step", "прыжок");
@@ -151,6 +165,17 @@ public sealed class ObserveCommandTests : IAsyncLifetime
             _события!.MainExited(0);
             _события.AllExited();
         }
+
+        /// <summary>Открытый диалог программы — один и тот же, пока тест жив.</summary>
+        public static DialogInfo Диалог { get; } = new(0x20, "Message", [], ["Ok to All", "Ok"], "AGDSDocParent", 1000);
+
+        public IReadOnlyList<DialogInfo> Dialogs() => [Диалог];
+
+        public Task<ActionResult> PressAsync(string button, CancellationToken cancellationToken) =>
+            Task.FromResult(ActionResult.Failed(WindowActionFailures.PressFailed));
+
+        // Окна у подмены нет: close срывается, и на этом проверяется код «сценарий не выполнен».
+        public ActionResult Close() => ActionResult.Failed(WindowActionFailures.NoWindow);
 
         public void Dispose()
         {

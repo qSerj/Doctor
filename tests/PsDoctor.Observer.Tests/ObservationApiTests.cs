@@ -127,6 +127,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
                      (HttpMethod.Get, ObserverRoutes.Stream("20260917-000000-000")),
                      (HttpMethod.Get, ObserverRoutes.Facts("20260917-000000-000")),
                      (HttpMethod.Get, ObserverRoutes.Raw("20260917-000000-000")),
+                     (HttpMethod.Get, ObserverRoutes.Dialogs("20260917-000000-000")),
                  })
         {
             using var запрос = new HttpRequestMessage(метод, путь) { Content = new StringContent("{\"text\":\"launch x\"}", Encoding.UTF8, "application/json") };
@@ -313,7 +314,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
     [Fact]
     public async Task Шаг_без_реализации_срывается_как_неумение()
     {
-        var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"\nclose");
+        var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"\nrender");
 
         var факты = await ДоКонцаСценария(принят);
 

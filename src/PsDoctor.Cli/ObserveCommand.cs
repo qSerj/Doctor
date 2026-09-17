@@ -97,6 +97,7 @@ public static class ObserveCommand
                 "sessions" => output.Lines(await client.SessionsAsync(cancellationToken).ConfigureAwait(false)),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
+                "dialogs" => await DialogsAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
                 "facts" => await FactsAsync(client, options, output, cancellationToken).ConfigureAwait(false),
                 "run" => await RunScenarioAsync(client, options, stdin, output, stderr, cancellationToken).ConfigureAwait(false),
                 _ => Unknown(options.Command, stderr),
@@ -192,9 +193,7 @@ public static class ObserveCommand
 
     private static async Task<int> StopAsync(ObserverClient client, Options options, Output output, TextWriter stderr, CancellationToken cancellationToken)
     {
-        var session = options.Arguments.Count == 1
-            ? options.Arguments[0]
-            : (await client.SessionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(s => s.Active)?.Id;
+        var session = await SessionAsync(client, options, cancellationToken).ConfigureAwait(false);
         if (session is null)
         {
             stderr.WriteLine("stop: живого сеанса нет.");
@@ -203,6 +202,23 @@ public static class ObserveCommand
         await client.StopAsync(session, cancellationToken).ConfigureAwait(false);
         return output.Json(new CancelAccepted(session));
     }
+
+    private static async Task<int> DialogsAsync(ObserverClient client, Options options, Output output, TextWriter stderr, CancellationToken cancellationToken)
+    {
+        var session = await SessionAsync(client, options, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            stderr.WriteLine("dialogs: живого сеанса нет.");
+            return ObserveExitCodes.Refused;
+        }
+        return output.Lines(await client.DialogsAsync(session, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Сеанс из аргумента, иначе живой.</summary>
+    private static async Task<string?> SessionAsync(ObserverClient client, Options options, CancellationToken cancellationToken) =>
+        options.Arguments.Count == 1
+            ? options.Arguments[0]
+            : (await client.SessionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(s => s.Active)?.Id;
 
     private static int Unknown(string command, TextWriter stderr)
     {
@@ -220,6 +236,7 @@ public static class ObserveCommand
         writer.WriteLine("  sessions                        сеансы");
         writer.WriteLine("  facts <сеанс>                   журнал сеанса");
         writer.WriteLine("  cancel                          отменить выполняемый сценарий");
+        writer.WriteLine("  dialogs [сеанс]                 открытые диалоги с кнопками, строка на диалог");
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");

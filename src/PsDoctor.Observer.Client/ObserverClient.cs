@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
+using PsDoctor.Core.Scenarios;
 
 namespace PsDoctor.Observer.Client;
 
@@ -62,6 +63,14 @@ public sealed class ObserverClient : IDisposable
         using var timeout = Limit(cancellationToken);
         using var response = await http.GetAsync(ObserverRoutes.Sessions, timeout.Token).ConfigureAwait(false);
         return await ReadAsync<List<SessionSummary>>(response, timeout.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>Открытые диалоги живого сеанса с текстами и кнопками.</summary>
+    public async Task<IReadOnlyList<DialogInfo>> DialogsAsync(string session, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.GetAsync(ObserverRoutes.Dialogs(session), timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<List<DialogInfo>>(response, timeout.Token).ConfigureAwait(false);
     }
 
     /// <summary>Прекращает наблюдение. Программа не закрывается.</summary>

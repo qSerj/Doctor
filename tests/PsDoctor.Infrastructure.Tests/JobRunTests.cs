@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
+using PsDoctor.Core.Scenarios;
 using PsDoctor.Infrastructure.Observation;
 using Xunit;
 
@@ -28,6 +29,22 @@ public sealed class JobRunTests
         public void MainExited(int? exitCode) => ОсновнойВышел.TrySetResult(exitCode);
 
         public void AllExited() => ВсеВышли.TrySetResult();
+
+        public void TitleChanged(string? title)
+        {
+        }
+
+        public void DialogAppeared(DialogInfo dialog)
+        {
+        }
+
+        public void DialogDisappeared(long handle)
+        {
+        }
+
+        public void Activity(bool quiet)
+        {
+        }
     }
 
     private static FactLog НовыйЖурнал()

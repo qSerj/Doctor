@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using PsDoctor.Core.Observation;
@@ -7,7 +8,8 @@ namespace PsDoctor.Infrastructure.Observation;
 
 /// <summary>
 /// Программа под заданием (Job Object): весь куст процессов виден по уведомлениям задания, а не опросом,
-/// который теряет короткие процессы (опыт 07). Раз в секунду — замеры живых процессов.
+/// который теряет короткие процессы (опыт 07). Раз в секунду — замеры живых процессов и активность куста.
+/// Окна — не здесь: <see cref="ProgramRun"/> ставит рядом <see cref="WindowWatcher"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,7 +24,7 @@ namespace PsDoctor.Infrastructure.Observation;
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public sealed class JobRun : IProgramRun
+public sealed class JobRun : IDisposable
 {
     public static readonly TimeSpan DefaultSampleInterval = TimeSpan.FromSeconds(1);
 
@@ -40,8 +42,10 @@ public sealed class JobRun : IProgramRun
     private readonly IntPtr port;
     private readonly Thread loop;
     private readonly Timer sampler;
+    private readonly Stopwatch sinceSample = new();
     private bool disposed;
     private bool allExited;
+    private (double Cpu, long Io)? lastTotals;
 
     private JobRun(IntPtr job, IntPtr port, int processId, IntPtr process, IFactRecorder facts, IProgramEvents events, TimeSpan sampleInterval)
     {
@@ -56,6 +60,15 @@ public sealed class JobRun : IProgramRun
     }
 
     public int ProcessId { get; }
+
+    /// <summary>Процессы задания, живые на этот момент: по ним ищутся окна куста.</summary>
+    public IReadOnlyCollection<int> LiveProcessIds()
+    {
+        lock (gate)
+        {
+            return [.. processes.Keys];
+        }
+    }
 
     /// <param name="commandLine">Командная строка целиком, с кавычками, первым словом — программа.</param>
     public static JobRun Start(
@@ -313,6 +326,7 @@ public sealed class JobRun : IProgramRun
 
     private void SampleCore()
     {
+        bool? quiet;
         // Замер под замком: хэндл не закроется посреди опроса. Вызовы короткие, уведомления подождут.
         lock (gate)
         {
@@ -320,6 +334,7 @@ public sealed class JobRun : IProgramRun
             {
                 return;
             }
+            quiet = RecordActivity();
             foreach (var (processId, handle) in processes)
             {
                 var counters = ReadVmCounters(handle);
@@ -346,6 +361,39 @@ public sealed class JobRun : IProgramRun
                     processId);
             }
         }
+        if (quiet is { } value)
+        {
+            events.Activity(value);
+        }
+    }
+
+    /// <summary>
+    /// Активность куста за отрезок — по учёту задания, поэтому процессы, вышедшие между замерами, входят.
+    /// Первый замер только запоминает итоги. Под замком вызывающего.
+    /// </summary>
+    private bool? RecordActivity()
+    {
+        if (!QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation, out BasicAndIoAccountingInformation accounting,
+                Marshal.SizeOf<BasicAndIoAccountingInformation>(), IntPtr.Zero))
+        {
+            return null;
+        }
+        var totals = (
+            Cpu: (accounting.TotalUserTime + accounting.TotalKernelTime) / 1e7,
+            Io: (long)(accounting.IoInfo.ReadTransferCount + accounting.IoInfo.WriteTransferCount));
+        var seconds = sinceSample.Elapsed.TotalSeconds;
+        sinceSample.Restart();
+        var previous = lastTotals;
+        lastTotals = totals;
+        if (previous is not { } before)
+        {
+            return null;
+        }
+        var cpu = Math.Max(0, totals.Cpu - before.Cpu);
+        var io = Math.Max(0, totals.Io - before.Io);
+        var quiet = JobActivity.IsQuiet(seconds, cpu, io);
+        facts.Record(ProgramFactKinds.JobActivity, new JobActivity(Math.Round(seconds, 3), Math.Round(cpu, 4), io, quiet));
+        return quiet;
     }
 
     private void RecordAccounting()

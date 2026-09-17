@@ -40,7 +40,7 @@ public sealed class ProShowLauncher : IProgramLauncher
         ArgumentException.ThrowIfNullOrEmpty(showPath);
         // Текущий каталог — каталог файла шоу, как при открытии проекта двойным щелчком.
         var directory = Path.GetDirectoryName(showPath);
-        return JobRun.Start(
+        return ProgramRun.Start(
             ProgramPath,
             $"\"{ProgramPath}\" \"{showPath}\"",
             Directory.Exists(directory) ? directory : null,

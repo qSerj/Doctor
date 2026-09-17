@@ -137,6 +137,23 @@ public sealed class ObservationService : IAsyncDisposable
             .ToList();
     }
 
+    /// <summary>Открытые диалоги живого сеанса; отказ — у закрытого и неизвестного.</summary>
+    public (IReadOnlyList<DialogInfo>? Dialogs, int Status, ObserverError? Error) Dialogs(string id)
+    {
+        ObservationSession? session;
+        lock (gate)
+        {
+            session = current?.Id == id ? current : null;
+        }
+        if (session is not null && !session.IsFinishing)
+        {
+            return (session.Dialogs(), StatusCodes.Status200OK, null);
+        }
+        return session is null && JournalPath(id) is null
+            ? (null, StatusCodes.Status404NotFound, new ObserverError(ObserverErrors.UnknownSession))
+            : (null, StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.SessionFinished));
+    }
+
     /// <summary>Журнал в памяти, если сеанс ещё открыт в этом процессе.</summary>
     public FactLog? Live(string id)
     {

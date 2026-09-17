@@ -87,6 +87,14 @@ public static class ObserverHost
                 : Results.Json(error, ObservationJson.Options, statusCode: status);
         });
 
+        app.MapGet("/sessions/{id}/dialogs", (string id) =>
+        {
+            var (dialogs, status, error) = service.Dialogs(id);
+            return dialogs is not null
+                ? Results.Json(dialogs, ObservationJson.Options)
+                : Results.Json(error, ObservationJson.Options, statusCode: status);
+        });
+
         app.MapGet("/sessions/{id}/facts", (HttpContext context, string id) => WriteFactsAsync(context, service, id));
 
         app.MapGet("/sessions/{id}/stream", (HttpContext context, string id) => StreamAsync(context, service, id, stopping));

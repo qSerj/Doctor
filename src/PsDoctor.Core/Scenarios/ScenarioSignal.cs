@@ -24,4 +24,6 @@ public sealed record ProgramExited(TimeSpan At, int? ExitCode) : ScenarioSignal(
 /// <param name="Handle">Хэндл окна диалога — по нему диалог узнаётся при закрытии.</param>
 /// <param name="Texts">Тексты дочерних <c>Static</c>; у окон, где текст нарисован программой, пусто.</param>
 /// <param name="Buttons">Тексты кнопок по порядку.</param>
-public sealed record DialogInfo(long Handle, string? Title, IReadOnlyList<string> Texts, IReadOnlyList<string> Buttons);
+/// <param name="Class">Класс окна: <c>#32770</c> — системный диалог, <c>AGDSDocParent</c> — окно самой программы.</param>
+/// <param name="ProcessId">Процесс куста, которому принадлежит диалог.</param>
+public sealed record DialogInfo(long Handle, string? Title, IReadOnlyList<string> Texts, IReadOnlyList<string> Buttons, string? Class = null, int? ProcessId = null);

@@ -4,15 +4,17 @@ using PsDoctor.Core.Scenarios;
 namespace PsDoctor.Observer;
 
 /// <summary>
-/// Действия сценария в сеансе. В Ш2 наблюдатель умеет только запускать: окна, <c>press</c> и <c>close</c> — Ш3,
-/// <c>render</c> — когда найден способ. Неумение — срыв шага с причиной, а не молчаливый пропуск.
+/// Действия сценария в сеансе: <c>launch</c>, <c>press</c>, <c>close</c>. <c>render</c> — когда найден способ;
+/// до тех пор неумение — срыв шага с причиной, а не молчаливый пропуск.
 /// </summary>
 public sealed class SessionActions(ObservationSession session, IProgramLauncher launcher) : IScenarioActions
 {
     public Task<ActionResult> RunAsync(ActionStep step, CancellationToken cancellationToken) =>
-        Task.FromResult(step switch
+        step switch
         {
-            LaunchStep launch => session.Launch(launch.ShowPath, launcher),
-            _ => ActionResult.Failed(StepFailures.Unsupported),
-        });
+            LaunchStep launch => Task.FromResult(session.Launch(launch.ShowPath, launcher)),
+            PressStep press => session.PressAsync(press.Button, cancellationToken),
+            CloseStep => Task.FromResult(session.Close()),
+            _ => Task.FromResult(ActionResult.Failed(StepFailures.Unsupported)),
+        };
 }

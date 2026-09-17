@@ -25,6 +25,7 @@ public sealed class ObservationSession : IProgramEvents
     private IProgramRun? program;
     private bool launched;
     private bool mainExited;
+    private string? title;
     private bool finishing;
     private Channel<ScenarioSignal>? signals;
     private Task? scenario;
@@ -82,6 +83,13 @@ public sealed class ObservationSession : IProgramEvents
                 throw new InvalidOperationException("сеанс закрывается");
             }
             signals = channel;
+            // Состояние программы, известное до сценария, — сценарию в долг: заголовок и выход.
+            // Открытые диалоги не передаются: иначе сценарий «press» из пульта остановился бы на том самом
+            // диалоге, в котором нажимает, как на неожиданном. Сценарий ждёт только диалогов, вставших при нём.
+            if (title is not null)
+            {
+                channel.Writer.TryWrite(new TitleChanged(clock.Elapsed, title));
+            }
             if (mainExited)
             {
                 channel.Writer.TryWrite(new ProgramExited(clock.Elapsed, null));
@@ -144,6 +152,33 @@ public sealed class ObservationSession : IProgramEvents
         }
         return ActionResult.Done;
     }
+
+    /// <summary>Открытые диалоги программы; без программы — пусто.</summary>
+    public IReadOnlyList<DialogInfo> Dialogs() => Program()?.Dialogs() ?? [];
+
+    /// <summary>Действие <c>press</c>.</summary>
+    public Task<ActionResult> PressAsync(string button, CancellationToken cancellationToken) =>
+        Program() is { } run
+            ? run.PressAsync(button, cancellationToken)
+            : Task.FromResult(ActionResult.Failed(WindowActionFailures.NoProgram));
+
+    /// <summary>Действие <c>close</c>.</summary>
+    public ActionResult Close() => Program()?.Close() ?? ActionResult.Failed(WindowActionFailures.NoProgram);
+
+    void IProgramEvents.TitleChanged(string? text)
+    {
+        lock (gate)
+        {
+            title = text;
+        }
+        Send(new TitleChanged(clock.Elapsed, text));
+    }
+
+    public void DialogAppeared(DialogInfo dialog) => Send(new DialogOpened(clock.Elapsed, dialog));
+
+    public void DialogDisappeared(long handle) => Send(new DialogClosed(clock.Elapsed, handle));
+
+    public void Activity(bool quiet) => Send(new ActivitySampled(clock.Elapsed, quiet));
 
     public void MainExited(int? exitCode)
     {
@@ -246,6 +281,14 @@ public sealed class ObservationSession : IProgramEvents
             {
                 _ = FinishAsync(SessionEndReasons.NoProgram);
             }
+        }
+    }
+
+    private IProgramRun? Program()
+    {
+        lock (gate)
+        {
+            return finishing ? null : program;
         }
     }
 

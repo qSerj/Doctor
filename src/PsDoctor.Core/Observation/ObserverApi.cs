@@ -27,6 +27,9 @@ public static class ObserverRoutes
     /// </summary>
     public static string Stream(string session) => $"/sessions/{Uri.EscapeDataString(session)}/stream";
 
+    /// <summary>GET: открытые диалоги живого сеанса с текстами и кнопками, <see cref="Scenarios.DialogInfo"/>.</summary>
+    public static string Dialogs(string session) => $"/sessions/{Uri.EscapeDataString(session)}/dialogs";
+
     /// <summary>POST: прекратить наблюдение. Программу не закрывает.</summary>
     public static string Stop(string session) => $"/sessions/{Uri.EscapeDataString(session)}/stop";
 
