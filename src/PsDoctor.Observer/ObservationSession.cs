@@ -17,7 +17,7 @@ public sealed class ObservationSession : IProgramEvents
     public static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly Stopwatch clock = Stopwatch.StartNew();
-    private readonly StreamWriter file;
+    private readonly TextWriter file;
     private readonly Action<ObservationSession> onFinished;
     private readonly Lock gate = new();
     private readonly Timer ticker;
@@ -30,7 +30,7 @@ public sealed class ObservationSession : IProgramEvents
     private Channel<ScenarioSignal>? signals;
     private Task? scenario;
 
-    private ObservationSession(string id, string journalPath, StreamWriter file, Action<ObservationSession> onFinished)
+    private ObservationSession(string id, string journalPath, TextWriter file, Action<ObservationSession> onFinished)
     {
         Id = id;
         JournalPath = journalPath;
@@ -60,13 +60,20 @@ public sealed class ObservationSession : IProgramEvents
 
     public Task Finished => finished.Task;
 
-    public static ObservationSession Open(string directory, string id, ObserverHealth build, Action<ObservationSession> onFinished)
+    /// <param name="journal">Куда писать журнал; <c>null</c> — файл сеанса в каталоге.</param>
+    public static ObservationSession Open(
+        string directory,
+        string id,
+        ObserverHealth build,
+        Action<ObservationSession> onFinished,
+        TextWriter? journal = null)
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, id + SessionIds.JournalExtension);
         // Файл открыт на запись одним писателем, читать его можно, пока сеанс идёт.
-        var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var writer = journal ?? new StreamWriter(
+            new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var session = new ObservationSession(id, path, writer, onFinished);
         session.Log.Record(ProgramFactKinds.SessionStarted, new { startedAt = DateTimeOffset.Now, observer = build });
         return session;
@@ -259,11 +266,23 @@ public sealed class ObservationSession : IProgramEvents
             await Task.Run(run.Conclude).ConfigureAwait(false);
         }
 
-        Log.Record(ProgramFactKinds.SessionFinished, new { reason });
-        Log.Complete();
-        await file.DisposeAsync().ConfigureAwait(false);
-        finished.TrySetResult();
-        onFinished(this);
+        // Хвост закрытия — через finally: не записался последний факт или не закрылся файл (на стенде кончается
+        // место) — сеанс всё равно освобождается. Иначе следующий launch навсегда получает program-running,
+        // а второй FinishAsync навсегда уходит ждать finished.Task.
+        try
+        {
+            Log.Record(ProgramFactKinds.SessionFinished, new { reason });
+            Log.Complete();
+            await file.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // Повторный Complete ничего не стоит и ничего не бросает: порядок «закрыть журнал, потом файл» сохранён,
+            // а закрытие журнала гарантировано и тогда, когда до него не дошло.
+            Log.Complete();
+            finished.TrySetResult();
+            onFinished(this);
+        }
     }
 
     private async Task<ScenarioOutcome> Execute(

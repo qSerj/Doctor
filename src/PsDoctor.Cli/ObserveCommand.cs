@@ -32,6 +32,12 @@ public static class ObserveCommand
     public const string UrlVariable = "PSDOCTOR_OBSERVER_URL";
     public const string KeyFileVariable = "PSDOCTOR_OBSERVER_KEY_FILE";
 
+    /// <summary>Сколько раз <c>run</c> переподключается к оборванному потоку фактов, прежде чем считать это сбоем окружения.</summary>
+    private const int StreamRetries = 3;
+
+    /// <summary>Пауза между попытками переподключения.</summary>
+    private static readonly TimeSpan StreamRetryPause = TimeSpan.FromSeconds(2);
+
     public static async Task<int> RunAsync(
         IReadOnlyList<string> args,
         TextReader stdin,
@@ -160,16 +166,35 @@ public static class ObserveCommand
         stderr.WriteLine($"сеанс {accepted.Session}, факты сценария после {accepted.After.ToString(CultureInfo.InvariantCulture)}");
 
         ScenarioStatus? status = null;
-        await foreach (var fact in client.StreamAsync(accepted.Session, accepted.After, null, cancellationToken).ConfigureAwait(false))
+        var attempts = 0;
+        while (true)
         {
-            output.Fact(fact);
-            if (status is null && fact.Kind == ScenarioFactKinds.ScenarioFinished)
+            try
             {
-                status = fact.Data.GetProperty("status").Deserialize<ScenarioStatus>(ObservationJson.Options);
-                if (!options.Follow)
+                await foreach (var fact in client.StreamAsync(accepted.Session, output.LastNumber ?? accepted.After, null, cancellationToken)
+                    .ConfigureAwait(false))
                 {
-                    break;
+                    output.Fact(fact);
+                    if (status is null && fact.Kind == ScenarioFactKinds.ScenarioFinished)
+                    {
+                        status = fact.Data.GetProperty("status").Deserialize<ScenarioStatus>(ObservationJson.Options);
+                        if (!options.Follow)
+                        {
+                            break;
+                        }
+                    }
                 }
+                break;
+            }
+            // Обрыв соединения — не конец сеанса: номер последнего факта известен, журнал на диске, сервер
+            // отдаёт продолжение с этого номера. Рендер идёт часами, и одно соединение его не переживает.
+            catch (Exception e) when ((e is IOException or HttpRequestException) && attempts < StreamRetries)
+            {
+                attempts++;
+                stderr.WriteLine($"Поток фактов оборван после факта "
+                    + $"{(output.LastNumber ?? accepted.After).ToString(CultureInfo.InvariantCulture)}: {e.Message}; "
+                    + $"попытка {attempts.ToString(CultureInfo.InvariantCulture)} из {StreamRetries.ToString(CultureInfo.InvariantCulture)}.");
+                await Task.Delay(StreamRetryPause, cancellationToken).ConfigureAwait(false);
             }
         }
         return status == ScenarioStatus.Completed ? ObserveExitCodes.Done : ObserveExitCodes.ScenarioNotCompleted;

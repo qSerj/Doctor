@@ -17,6 +17,8 @@ namespace PsDoctor.Core.Scenarios;
 /// </para>
 /// <para>
 /// Часов у исполнителя нет: время приходит в сигналах, и по нему считаются таймауты шагов и их длительность.
+/// Единственное исключение — предел времени действия: он поставлен таймером на отмену действия, потому что
+/// сигналы кончаются вместе с программой, а ожидание итога действия должно сорваться и после этого.
 /// </para>
 /// </remarks>
 public sealed class ScenarioExecutor
@@ -135,8 +137,16 @@ public sealed class ScenarioExecutor
 
         private async Task<StepVerdict> RunActionAsync(ActionStep step, TimeSpan start)
         {
+            var limit = step is RenderStep ? RenderActionTimeout : owner.actionTimeout;
             using var stepCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            // Предел ставится сразу, а не только в цикле ниже: сигналы кончаются в любой момент — программа
+            // вышла, пришёл stop, — и тогда времени, по которому считается таймаут, больше не приходит,
+            // а ожидание итога действия осталось бы без предела вовсе.
+            stepCancellation.CancelAfter(limit);
             var task = InvokeAsync(step, stepCancellation.Token);
+
+            // Предел шага сработал сам, а сценарий не отменяли: это таймаут действия, а не его сбой.
+            bool Timed() => stepCancellation.IsCancellationRequested && !cancellation.IsCancellationRequested;
 
             while (!task.IsCompleted && !ended)
             {
@@ -147,7 +157,6 @@ public sealed class ScenarioExecutor
                 {
                     Apply(signal);
                 }
-                var limit = step is RenderStep ? RenderActionTimeout : owner.actionTimeout;
                 if (!task.IsCompleted && now - start >= limit)
                 {
                     await stepCancellation.CancelAsync();
@@ -159,7 +168,11 @@ public sealed class ScenarioExecutor
             try
             {
                 var result = await task;
-                return result.Succeeded ? StepVerdict.Done : new StepVerdict(result.Reason ?? StepFailures.Exception);
+                if (result.Succeeded)
+                {
+                    return StepVerdict.Done;
+                }
+                return Timed() ? new StepVerdict(StepFailures.Timeout) : new StepVerdict(result.Reason ?? StepFailures.Exception);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
@@ -167,7 +180,9 @@ public sealed class ScenarioExecutor
             }
             catch (Exception exception)
             {
-                return new StepVerdict(StepFailures.Exception, Error: exception.GetType().FullName);
+                return Timed()
+                    ? new StepVerdict(StepFailures.Timeout)
+                    : new StepVerdict(StepFailures.Exception, Error: exception.GetType().FullName);
             }
         }
 

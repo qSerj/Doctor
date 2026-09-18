@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using PsDoctor.Core.Observation;
 using PsDoctor.Core.Scenarios;
 
@@ -132,9 +134,48 @@ public sealed class ObservationService : IAsyncDisposable
         return ids
             .Order(StringComparer.Ordinal)
             .Select(id => id == live?.Id
-                ? new SessionSummary(id, !live.Log.IsCompleted, live.Log.LastNumber)
-                : new SessionSummary(id, false, null))
+                ? new SessionSummary(id, !live.Log.IsCompleted, live.Log.LastNumber, EndsFinished(id))
+                : new SessionSummary(id, false, null, EndsFinished(id)))
             .ToList();
+    }
+
+    /// <summary>Сколько байтов хвоста журнала читать ради последней строки: строка факта — сотни байтов.</summary>
+    private const int JournalTail = 16 * 1024;
+
+    /// <summary>
+    /// Журнал кончается фактом <c>session-finished</c>. Весь журнал ради этого не читается: хватает хвоста файла.
+    /// Нечитаемый файл и недописанная последняя строка — оборванный сеанс, а не доведённый до конца.
+    /// </summary>
+    private bool EndsFinished(string id)
+    {
+        try
+        {
+            var path = Path.Combine(directory, id + SessionIds.JournalExtension);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var size = (int)Math.Min(stream.Length, JournalTail);
+            if (size == 0)
+            {
+                return false;
+            }
+            stream.Seek(-size, SeekOrigin.End);
+            var tail = new byte[size];
+            stream.ReadExactly(tail, 0, size);
+            var last = Encoding.UTF8.GetString(tail)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .LastOrDefault();
+            if (last is null)
+            {
+                return false;
+            }
+            using var fact = JsonDocument.Parse(last);
+            return fact.RootElement.TryGetProperty("kind", out var kind)
+                && kind.ValueKind == JsonValueKind.String
+                && kind.GetString() == ProgramFactKinds.SessionFinished;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Открытые диалоги живого сеанса; отказ — у закрытого и неизвестного.</summary>

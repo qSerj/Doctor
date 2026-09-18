@@ -38,18 +38,21 @@ public sealed class ObserveCommandTests : IAsyncLifetime
         Directory.Delete(_каталог, recursive: true);
     }
 
-    private async Task<(int Code, string[] Out, string Err)> Observe(params string[] args)
+    private Task<(int Code, string[] Out, string Err)> Observe(params string[] args) => Observe(null, args);
+
+    private async Task<(int Code, string[] Out, string Err)> Observe(HttpMessageHandler? handler, params string[] args)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
-        using var время = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var время = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var code = await ObserveCommand.RunAsync(
             ["--url", _наблюдатель.Urls.Single(), "--key-file", _файлКлюча, .. args],
             TextReader.Null,
             stdout,
             stderr,
             _ => null,
-            время.Token);
+            время.Token,
+            handler);
         return (code, stdout.ToString().Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries), stderr.ToString());
     }
 
@@ -141,11 +144,142 @@ public sealed class ObserveCommandTests : IAsyncLifetime
         Assert.Equal(журнал[^1], остальные[^1]);
     }
 
+    [Fact]
+    public async Task Оборванный_поток_досматривается_после_переподключения()
+    {
+        using var обрыв = new Обрыв(событий: 1);
+
+        var прогон = Observe(обрыв, "run", "--follow", "--step", "launch \"C:\\lab\\p\\1.psh\"");
+        await _запуск.Запущен;
+        _запуск.Выйти();
+        var (code, stdout, stderr) = await прогон;
+
+        Assert.Equal(1, обрыв.Обрывов);
+        Assert.Equal(ObserveExitCodes.Done, code);
+        Assert.Contains("оборван", stderr, StringComparison.Ordinal);
+        var сеанс = stderr.Split(' ', ',')[1];
+        var журнал = await File.ReadAllLinesAsync(Path.Combine(_каталог, "sessions", сеанс + ".jsonl"));
+        // Факт номер 1 — открытие сеанса, он раньше сценария: run его не выводит. Остальное досмотрено до конца.
+        Assert.Equal(журнал.Length, 1 + stdout.Length);
+        Assert.Equal(журнал[^1], stdout[^1]);
+        var номера = stdout.Select(line => JsonSerializer.Deserialize<Fact>(line, ObservationJson.Options)!.Number).ToList();
+        Assert.Equal(номера.Distinct(), номера);
+    }
+
+    /// <summary>Рвёт первый поток фактов после нескольких событий: соединение кончилось, сеанс — нет.</summary>
+    private sealed class Обрыв(int событий) : DelegatingHandler(new SocketsHttpHandler())
+    {
+        public int Обрывов { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            var ответ = await base.SendAsync(request, cancellationToken);
+            if (Обрывов == 0 && request.RequestUri!.AbsolutePath.EndsWith("/stream", StringComparison.Ordinal))
+            {
+                Обрывов++;
+                var поток = await ответ.Content.ReadAsStreamAsync(cancellationToken);
+                ответ.Content = new StreamContent(new Обрезок(поток, событий));
+            }
+            return ответ;
+        }
+    }
+
+    /// <summary>Поток, кончающийся посреди сеанса: байт за байтом до нужного числа пустых строк SSE, дальше конец файла.</summary>
+    private sealed class Обрезок(Stream inner, int событий) : Stream
+    {
+        private bool _перенос;
+        private int _счёт;
+        private bool _кончился;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            if (_кончился || count == 0)
+            {
+                return 0;
+            }
+            var прочитано = inner.Read(buffer, offset, 1);
+            return прочитано == 0 ? 0 : Счесть(buffer[offset]);
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_кончился || buffer.Length == 0)
+            {
+                return 0;
+            }
+            var прочитано = await inner.ReadAsync(buffer[..1], cancellationToken);
+            return прочитано == 0 ? 0 : Счесть(buffer.Span[0]);
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        /// <summary>Пустая строка кончает событие SSE; набралось нужное число — дальше поток молчит.</summary>
+        private int Счесть(byte знак)
+        {
+            if (знак == (byte)'\n')
+            {
+                if (_перенос && ++_счёт >= событий)
+                {
+                    _кончился = true;
+                }
+                _перенос = true;
+            }
+            else if (знак != (byte)'\r')
+            {
+                _перенос = false;
+            }
+            return 1;
+        }
+    }
+
     /// <summary>Подменённый запуск: программа живёт, пока тест не скажет выйти.</summary>
     private sealed class Запуск : IProgramLauncher, IProgramRun
     {
+        private readonly TaskCompletionSource _запущен = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private IFactRecorder? _факты;
         private IProgramEvents? _события;
+
+        /// <summary>Выполняется, когда сценарий дошёл до запуска программы.</summary>
+        public Task Запущен => _запущен.Task;
 
         public int ProcessId => 1000;
 
@@ -156,6 +290,7 @@ public sealed class ObserveCommandTests : IAsyncLifetime
             _факты = facts;
             _события = events;
             facts.Record(ProgramFactKinds.ProgramLaunched, new ProgramLaunched("proshow.exe", showPath, null, true), ProcessId);
+            _запущен.TrySetResult();
             return this;
         }
 

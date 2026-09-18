@@ -167,6 +167,34 @@ public sealed class ScenarioExecutorTests
     }
 
     [Fact]
+    public async Task Кончившиеся_сигналы_не_снимают_предел_времени_действия()
+    {
+        var stand = new Stand();
+        var cancelled = false;
+        stand.Actions.On<CloseStep>(async token =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true;
+                throw;
+            }
+            return ActionResult.Done;
+        });
+        // Сигналы кончились посреди действия: программа вышла сама или пришёл stop. Времени больше не приходит,
+        // и шаг обязан сорваться по пределу, а не ждать итога вечно.
+        stand.OnStepStarted(1, () => stand.Signals.Writer.Complete());
+
+        var outcome = await stand.RunAsync("close\nwait exit 60", actionTimeout: TimeSpan.FromMilliseconds(200));
+
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 1, StepFailures.Timeout), outcome);
+        Assert.True(cancelled);
+    }
+
+    [Fact]
     public async Task Исключение_действия_срывает_шаг_с_типом_исключения()
     {
         var stand = new Stand();
@@ -353,10 +381,10 @@ public sealed class ScenarioExecutorTests
         /// <summary>Выполнить, когда записан факт начала шага: сигнал заведомо приходит во время шага.</summary>
         public void OnStepStarted(int line, Action hook) => stepHooks.Add((line, hook));
 
-        public Task<ScenarioOutcome> RunAsync(string text, CancellationToken cancellationToken = default)
+        public Task<ScenarioOutcome> RunAsync(string text, CancellationToken cancellationToken = default, TimeSpan? actionTimeout = null)
         {
             var scenario = ScenarioParser.Parse(text).Scenario ?? throw new ArgumentException("сценарий не разобран", nameof(text));
-            return new ScenarioExecutor(Actions, this).RunAsync(scenario, Signals.Reader, cancellationToken);
+            return new ScenarioExecutor(Actions, this, actionTimeout).RunAsync(scenario, Signals.Reader, cancellationToken);
         }
 
         public Fact Record(string kind, int? processId, JsonElement data)

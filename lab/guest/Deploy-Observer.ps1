@@ -37,7 +37,8 @@ New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Inbound -Protocol 
 # и мешало бы фактам о диалогах программы.
 Set-NetFirewallProfile -All -NotifyOnListen False
 
-$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$exe`" --listen $Listen --key-file `"$key`""
+# --allow-remote: адрес стенда не петлевой, и без этого ключа наблюдатель порт не откроет.
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$exe`" --listen $Listen --allow-remote --key-file `"$key`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User 'user'
 $principal = New-ScheduledTaskPrincipal -UserId 'user' -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)

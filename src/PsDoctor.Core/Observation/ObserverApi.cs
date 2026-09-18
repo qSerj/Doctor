@@ -73,7 +73,11 @@ public sealed record RunScenarioAccepted(string Session, long After);
 public sealed record ObserverError(string Error, IReadOnlyList<ScenarioError>? Errors = null);
 
 /// <param name="LastNumber">Номер последнего факта; у закрытого сеанса с диска — <c>null</c>, журнал не перечитывается.</param>
-public sealed record SessionSummary(string Id, bool Active, long? LastNumber);
+/// <param name="Finished">
+/// Журнал кончается фактом <c>session-finished</c>: сеанс доведён до конца. У оборванного — <c>false</c>:
+/// наблюдатель сняли посреди сеанса, и последняя строка какая угодно, вплоть до недописанной.
+/// </param>
+public sealed record SessionSummary(string Id, bool Active, long? LastNumber, bool Finished = false);
 
 public sealed record CancelAccepted(string Session);
 

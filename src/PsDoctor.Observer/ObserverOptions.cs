@@ -4,7 +4,9 @@ namespace PsDoctor.Observer;
 
 /// <summary>
 /// Ключи запуска наблюдателя. Слушает 127.0.0.1, пока сетевой адрес не задан явно; ключ Bearer
-/// обязателен всегда, поэтому без ключа не открывается ни сетевой адрес, ни петля.
+/// обязателен всегда, поэтому без ключа не открывается ни сетевой адрес, ни петля. Не-петлевой адрес
+/// вдобавок требует <c>--allow-remote</c>: за этим API стоит «запусти программу» и «отдай все журналы»,
+/// а TLS у него нет и ключ едет по сети открытым текстом.
 /// </summary>
 /// <param name="DataDirectory">Каталог журналов сеансов; <c>null</c> — <see cref="DefaultDataDirectory"/>.</param>
 /// <param name="ProgramPath">Программа, которую запускает <c>launch</c>; <c>null</c> — ProShow на обычном месте.</param>
@@ -24,6 +26,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
         string? keyFile = null;
         string? data = null;
         string? program = null;
+        var allowRemote = false;
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -47,11 +50,16 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                     program = value;
                     i++;
                     break;
+                case "--allow-remote":
+                    allowRemote = true;
+                    break;
                 default:
                     return (null, $"незнакомый ключ или нет значения: «{args[i]}»");
             }
         }
 
+        if (!IPAddress.IsLoopback(address) && !allowRemote)
+            return (null, $"--listen {address}: не-петлевой адрес открывается только с --allow-remote");
         if (keyFile is null)
             return (null, "--key-file обязателен: без ключа наблюдатель не слушает");
         if (!File.Exists(keyFile))

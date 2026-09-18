@@ -258,7 +258,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
         await Поднять();
 
         var сеанс = Assert.Single(await _клиент.SessionsAsync());
-        Assert.Equal(new SessionSummary(принят.Session, false, null), сеанс);
+        Assert.Equal(new SessionSummary(принят.Session, false, null, true), сеанс);
         var послеПерезапуска = await ДоКонцаСеанса(принят.Session, 3);
         Assert.Equal(доПерезапуска.Skip(3), послеПерезапуска, (a, b) => a.Number == b.Number && a.Kind == b.Kind);
     }
@@ -365,6 +365,66 @@ public sealed class ObservationApiTests : IAsyncLifetime
         Assert.Contains(ObserverErrors.NoRaw, await есть.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Assert.Contains(ObserverErrors.UnknownSession, await нет.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Assert.Equal(HttpStatusCode.NotFound, чужой.StatusCode);
+    }
+
+    [Fact]
+    public async Task Оборванный_сеанс_отличается_в_списке_от_доведённого_до_конца()
+    {
+        var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"");
+        await ДоКонцаСценария(принят);
+        _запуск.Runs[0].Exit(0);
+        await ДоКонцаСеанса(принят.Session);
+        // Сеанс, посреди которого наблюдатель сняли: последнего факта нет, последняя строка недописана.
+        const string оборванный = "20200101-000000-000";
+        await File.WriteAllTextAsync(
+            Path.Combine(_каталог, оборванный + SessionIds.JournalExtension),
+            "{\"number\":1,\"session\":\"" + оборванный + "\",\"kind\":\"session-started\",\"data\":{}}\n"
+            + "{\"number\":2,\"session\":\"" + оборванный + "\",\"kind\":\"process-sam");
+
+        var сеансы = (await _клиент.SessionsAsync()).ToDictionary(с => с.Id, StringComparer.Ordinal);
+
+        Assert.True(сеансы[принят.Session].Finished);
+        Assert.False(сеансы[оборванный].Finished);
+        Assert.False(сеансы[оборванный].Active);
+    }
+
+    [Fact]
+    public async Task Сеанс_освобождается_даже_если_последний_факт_не_записался()
+    {
+        var закрытые = new List<ObservationSession>();
+        var сеанс = ObservationSession.Open(
+            _каталог,
+            SessionIds.New(DateTime.UtcNow, _ => false),
+            new ObserverHealth("тест", null),
+            закрытые.Add,
+            new Кончилось(строк: 1));
+
+        await Assert.ThrowsAsync<IOException>(() => сеанс.FinishAsync(SessionEndReasons.Stopped));
+
+        // Журнал закрыт — следующий launch не получит program-running; сеанс отдан владельцу;
+        // второй FinishAsync не уходит ждать навсегда, а с ним не виснут stop и остановка процесса.
+        Assert.True(сеанс.Log.IsCompleted);
+        Assert.Same(сеанс, Assert.Single(закрытые));
+        Assert.True(сеанс.Finished.IsCompleted);
+        await сеанс.FinishAsync(SessionEndReasons.Stopped).WaitAsync(Терпение);
+    }
+
+    /// <summary>Писатель журнала, у которого кончилось место: первые строки пишутся, дальше отказ.</summary>
+    private sealed class Кончилось(int строк) : TextWriter
+    {
+        private int записано;
+
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override void Write(char value) => throw new NotSupportedException();
+
+        public override void WriteLine(string? value)
+        {
+            if (++записано > строк)
+            {
+                throw new IOException("на диске нет места");
+            }
+        }
     }
 
     private static async Task Ждать(Func<bool> условие) => await Ждать(() => Task.FromResult(условие()));
