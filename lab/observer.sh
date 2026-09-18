@@ -58,6 +58,9 @@ if [ ! -s "$secret" ]; then
 fi
 ssh "${ssh_opts[@]}" "user@$host" 'if not exist C:\lab\observer mkdir C:\lab\observer'
 scp "${ssh_opts[@]}" -q "$secret" "user@$host:C:/lab/observer/observer.key"
+# Ключ без пробельных символов: файл, приехавший с Windows-машины, кончается CR, и curl вставляет его
+# в заголовок как есть — наблюдатель отвечает 400 без тела. Клиенты на .NET значение обрезают сами.
+key="$(tr -d '[:space:]' < "$secret")"
 
 step "перезапуск на стенде"
 guest_ps Deploy-Observer.ps1 -Listen "$host:$port"
@@ -66,7 +69,7 @@ step "/health с хоста"
 url="http://$host:$port/health"
 body=""
 for _ in $(seq 1 30); do
-  if body="$(curl -sf -m 2 -H "Authorization: Bearer $(cat "$secret")" "$url")"; then break; fi
+  if body="$(curl -sf -m 2 -H "Authorization: Bearer $key" "$url")"; then break; fi
   body=""; sleep 1
 done
 [ -n "$body" ] || { echo "нет ответа $url" >&2; exit 1; }
