@@ -1,3 +1,4 @@
+# Оснастка стенда. Не часть продукта, см. lab/README.md.
 # Выполнить скрипт в сеансе пользователя гостевой системы стенда и вернуть его вывод.
 #   lab\Invoke-LabUi.ps1 -Script lab\guest\Probe-Windows.ps1 -Parameters @{ ProcessName = 'proshow' }
 #
