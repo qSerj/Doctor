@@ -29,8 +29,8 @@ public static class ObserveExitCodes
 /// </summary>
 public static class ObserveCommand
 {
-    public const string UrlVariable = "PSDOCTOR_OBSERVER_URL";
-    public const string KeyFileVariable = "PSDOCTOR_OBSERVER_KEY_FILE";
+    public const string UrlVariable = ObserverConnection.UrlVariable;
+    public const string KeyFileVariable = ObserverConnection.KeyFileVariable;
 
     /// <summary>Сколько раз <c>run</c> переподключается к оборванному потоку фактов, прежде чем считать это сбоем окружения.</summary>
     private const int StreamRetries = 3;

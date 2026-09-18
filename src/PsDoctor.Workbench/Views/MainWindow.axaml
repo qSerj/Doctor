@@ -1,0 +1,131 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PsDoctor.Workbench.Views.MainWindow"
+        Width="1180"
+        Height="760"
+        MinWidth="900"
+        MinHeight="560"
+        Background="#15171B"
+        Title="psdoctor — пульт наблюдателя">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="8" ColumnDefinitions="*">
+
+    <!-- Связь -->
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,2*,Auto,Auto" Margin="0,0,0,6">
+      <TextBlock Grid.Column="0" Classes="caption" Text="адрес" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <TextBox Grid.Column="1" Text="{Binding Address, Mode=TwoWay}" PlaceholderText="http://192.168.56.5:8100" />
+      <TextBlock Grid.Column="2" Classes="caption" Text="ключ" VerticalAlignment="Center" Margin="8,0,6,0" />
+      <TextBox Grid.Column="3" Text="{Binding KeyFile, Mode=TwoWay}" PlaceholderText="файл ключа Bearer" />
+      <Button Grid.Column="4" Content="Подключиться" Margin="8,0,0,0" Click="Подключиться" />
+      <TextBlock Grid.Column="5" Classes="caption" Text="{Binding Version}" VerticalAlignment="Center" Margin="8,0,0,0" />
+    </Grid>
+
+    <!-- Сценарий и быстрые кнопки -->
+    <Grid Grid.Row="1" ColumnDefinitions="2*,Auto" Margin="0,0,0,6">
+      <TextBox Grid.Column="0"
+               Text="{Binding ScenarioText, Mode=TwoWay}"
+               AcceptsReturn="True"
+               MinHeight="88"
+               FontFamily="monospace"
+               PlaceholderText="launch &quot;C:\lab\p1\1.psh&quot;&#10;wait title .psh 120&#10;close&#10;wait exit 60" />
+      <StackPanel Grid.Column="1" Margin="8,0,0,0" Spacing="4" Width="320">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Button Content="Выполнить" IsEnabled="{Binding CanRun}" Click="Выполнить" />
+          <Button Content="Отменить" IsEnabled="{Binding Connected}" Click="Отменить" />
+          <Button Content="Прекратить наблюдение" IsEnabled="{Binding Connected}" Click="Прекратить" />
+        </StackPanel>
+        <TextBlock Classes="caption" Text="файл шоу в гостевой системе" />
+        <TextBox Text="{Binding ShowPath, Mode=TwoWay}" PlaceholderText="C:\lab\p1\1.psh" />
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Button Content="Запустить" IsEnabled="{Binding CanRun}" Click="Запустить" />
+          <Button Content="Закрыть программу" IsEnabled="{Binding CanRun}" Click="ЗакрытьПрограмму" />
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+
+    <!-- Сеансы, лента, шаги и диалоги -->
+    <Grid Grid.Row="2" ColumnDefinitions="200,*,320">
+      <DockPanel Grid.Column="0" Margin="0,0,6,0">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="0,0,0,4">
+          <TextBlock Classes="caption" Text="сеансы" VerticalAlignment="Center" />
+          <Button Content="Обновить" Click="ОбновитьСеансы" />
+        </StackPanel>
+        <ListBox ItemsSource="{Binding Sessions}" SelectionChanged="СеансВыбран" Name="СписокСеансов">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding Id}" FontFamily="monospace" />
+                <TextBlock Classes="caption" Text="{Binding Mark}" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+
+      <DockPanel Grid.Column="1" Margin="0,0,6,0">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="0,0,0,4">
+          <TextBlock Classes="caption" Text="лента фактов" VerticalAlignment="Center" />
+          <TextBox Text="{Binding KindFilter, Mode=TwoWay}" Width="260" PlaceholderText="виды через запятую, пусто — все" />
+          <Button Content="Применить фильтр" Click="ПрименитьФильтр" />
+        </StackPanel>
+        <ListBox ItemsSource="{Binding Facts}" FontFamily="monospace">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Grid ColumnDefinitions="52,84,170,52,*">
+                <TextBlock Grid.Column="0" Classes="caption" Text="{Binding Number}" />
+                <TextBlock Grid.Column="1" Classes="caption" Text="{Binding Elapsed}" />
+                <TextBlock Grid.Column="2" Text="{Binding Kind}" />
+                <TextBlock Grid.Column="3" Classes="caption" Text="{Binding ProcessId}" />
+                <TextBlock Grid.Column="4" Classes="caption" TextTrimming="CharacterEllipsis" Text="{Binding Data}" ToolTip.Tip="{Binding Data}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+
+      <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,*">
+        <TextBlock Grid.Row="0" Classes="caption" Text="шаги сценария" Margin="0,0,0,4" />
+        <ListBox Grid.Row="1" ItemsSource="{Binding Steps}">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding Text}" FontFamily="monospace" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Classes="caption" Text="{Binding State}" />
+                  <TextBlock Classes="caption" Text="{Binding Note}" />
+                </StackPanel>
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="4" Margin="0,6,0,4">
+          <TextBlock Classes="caption" Text="диалоги" VerticalAlignment="Center" />
+          <Button Content="Обновить" Click="ОбновитьДиалоги" />
+        </StackPanel>
+        <ListBox Grid.Row="3" ItemsSource="{Binding Dialogs}">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel Spacing="2">
+                <TextBlock Text="{Binding Title}" />
+                <TextBlock Classes="caption" TextWrapping="Wrap" Text="{Binding Text}" />
+                <ItemsControl ItemsSource="{Binding Buttons}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Button Content="{Binding}" Margin="0,0,4,0" Click="НажатьКнопкуДиалога" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Grid>
+
+    <TextBlock Grid.Row="3" Classes="caption" Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding Status}" />
+  </Grid>
+</Window>

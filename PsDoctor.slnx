@@ -6,11 +6,13 @@
     <Project Path="src/PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
     <Project Path="src/PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />
     <Project Path="src/PsDoctor.Observer/PsDoctor.Observer.csproj" />
+    <Project Path="src/PsDoctor.Workbench/PsDoctor.Workbench.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PsDoctor.Cli.Tests/PsDoctor.Cli.Tests.csproj" />
     <Project Path="tests/PsDoctor.Core.Tests/PsDoctor.Core.Tests.csproj" />
     <Project Path="tests/PsDoctor.Infrastructure.Tests/PsDoctor.Infrastructure.Tests.csproj" />
     <Project Path="tests/PsDoctor.Observer.Tests/PsDoctor.Observer.Tests.csproj" />
+    <Project Path="tests/PsDoctor.Workbench.Tests/PsDoctor.Workbench.Tests.csproj" />
   </Folder>
 </Solution>
