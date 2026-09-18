@@ -72,10 +72,11 @@ public sealed class ScenarioExecutor
         private bool exited;
         private TimeSpan? quietSince;
 
-        // Ход рендера: хэндл открытого окна рендера, признак того, что оно закрылось, и первый диалог после него.
+        // Ход рендера: хэндл окна рендера, если оно появлялось, и первый диалог после него.
         private long? rendering;
-        private bool renderingClosed;
         private DialogInfo? renderDone;
+
+        private bool renderingSeen => rendering is not null;
 
         public async Task<ScenarioOutcome> ExecuteAsync(Scenario scenario)
         {
@@ -215,7 +216,7 @@ public sealed class ScenarioExecutor
                 // засчитывается шагу и ждёт следующего: его кнопка нажимается отдельным press.
                 case WaitRenderDoneStep when renderDone is { } finished:
                     renderDone = null;
-                    renderingClosed = false;
+                    rendering = null;
                     unclaimed.RemoveAll(open => open.Handle == finished.Handle);
                     return new StepVerdict(null, finished);
                 case WaitTitleStep wait when title is not null && title.Contains(wait.Substring, StringComparison.Ordinal):
@@ -242,12 +243,15 @@ public sealed class ScenarioExecutor
             {
                 case DialogOpened opened:
                     unclaimed.Add(opened.Dialog);
+                    // Концом рендера считается любой диалог, кроме самого окна рендера, после того как оно
+                    // появилось. Порядка событий правило не требует: опрос окон за один заход записывает сперва
+                    // появившиеся окна и лишь затем исчезнувшие, поэтому диалог об окончании приходит то после
+                    // закрытия окна рендера, то перед ним. 17.09.2026 такой прогон повис на час до таймаута.
                     if (opened.Dialog.Title == ProShowWindows.RenderingWindow)
                     {
                         rendering = opened.Dialog.Handle;
-                        renderingClosed = false;
                     }
-                    else if (renderingClosed)
+                    else if (renderingSeen)
                     {
                         renderDone ??= opened.Dialog;
                     }
@@ -255,11 +259,6 @@ public sealed class ScenarioExecutor
                 case DialogClosed closed:
                     // Диалог, закрывшийся сам, никого не ждёт: нажимать в нём уже нечего.
                     unclaimed.RemoveAll(dialog => dialog.Handle == closed.Handle);
-                    if (rendering == closed.Handle)
-                    {
-                        rendering = null;
-                        renderingClosed = true;
-                    }
                     break;
                 case TitleChanged changed:
                     title = changed.Title;

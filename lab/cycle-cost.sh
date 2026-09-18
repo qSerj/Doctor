@@ -76,7 +76,9 @@ observer_run() {
   local run="$1" journal="$out/observer-$1.jsonl"
   restore
   set +e
-  printf '%s\n' "$scenario" | "${psdoctor[@]}" observe run - --follow > "$journal" 2> "$out/observer-$run.err"
+  # Предел времени на прогон: `observe run --follow` ждёт конца сеанса, то есть выхода программы, а сорвавшийся
+  # сценарий оставляет её с открытым диалогом. 17.09.2026 такой прогон ждал три часа, до выключения машины.
+  printf '%s\n' "$scenario" | timeout "${RUN_TIMEOUT:-1500}" "${psdoctor[@]}" observe run - --follow > "$journal" 2> "$out/observer-$run.err"
   local code=$?
   set -e
   "$PYTHON" - "$journal" "$run" "$code" "$show" <<'EOF'

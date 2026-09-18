@@ -273,6 +273,27 @@ public sealed class ScenarioExecutorTests
     }
 
     [Fact]
+    public async Task Диалог_об_окончании_замеченный_раньше_закрытия_окна_рендера_тоже_кончает_ожидание()
+    {
+        // Прогон 17.09.2026 повис на час: опрос окон за один заход записал появление диалога об окончании
+        // раньше, чем исчезновение окна рендера, а правило требовало обратного порядка. Порядка нет.
+        var stand = new Stand();
+        stand.Actions.On<RenderStep>(() => stand.Send(new DialogOpened(Seconds(5), Rendering)));
+        stand.OnStepStarted(2, () =>
+        {
+            stand.Send(new DialogOpened(Seconds(420), RenderComplete));
+            stand.Send(new DialogClosed(Seconds(420), Rendering.Handle));
+        });
+
+        var outcome = await stand.RunAsync("render\nwait render-done 3600\npress \"Ok\"");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        Assert.Equal(["render", "press"], stand.Actions.Called);
+        var done = stand.Facts.Single(fact => fact.Kind == ScenarioFactKinds.StepDone && Line(fact) == 2);
+        Assert.Equal(RenderComplete.Handle, done.Data.GetProperty("dialog").GetProperty("handle").GetInt64());
+    }
+
+    [Fact]
     public async Task У_рендера_свой_таймаут_действия_он_дольше_общего()
     {
         // Общий таймаут действия — минута, а render проходит три окна подряд, и первое из них программа

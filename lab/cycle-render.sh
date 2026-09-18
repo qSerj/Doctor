@@ -78,7 +78,9 @@ Remove-Item '$guest_out', \"\$след\\autosave.psh\", \"\$след\\pshowtoken
 exit 0"
   journal="$out/run-$run.jsonl"
   set +e
-  "${psdoctor[@]}" observe run "$scenario" --follow > "$journal" 2> "$out/run-$run.err"
+  # Предел времени на прогон: `observe run --follow` ждёт конца сеанса, то есть выхода программы, а сорвавшийся
+  # сценарий оставляет её с открытым диалогом. 17.09.2026 такой прогон ждал три часа, до выключения машины.
+  timeout "${RUN_TIMEOUT:-1500}" "${psdoctor[@]}" observe run "$scenario" --follow > "$journal" 2> "$out/run-$run.err"
   code=$?
   set -e
   # Фильм забирается на хост через папку обмена: ffprobe и сравнение — здесь.

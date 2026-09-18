@@ -40,11 +40,16 @@ function Диалоги($Process) {
     }
 }
 
-function Ждать-Окно($Process, [string] $Title, [int] $TimeoutSec, [Diagnostics.Stopwatch] $Clock) {
+# Ждёт окно с таким заголовком, а если названа кнопка — то окно, в котором эта кнопка уже есть: окно программа
+# показывает раньше, чем создаёт в нём все кнопки (17.09.2026 прогон сорвался с no-button именно так).
+function Ждать-Окно($Process, [string] $Title, [int] $TimeoutSec, [Diagnostics.Stopwatch] $Clock, [string] $Button) {
     $until = $Clock.Elapsed.TotalSeconds + $TimeoutSec
     while ($Clock.Elapsed.TotalSeconds -lt $until -and -not $Process.HasExited) {
-        $found = Диалоги $Process | Where-Object { $_.Window.Text -eq $Title } | Select-Object -First 1
-        if ($found) { return $found }
+        foreach ($окно in Диалоги $Process | Where-Object { $_.Window.Text -eq $Title }) {
+            if (-not $Button) { return $окно }
+            $кнопка = $окно.Buttons | Where-Object { $_.Text.Replace('&', '').Trim() -eq $Button } | Select-Object -First 1
+            if ($кнопка) { return $окно }
+        }
         Start-Sleep -Milliseconds $IntervalMs
     }
     return $null
@@ -69,7 +74,7 @@ if ($titleAt) { $итог.title_s = [math]::Round($titleAt, 2) } else { $ито�
 
 if ($Render -and $titleAt) {
     [void][Lab.Win32]::PostMessage($window, 0x0111, [IntPtr]$КомандаРендера, [IntPtr]::Zero)   # WM_COMMAND
-    $вывод = Ждать-Окно $process $ОкноВывода $StepTimeoutSec $clock
+    $вывод = Ждать-Окно $process $ОкноВывода $StepTimeoutSec $clock 'Create'
     if (-not $вывод) { $итог.failed = 'no-output-window' }
     else {
         $create = $вывод.Buttons | Where-Object { $_.Text.Replace('&', '').Trim() -eq 'Create' } | Select-Object -First 1
@@ -86,21 +91,15 @@ if ($Render -and $titleAt) {
                 if (-not $рендер) { $итог.failed = 'no-render-window' }
                 else {
                     $итог.render_start_s = [math]::Round($clock.Elapsed.TotalSeconds, 2)
-                    # Конец рендера — как у наблюдателя: окно рендера исчезло, и следом встал диалог.
+                    # Конец рендера — как у наблюдателя: любой диалог, кроме самого окна рендера. Порядок «окно
+                    # исчезло, потом встал диалог» не гарантирован, на нём наблюдатель уже обжёгся.
                     $until = $clock.Elapsed.TotalSeconds + $RenderTimeoutSec
-                    $закрылось = $false
                     $готово = $null
                     while ($clock.Elapsed.TotalSeconds -lt $until -and -not $process.HasExited -and -not $готово) {
-                        $открытые = @(Диалоги $process)
-                        if ($открытые.Window.Hwnd -contains $рендер.Window.Hwnd) { }
-                        elseif (-not [Lab.Win32]::IsWindow($рендер.Window.Hwnd)) {
-                            $закрылось = $true
-                            $готово = $открытые | Select-Object -First 1
-                        }
+                        $готово = Диалоги $process | Where-Object { $_.Window.Hwnd -ne $рендер.Window.Hwnd } | Select-Object -First 1
                         if (-not $готово) { Start-Sleep -Milliseconds $IntervalMs }
                     }
-                    if (-not $закрылось) { $итог.failed = 'render-timeout' }
-                    elseif (-not $готово) { $итог.failed = 'no-done-dialog' }
+                    if (-not $готово) { $итог.failed = 'render-timeout' }
                     else {
                         $итог.render_done_s = [math]::Round($clock.Elapsed.TotalSeconds, 2)
                         $кнопка = $готово.Buttons | Where-Object { $_.Text.Replace('&', '').Trim() -eq 'Ok' } | Select-Object -First 1
