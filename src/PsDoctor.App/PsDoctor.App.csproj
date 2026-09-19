@@ -14,4 +14,7 @@
     <ProjectReference Include="../PsDoctor.Core/PsDoctor.Core.csproj" />
     <ProjectReference Include="../PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/doctor-tray.png" />
+  </ItemGroup>
 </Project>

@@ -1,7 +1,9 @@
 using Avalonia;
+using System.Runtime.Versioning;
 
 namespace PsDoctor.App;
 
+[SupportedOSPlatform("windows")]
 internal static class Program
 {
     [STAThread]
