@@ -1,40 +1,50 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="PsDoctor.App.Views.MainWindow"
-        Width="660"
-        Height="550"
-        CanResize="False"
-        Background="#F5F7FB"
-        Title="Doctor для ProShow"
+        Width="410" Height="520" MinWidth="380" MinHeight="450" WindowStartupLocation="CenterScreen"
+        Background="#F8FAFD" Title="Doctor для ProShow"
         Icon="/Assets/doctor-tray.png">
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-  <StackPanel Width="480" Margin="24" Spacing="14" HorizontalAlignment="Left">
-    <StackPanel Spacing="3">
-      <TextBlock Text="Doctor для ProShow" FontSize="24" FontWeight="Bold" Foreground="#1C2940" />
-      <TextBlock Text="Помогает, когда ProShow мешают старые кэши." Classes="caption" />
+    <StackPanel Margin="16" Spacing="10">
+      <Border Background="White" BorderBrush="#DFE6EE" BorderThickness="1" CornerRadius="8" Padding="14">
+        <Grid ColumnDefinitions="42,*" ColumnSpacing="12">
+          <TextBlock x:Name="StatusIcon" Text="○" FontSize="32" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+          <StackPanel Grid.Column="1" Spacing="2">
+            <TextBlock x:Name="ProgramStatus" FontSize="17" FontWeight="Bold" TextWrapping="Wrap"/>
+            <TextBlock x:Name="ProgramHint" Classes="caption" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Border Background="White" BorderBrush="#DFE6EE" BorderThickness="1" CornerRadius="8" Padding="12">
+        <Grid ColumnDefinitions="46,*" ColumnSpacing="10">
+          <Border Width="42" Height="42" Background="#E8F2FE" CornerRadius="5">
+            <TextBlock Text="▤" Foreground="#176BC1" FontSize="25" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <StackPanel Grid.Column="1" Spacing="2">
+            <TextBlock x:Name="ProjectLabel" Text="Текущий проект" Classes="caption"/>
+            <TextBlock x:Name="ProjectName" Text="Проект не определён" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            <TextBlock x:Name="ProjectPath" Text="Выберите файл .psh вручную" Classes="caption" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="ProjectResolution" Text="Разрешение: неизвестно" Classes="caption"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Button Content="Открыть проект…" Click="ОткрытьПроект"
+              Background="#176BC1" Foreground="White" FontWeight="SemiBold" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch"/>
+      <Button Content="Проверить проект" Click="ПроверитьПроект" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
+      <Button x:Name="ProblemButton" Content="Разобраться с проблемой" Click="РазобратьсяСПроблемой" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
+      <Button x:Name="DiagnosticButton" Content="Запустить проект с диагностикой" Click="ДиагностическийЗапуск" IsVisible="False" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+      <Button x:Name="RepairButton" Content="Исправить типичные сбои" Click="ИсправитьСбои" IsVisible="False" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+      <Border x:Name="AdviceBorder" Background="#EAF4FF" CornerRadius="7" Padding="11">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+          <TextBlock x:Name="AdviceText" Text="Совет: выберите проект и проверьте его, чтобы увидеть рекомендации." TextWrapping="Wrap" Classes="caption"/>
+          <Button x:Name="ShowFindingsButton" Grid.Column="1" Content="Показать →" Click="ПоказатьРекомендации" IsVisible="False"/>
+        </Grid>
+      </Border>
+      <TextBlock x:Name="ResultText" TextWrapping="Wrap" Classes="caption" IsVisible="False"/>
+      <Grid ColumnDefinitions="*,Auto" Margin="2,3,2,0">
+        <TextBlock x:Name="FooterStatus" Classes="caption" Text="Состояние неизвестно"/>
+        <TextBlock Grid.Column="1" Text="v 0.1" Classes="caption"/>
+      </Grid>
     </StackPanel>
-
-    <Border Width="480" Background="White" BorderBrush="#DCE3ED" BorderThickness="1" CornerRadius="8" Padding="16">
-      <StackPanel Width="446" Spacing="6">
-        <TextBlock x:Name="ProgramStatus" FontSize="17" FontWeight="SemiBold" />
-        <TextBlock x:Name="ProgramHint" Classes="caption" TextWrapping="Wrap" />
-      </StackPanel>
-    </Border>
-
-    <Border Width="480" Background="White" BorderBrush="#DCE3ED" BorderThickness="1" CornerRadius="8" Padding="16">
-      <StackPanel Width="446" Spacing="9">
-        <TextBlock Text="Проект" FontWeight="SemiBold" />
-        <TextBlock x:Name="ProjectPath" Text="Не выбран. Будет проверен только кэш ProShow."
-                   Classes="caption" TextWrapping="Wrap" />
-        <Button Content="Выбрать проект…" HorizontalAlignment="Left" Click="ВыбратьПроект" />
-      </StackPanel>
-    </Border>
-
-    <Button Content="Исправить типичные сбои" Click="ИсправитьСбои"
-            Background="#176BC1" Foreground="White" FontWeight="SemiBold" />
-    <TextBlock Width="480" Text="Doctor сохранит старые кэши рядом с исходными файлами. ProShow должен быть закрыт."
-               Classes="caption" TextWrapping="Wrap" />
-    <TextBlock x:Name="ResultText" Width="480" TextWrapping="Wrap" Foreground="#1C2940" />
-  </StackPanel>
   </ScrollViewer>
 </Window>

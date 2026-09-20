@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using PsDoctor.App.Views;
 using System.Runtime.Versioning;
 
@@ -30,12 +31,27 @@ public sealed partial class App : Application
             };
 
             using var iconStream = AssetLoader.Open(new Uri("avares://PsDoctor.App/Assets/doctor-tray.png"));
+            var menu = new NativeMenu();
+            var status = new NativeMenuItem("Состояние ProShow");
+            status.IsEnabled = false;
+            menu.Add(status);
             var open = new NativeMenuItem("Открыть Doctor");
             open.Click += (_, _) => ShowWindow(window);
+            menu.Add(open);
+            var project = new NativeMenuItem("Открыть проект…");
+            project.Click += async (_, _) => { ShowWindow(window); await window.OpenProjectAsync(); };
+            menu.Add(project);
+            var problem = new NativeMenuItem("Разобраться с проблемой");
+            problem.Click += async (_, _) => { ShowWindow(window); await window.ShowProblemAsync(); };
+            menu.Add(problem);
+            var repair = new NativeMenuItem("Исправить типичные сбои");
+            repair.Click += async (_, _) => { ShowWindow(window); await window.RepairAsync(); };
+            menu.Add(repair);
+            var settings = new NativeMenuItem("Настройки пока недоступны");
+            settings.IsEnabled = false;
+            menu.Add(settings);
             var quit = new NativeMenuItem("Выход");
             quit.Click += (_, _) => desktop.Shutdown();
-            var menu = new NativeMenu();
-            menu.Add(open);
             menu.Add(quit);
             var tray = new TrayIcon
             {
@@ -45,7 +61,11 @@ public sealed partial class App : Application
                 IsVisible = true,
             };
             tray.Clicked += (_, _) => ShowWindow(window);
-            desktop.Exit += (_, _) => tray.Dispose();
+            var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            statusTimer.Tick += (_, _) => { window.RefreshStatus(); status.Header = window.TrayStatus; };
+            statusTimer.Start();
+            status.Header = window.TrayStatus;
+            desktop.Exit += (_, _) => { statusTimer.Stop(); tray.Dispose(); };
         }
 
         base.OnFrameworkInitializationCompleted();
