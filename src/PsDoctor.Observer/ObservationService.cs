@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
 using PsDoctor.Core.Scenarios;
+using PsDoctor.Infrastructure.Observation;
 
 namespace PsDoctor.Observer;
 
@@ -67,11 +68,25 @@ public sealed class ObservationService : IAsyncDisposable
                     build,
                     OnFinished);
                 current = session;
+                if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
+                {
+                    try { session.SetTrace(EtwBridge.Start(directory, session.Id, 0,
+                        Path.GetFileName(proshow.ProgramPath), session.Log)); }
+                    catch (EtwStartException)
+                    {
+                        _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                        return Refuse(StatusCodes.Status503ServiceUnavailable,
+                            new ObserverError(ObserverErrors.EtwUnavailable));
+                    }
+                }
             }
             else if (session is null)
             {
                 return Refuse(StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.NoSession));
             }
+
+            if (session.IsPassive)
+                return Refuse(StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.PassiveSession));
 
             var after = session.Log.LastNumber;
             var cancellation = new CancellationTokenSource();
@@ -82,6 +97,49 @@ public sealed class ObservationService : IAsyncDisposable
         }
     }
 
+    /// <summary>Начинает сеанс чтения уже работающего ProShow; запуск и команды ему запрещены.</summary>
+    public (AttachAccepted? Accepted, int Status, ObserverError? Error) Attach()
+    {
+        lock (gate)
+        {
+            if (current is { Log.IsCompleted: false } || scenario is not null)
+                return (null, StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.ProgramRunning));
+            if (launcher is not IProgramAttacher attacher)
+                return (null, StatusCodes.Status503ServiceUnavailable, new ObserverError(ObserverErrors.AttachFailed));
+
+            ProgramTarget target;
+            try { target = attacher.FindRunning(); }
+            catch (ProgramAttachException error)
+            {
+                return (null, StatusCodes.Status409Conflict, new ObserverError(error.Reason));
+            }
+
+            var session = ObservationSession.Open(directory,
+                SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
+                build, OnFinished);
+            current = session;
+            try
+            {
+                var run = session.Attach(target, attacher);
+                if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
+                    session.SetTrace(EtwBridge.Start(directory, session.Id, target.ProcessId,
+                        Path.GetFileName(proshow.ProgramPath), session.Log,
+                        (run as AttachedRun)?.LiveProcessIds()));
+                return (new AttachAccepted(session.Id, target.ProcessId, target.StartedUtc),
+                    StatusCodes.Status201Created, null);
+            }
+            catch (EtwStartException)
+            {
+                _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                return (null, StatusCodes.Status503ServiceUnavailable, new ObserverError(ObserverErrors.EtwUnavailable));
+            }
+            catch (ProgramAttachException error)
+            {
+                _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                return (null, StatusCodes.Status409Conflict, new ObserverError(error.Reason));
+            }
+        }
+    }
     /// <summary>Отменяет выполняемый сценарий. Сеанс — <c>null</c>, если отменять нечего.</summary>
     public string? Cancel()
     {

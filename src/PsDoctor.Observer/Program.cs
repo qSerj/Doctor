@@ -3,6 +3,12 @@ using PsDoctor.Observer;
 
 Console.OutputEncoding = Encoding.UTF8;
 
+if (args.Length > 0 && args[0] == "--etw-helper")
+{
+    var data = args.Length == 3 && args[1] == "--data" ? args[2] : ObserverOptions.DefaultDataDirectory;
+    return await EtwHelper.RunAsync(data);
+}
+
 var (options, error) = ObserverOptions.Parse(args);
 if (options is null)
 {

@@ -100,6 +100,8 @@ public static class ObserveCommand
             return options.Command switch
             {
                 "health" => output.Json(await client.HealthAsync(cancellationToken).ConfigureAwait(false)),
+                "attach" => output.Json(await client.AttachAsync(cancellationToken).ConfigureAwait(false)),
+                "raw" => await RawAsync(client, options, stdout, cancellationToken).ConfigureAwait(false),
                 "sessions" => output.Lines(await client.SessionsAsync(cancellationToken).ConfigureAwait(false)),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
@@ -108,6 +110,11 @@ public static class ObserveCommand
                 "run" => await RunScenarioAsync(client, options, stdin, output, stderr, cancellationToken).ConfigureAwait(false),
                 _ => Unknown(options.Command, stderr),
             };
+        }
+        catch (ArgumentException e)
+        {
+            stderr.WriteLine(e.Message);
+            return ObserveExitCodes.Environment;
         }
         catch (ObserverException e) when (e.Error is not null)
         {
@@ -216,6 +223,23 @@ public static class ObserveCommand
         return ObserveExitCodes.Done;
     }
 
+    private static async Task<int> RawAsync(ObserverClient client, Options options, TextWriter stdout, CancellationToken cancellationToken)
+    {
+        if (options.Arguments.Count != 3
+            || !DateTime.TryParse(options.Arguments[1], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var from)
+            || !DateTime.TryParse(options.Arguments[2], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var to)
+            || from > to)
+            throw new ArgumentException("raw: нужны сеанс, начало и конец UTC в формате ISO 8601.");
+        using var data = new MemoryStream();
+        await client.DownloadRawAsync(options.Arguments[0], from, to, data, cancellationToken).ConfigureAwait(false);
+        data.Position = 0;
+        using var reader = new StreamReader(data);
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+            await stdout.WriteLineAsync(line).ConfigureAwait(false);
+        return ObserveExitCodes.Done;
+    }
     private static async Task<int> StopAsync(ObserverClient client, Options options, Output output, TextWriter stderr, CancellationToken cancellationToken)
     {
         var session = await SessionAsync(client, options, cancellationToken).ConfigureAwait(false);
@@ -258,8 +282,10 @@ public static class ObserveCommand
         writer.WriteLine();
         writer.WriteLine("  health                          версия и коммит наблюдателя");
         writer.WriteLine("  run <файл|-> | --step <шаг>…    выполнить сценарий, факты сценария — в stdout");
+        writer.WriteLine("  attach                          подключиться к работающему ProShow без команд ему");
         writer.WriteLine("  sessions                        сеансы");
         writer.WriteLine("  facts <сеанс>                   журнал сеанса");
+        writer.WriteLine("  raw <сеанс> <от UTC> <до UTC>   сырьё ETW за интервал, JSON Lines");
         writer.WriteLine("  cancel                          отменить выполняемый сценарий");
         writer.WriteLine("  dialogs [сеанс]                 открытые диалоги с кнопками, строка на диалог");
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");

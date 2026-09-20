@@ -5,6 +5,9 @@
     <RootNamespace>PsDoctor.Observer</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../PsDoctor.Core/PsDoctor.Core.csproj" />
     <ProjectReference Include="../PsDoctor.Infrastructure/PsDoctor.Infrastructure.csproj" />
   </ItemGroup>

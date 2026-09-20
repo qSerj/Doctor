@@ -72,6 +72,13 @@ public static class ObserverHost
                 : Results.Json(result.Error, ObservationJson.Options, statusCode: result.Status);
         });
 
+        app.MapPost(ObserverRoutes.Attach, () =>
+        {
+            var result = service.Attach();
+            return result.Accepted is not null
+                ? Results.Json(result.Accepted, ObservationJson.Options, statusCode: result.Status)
+                : Results.Json(result.Error, ObservationJson.Options, statusCode: result.Status);
+        });
         app.MapPost(ObserverRoutes.CancelScenario, () =>
             service.Cancel() is { } session
                 ? Results.Json(new CancelAccepted(session), ObservationJson.Options)
@@ -99,11 +106,7 @@ public static class ObserverHost
 
         app.MapGet("/sessions/{id}/stream", (HttpContext context, string id) => StreamAsync(context, service, id, stopping));
 
-        app.MapGet("/sessions/{id}/raw", (string id) =>
-            Results.Json(
-                new ObserverError(service.Live(id) is not null || service.JournalPath(id) is not null ? ObserverErrors.NoRaw : ObserverErrors.UnknownSession),
-                ObservationJson.Options,
-                statusCode: StatusCodes.Status404NotFound));
+        app.MapGet("/sessions/{id}/raw", (HttpContext context, string id) => WriteRawEventsAsync(context, service, id));
 
         return app;
     }
@@ -113,6 +116,35 @@ public static class ObserverHost
             ? new ProShowLauncher(options.ProgramPath ?? ProShowLauncher.DefaultProgramPath)
             : new UnsupportedLauncher();
 
+    /// <summary>Сырые события за UTC-отрезок из ограниченного кольца ETW.</summary>
+    private static async Task WriteRawEventsAsync(HttpContext context, ObservationService service, string id)
+    {
+        if (service.Live(id) is null && service.JournalPath(id) is null)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status404NotFound, ObserverErrors.UnknownSession);
+            return;
+        }
+        if (!DateTime.TryParse(context.Request.Query["from"], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var from)
+            || !DateTime.TryParse(context.Request.Query["to"], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var to)
+            || from > to)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status400BadRequest, ObserverErrors.BadRequest);
+            return;
+        }
+        var directory = service.DataDirectory;
+        if (!Enumerable.Range(0, EtwFiles.SegmentCount).Any(i => File.Exists(EtwFiles.Raw(directory, id, i))))
+        {
+            await WriteErrorAsync(context, StatusCodes.Status404NotFound, ObserverErrors.NoRaw);
+            return;
+        }
+        context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+        await using var writer = new StreamWriter(context.Response.Body, new UTF8Encoding(false));
+        foreach (var value in EtwBridge.RawBetween(directory, id, from, to))
+            await writer.WriteLineAsync(JsonSerializer.Serialize(value, ObservationJson.Options));
+        await writer.FlushAsync(context.RequestAborted);
+    }
     /// <summary>Журнал сеанса JSON Lines — сколько есть на момент запроса, с номера.</summary>
     private static async Task WriteFactsAsync(HttpContext context, ObservationService service, string id)
     {

@@ -4,7 +4,7 @@ using PsDoctor.Core.Scenarios;
 namespace PsDoctor.Observer.Tests;
 
 /// <summary>Подменённый запуск: процессы — факты, которые пишет тест, выход — по команде теста.</summary>
-public sealed class FakeLauncher : IProgramLauncher
+public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
 {
     private readonly Lock gate = new();
     private readonly List<FakeRun> runs = [];
@@ -27,6 +27,20 @@ public sealed class FakeLauncher : IProgramLauncher
     public bool Fails { get; set; }
 
     public bool IsProgramRunning() => Foreign;
+
+    public ProgramTarget FindRunning() => Foreign
+        ? new ProgramTarget(1000, DateTime.UnixEpoch, @"C:\ProShow\proshow.exe")
+        : throw new ProgramAttachException(ObserverErrors.ProgramNotRunning);
+
+    public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
+    {
+        if (!Foreign || target.ProcessId != 1000)
+            throw new ProgramAttachException(ObserverErrors.AttachFailed);
+        var run = new FakeRun(target.ProcessId, facts, events);
+        facts.Record(ProgramFactKinds.ProgramAttached, target, target.ProcessId);
+        lock (gate) runs.Add(run);
+        return run;
+    }
 
     public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
     {

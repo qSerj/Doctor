@@ -18,6 +18,9 @@ public static class ObserverRoutes
     /// <summary>GET: список сеансов, <see cref="SessionSummary"/>.</summary>
     public const string Sessions = "/sessions";
 
+    /// <summary>POST: начать пассивное наблюдение за уже работающим ProShow.</summary>
+    public const string Attach = "/sessions/attach";
+
     /// <summary>GET <c>?after=N</c>: журнал сеанса JSON Lines, сколько есть на момент запроса.</summary>
     public static string Facts(string session) => $"/sessions/{Uri.EscapeDataString(session)}/facts";
 
@@ -60,6 +63,11 @@ public static class ObserverErrors
     public const string NothingRunning = "nothing-running";
 
     public const string NoRaw = "no-raw";
+    public const string ProgramNotRunning = "program-not-running";
+    public const string AmbiguousProgram = "ambiguous-program";
+    public const string AttachFailed = "attach-failed";
+    public const string PassiveSession = "passive-session";
+    public const string EtwUnavailable = "etw-unavailable";
 
     /// <summary>Запрос не разобран: нет тела, не JSON, кривой номер.</summary>
     public const string BadRequest = "bad-request";
@@ -69,6 +77,8 @@ public sealed record RunScenarioRequest(string Text);
 
 /// <param name="After">Номер последнего факта сеанса до начала сценария: факты сценария идут после него.</param>
 public sealed record RunScenarioAccepted(string Session, long After);
+
+public sealed record AttachAccepted(string Session, int ProcessId, DateTime StartedUtc);
 
 public sealed record ObserverError(string Error, IReadOnlyList<ScenarioError>? Errors = null);
 

@@ -11,6 +11,13 @@ public static class ProgramFactKinds
     /// <summary>Основной процесс создан и посажен в задание. Процесс факта — основной.</summary>
     public const string ProgramLaunched = "program-launched";
 
+    /// <summary>Наблюдение за уже работающим процессом началось; прошлые события недоступны.</summary>
+    public const string ProgramAttached = "program-attached";
+
+    public const string FileIo = "file-io";
+    public const string EtwState = "etw-state";
+    public const string EtwProcessStarted = "etw-process-started";
+
     /// <summary>Процесс программы не создан или не посажен в задание.</summary>
     public const string LaunchFailed = "launch-failed";
 
@@ -242,6 +249,21 @@ public interface IProgramLauncher
     IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events);
 }
 
+/// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>
+public sealed record ProgramTarget(int ProcessId, DateTime StartedUtc, string Image);
+
+/// <summary>Поиск и пассивное подключение к уже работающей программе.</summary>
+public interface IProgramAttacher
+{
+    ProgramTarget FindRunning();
+    IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events);
+}
+
+/// <summary>Отказ пассивного подключения с устойчивой причиной для API.</summary>
+public sealed class ProgramAttachException(string reason) : Exception(reason)
+{
+    public string Reason { get; } = reason;
+}
 /// <summary>Живой запуск. <see cref="IDisposable.Dispose"/> прекращает наблюдение, программу не закрывает.</summary>
 public interface IProgramRun : IDisposable
 {

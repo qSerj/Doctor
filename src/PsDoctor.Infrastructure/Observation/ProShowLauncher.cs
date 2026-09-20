@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using static PsDoctor.Infrastructure.Observation.Win32Job;
 using System.Runtime.Versioning;
 using PsDoctor.Core.Observation;
 
@@ -6,7 +7,7 @@ namespace PsDoctor.Infrastructure.Observation;
 
 /// <summary>Запуск ProShow с файлом шоу под заданием — так же, как в опытах: программа и путь в кавычках.</summary>
 [SupportedOSPlatform("windows")]
-public sealed class ProShowLauncher : IProgramLauncher
+public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
 {
     public const string DefaultProgramPath = @"C:\Program Files (x86)\Photodex\ProShow Producer\proshow.exe";
 
@@ -35,6 +36,52 @@ public sealed class ProShowLauncher : IProgramLauncher
         return found.Length > 0;
     }
 
+    /// <summary>Сверяет полный путь и время создания: одно имя образа может принадлежать другой установке.</summary>
+    public ProgramTarget FindRunning()
+    {
+        var found = new List<ProgramTarget>();
+        var unverified = false;
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ProgramPath)))
+        {
+            using (process)
+            {
+                var handle = OpenProcess(ProcessQueryLimitedInformation, false, process.Id);
+                if (handle == IntPtr.Zero) { unverified = true; continue; }
+                try
+                {
+                    var buffer = new char[32768];
+                    var length = (uint)buffer.Length;
+                    if (!QueryFullProcessImageNameW(handle, 0, buffer, ref length)
+                        || !GetProcessTimes(handle, out var created, out _, out _, out _))
+                    {
+                        unverified = true;
+                        continue;
+                    }
+                    var image = new string(buffer, 0, (int)length);
+                    if (Path.GetFullPath(image).Equals(Path.GetFullPath(ProgramPath), StringComparison.OrdinalIgnoreCase))
+                        found.Add(new ProgramTarget(process.Id, DateTime.FromFileTimeUtc(created), image));
+                }
+                finally { CloseHandle(handle); }
+            }
+        }
+        return found.Count switch
+        {
+            0 when unverified => throw new ProgramAttachException(ObserverErrors.AttachFailed),
+            0 => throw new ProgramAttachException(ObserverErrors.ProgramNotRunning),
+            1 when unverified => throw new ProgramAttachException(ObserverErrors.AmbiguousProgram),
+            > 1 => throw new ProgramAttachException(ObserverErrors.AmbiguousProgram),
+            _ => found[0],
+        };
+    }
+
+    public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
+    {
+        var current = FindRunning();
+        if (current.ProcessId != target.ProcessId || current.StartedUtc != target.StartedUtc)
+            throw new ProgramAttachException(ObserverErrors.AttachFailed);
+        facts.Record(ProgramFactKinds.ProgramAttached, target, target.ProcessId);
+        return AttachedRun.Start(target, facts, events);
+    }
     public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
     {
         ArgumentException.ThrowIfNullOrEmpty(showPath);

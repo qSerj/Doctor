@@ -7,6 +7,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using PsDoctor.Core.Rules;
+using PsDoctor.Core.Observation;
 using PsDoctor.Infrastructure.Observation;
 using PsDoctor.Observer.Client;
 
@@ -19,6 +20,10 @@ public sealed partial class MainWindow : Window
     private string? showPath;
     private ProjectAnalysis? analysis;
     private string? diagnosticSession;
+    private Avalonia.Threading.DispatcherTimer? diagnosticTimer;
+    private long diagnosticAfter;
+    private bool diagnosticPolling;
+    private bool diagnosticDegraded;
 
     public string TrayStatus => diagnosticSession is not null ? "Наблюдение за ProShow" :
         analysis?.Findings.Count > 0 ? "Есть рекомендации" :
@@ -29,6 +34,7 @@ public sealed partial class MainWindow : Window
         AvaloniaXamlLoader.Load(this);
         Opened += (_, _) => RefreshStatus();
         Activated += (_, _) => RefreshStatus();
+        Closed += (_, _) => diagnosticTimer?.Stop();
     }
 
     private T Control<T>(string name) where T : Control => this.FindControl<T>(name)!;
@@ -187,8 +193,8 @@ public sealed partial class MainWindow : Window
         var choices = new ListBox { ItemsSource = new[]
         {
             Choice("Проект долго открывается или не открывается", "Doctor проследит за новым запуском проекта."),
-            Choice("В ProShow что-то ведёт себя странно", "Пассивное подключение пока недоступно."),
-            Choice("Рендер зависает или ProShow закрывается", "Пассивное наблюдение вывода пока недоступно."),
+            Choice("В ProShow что-то ведёт себя странно", "Doctor будет наблюдать за открытой программой и файловой активностью."),
+            Choice("Рендер зависает или ProShow закрывается", "Doctor запишет факты, пока вы сами запускаете вывод."),
         }, SelectedIndex = 0 };
         var next = new Button { Content = "Далее", IsDefault = true };
         var cancel = new Button { Content = "Отмена", IsCancel = true };
@@ -203,10 +209,100 @@ public sealed partial class MainWindow : Window
         var choice = await dialog.ShowDialog<int>(this);
         if (choice < 0) return;
         if (choice == 0) await ShowDiagnosticAsync();
-        else await ShowInfoAsync("Наблюдение за ProShow",
-            "Пассивное подключение к работающему ProShow пока не готово. Следующий шаг: добавить в Observer отдельный режим подключения без команд управления и сохранение фактов сеанса.");
+        else await ShowPassiveAsync(choice == 2);
     }
 
+    private async Task ShowPassiveAsync(bool render)
+    {
+        if (diagnosticSession is not null)
+        {
+            await ShowInfoAsync("Наблюдение за ProShow", "Наблюдение уже идёт. Чтобы закончить его, нажмите «Закончить наблюдение».");
+            return;
+        }
+        if (!HasObserverConfiguration())
+        {
+            await ShowInfoAsync("Наблюдение за ProShow", "Наблюдение не настроено. Укажите адрес Observer и путь к ключу в PSDOCTOR_OBSERVER_URL и PSDOCTOR_OBSERVER_KEY_FILE.");
+            return;
+        }
+        if (!cleaner.IsProgramRunning())
+        {
+            await ShowInfoAsync("Наблюдение за ProShow", "ProShow сейчас не работает. Прошлый сбой записать уже нельзя: откройте проект и повторите проблему под наблюдением.");
+            return;
+        }
+        try
+        {
+            using var observer = CreateObserver();
+            var accepted = await observer.AttachAsync();
+            diagnosticSession = accepted.Session;
+            StartDiagnosticWatch();
+            SetResult(render
+                ? "Наблюдаем за ProShow и файловой активностью. Запустите вывод обычным способом. Факты сохраняются локально."
+                : "Наблюдаем за ProShow и файловой активностью. Работайте как обычно. Факты сохраняются локально.");
+        }
+        catch (ObserverException error)
+        {
+            var message = error.Error?.Error switch
+            {
+                ObserverErrors.ProgramNotRunning => "ProShow уже закрылся. Прошлый сбой записать нельзя; повторите проблему под наблюдением.",
+                ObserverErrors.AmbiguousProgram => "Найдено несколько окон ProShow. Закройте лишние экземпляры и повторите подключение.",
+                ObserverErrors.EtwUnavailable => "Не удалось включить полную диагностику файловой активности. Проверьте помощник наблюдения.",
+                ObserverErrors.ProgramRunning => "Наблюдение уже идёт в другом сеансе.",
+                _ => "Не удалось начать наблюдение: " + error.Message,
+            };
+            SetResult(message);
+        }
+        catch (Exception error)
+        {
+            SetResult("Не удалось начать наблюдение: " + error.Message);
+        }
+        RefreshStatus();
+    }
+    private void StartDiagnosticWatch()
+    {
+        diagnosticAfter = 0;
+        diagnosticDegraded = false;
+        diagnosticTimer?.Stop();
+        diagnosticTimer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        diagnosticTimer.Tick += async (_, _) => await PollDiagnosticAsync();
+        diagnosticTimer.Start();
+    }
+
+    private async Task PollDiagnosticAsync()
+    {
+        if (diagnosticPolling || diagnosticSession is not { } session) return;
+        diagnosticPolling = true;
+        try
+        {
+            using var observer = CreateObserver();
+            await foreach (var fact in observer.ReadFactsAsync(session, diagnosticAfter))
+            {
+                if (diagnosticSession != session) return;
+                diagnosticAfter = fact.Number;
+                if (fact.Kind == ProgramFactKinds.EtwState
+                    && fact.Data.TryGetProperty("state", out var state)
+                    && state.GetString() is "failed" or "degraded")
+                {
+                    diagnosticDegraded = true;
+                    SetResult("Наблюдение продолжается, но запись файловой активности неполная. Проверьте помощник диагностики.");
+                }
+                if (fact.Kind == ProgramFactKinds.SessionFinished)
+                {
+                    diagnosticSession = null;
+                    diagnosticTimer?.Stop();
+                    SetResult(diagnosticDegraded
+                        ? "ProShow закрылся. Факты сохранены, но запись файловой активности неполная."
+                        : "ProShow закрылся. Факты наблюдения сохранены.");
+                    RefreshStatus();
+                    return;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Краткий обрыв связи не завершает сеанс: следующий опрос продолжит с последнего факта.
+        }
+        finally { diagnosticPolling = false; }
+    }
     private async void РазобратьсяСПроблемой(object? sender, RoutedEventArgs args) => await ShowProblemAsync();
 
     private static bool HasObserverConfiguration() =>
@@ -229,7 +325,14 @@ public sealed partial class MainWindow : Window
                 using var observer = CreateObserver();
                 await observer.StopAsync(diagnosticSession);
                 diagnosticSession = null;
-                SetResult("Наблюдение завершено. Факты сеанса сохранены.");
+                diagnosticTimer?.Stop();
+                SetResult(diagnosticDegraded ? "Наблюдение завершено. Факты сохранены, запись файловой активности неполная." : "Наблюдение завершено. Факты сеанса сохранены.");
+            }
+            catch (ObserverException error) when (error.Error?.Error == ObserverErrors.SessionFinished)
+            {
+                diagnosticSession = null;
+                diagnosticTimer?.Stop();
+                SetResult("Наблюдение уже завершилось. Записанные факты сохранены.");
             }
             catch (Exception error)
             {
@@ -275,6 +378,7 @@ public sealed partial class MainWindow : Window
             await observer.HealthAsync();
             var accepted = await observer.RunAsync($"launch \"{path}\"");
             diagnosticSession = accepted.Session;
+            StartDiagnosticWatch();
             SetResult("Наблюдаем за ProShow. Работайте как обычно. Факты сохраняются локально.");
         }
         catch (Exception error)

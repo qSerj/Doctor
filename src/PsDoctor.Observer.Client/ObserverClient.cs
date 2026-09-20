@@ -51,6 +51,13 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<RunScenarioAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>Подключается к уже работающему ProShow для пассивной диагностики.</summary>
+    public async Task<AttachAccepted> AttachAsync(CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.PostAsync(ObserverRoutes.Attach, null, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<AttachAccepted>(response, timeout.Token).ConfigureAwait(false);
+    }
     public async Task<CancelAccepted> CancelAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);
@@ -81,6 +88,17 @@ public sealed class ObserverClient : IDisposable
         await ReadAsync<CancelAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>Скачивает сырьё ETW за UTC-отрезок без ограничения длительности запроса.</summary>
+    public async Task DownloadRawAsync(string session, DateTime fromUtc, DateTime toUtc, Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        var path = ObserverRoutes.Raw(session) + "?from=" +
+            Uri.EscapeDataString(fromUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)) +
+            "&to=" + Uri.EscapeDataString(toUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        using var response = await SendForStreamAsync(path, "application/x-ndjson", cancellationToken).ConfigureAwait(false);
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
     /// <summary>Журнал сеанса, сколько есть на момент запроса, с номера.</summary>
     public async IAsyncEnumerable<Fact> ReadFactsAsync(
         string session,

@@ -23,7 +23,9 @@ public sealed class ObservationSession : IProgramEvents
     private readonly Timer ticker;
     private readonly TaskCompletionSource finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IProgramRun? program;
+    private EtwBridge? trace;
     private bool launched;
+    private bool passive;
     private bool mainExited;
     private string? title;
     private bool finishing;
@@ -160,6 +162,44 @@ public sealed class ObservationSession : IProgramEvents
         return ActionResult.Done;
     }
 
+    public void SetTrace(EtwBridge bridge)
+    {
+        lock (gate) trace = bridge;
+    }
+
+    public bool IsPassive
+    {
+        get { lock (gate) return passive; }
+    }
+
+    /// <summary>Подключение к чужому процессу не даёт наблюдателю права им управлять.</summary>
+    public IProgramRun Attach(ProgramTarget target, IProgramAttacher attacher)
+    {
+        lock (gate)
+        {
+            if (finishing || launched) throw new ProgramAttachException(ObserverErrors.SessionFinished);
+            launched = true;
+            passive = true;
+        }
+        IProgramRun run;
+        try
+        {
+            run = attacher.Attach(target, Log, this);
+        }
+        catch
+        {
+            lock (gate) { launched = false; passive = false; }
+            throw;
+        }
+        bool late;
+        lock (gate)
+        {
+            late = finishing;
+            program = run;
+        }
+        if (late) run.Dispose();
+        return run;
+    }
     /// <summary>Открытые диалоги программы; без программы — пусто.</summary>
     public IReadOnlyList<DialogInfo> Dialogs() => Program()?.Dialogs() ?? [];
 
@@ -271,6 +311,7 @@ public sealed class ObservationSession : IProgramEvents
         // а второй FinishAsync навсегда уходит ждать finished.Task.
         try
         {
+            trace?.Dispose();
             Log.Record(ProgramFactKinds.SessionFinished, new { reason });
             Log.Complete();
             await file.DisposeAsync().ConfigureAwait(false);

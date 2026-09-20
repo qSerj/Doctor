@@ -95,6 +95,68 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Подключение_без_работающей_программы_отказывает_без_сеанса()
+    {
+        var отказ = await Assert.ThrowsAsync<ObserverException>(() => _клиент.AttachAsync());
+
+        Assert.Equal(HttpStatusCode.Conflict, отказ.Status);
+        Assert.Equal(ObserverErrors.ProgramNotRunning, отказ.Error!.Error);
+        Assert.Empty(await _клиент.SessionsAsync());
+    }
+
+    [Fact]
+    public async Task Пассивный_сеанс_читает_факты_и_не_принимает_команды()
+    {
+        _запуск.Foreign = true;
+        var принят = await _клиент.AttachAsync();
+
+        Assert.Equal(1000, принят.ProcessId);
+        Assert.Equal(DateTime.UnixEpoch, принят.StartedUtc);
+        var run = Assert.Single(_запуск.Runs);
+        var факты = new List<Fact>();
+        await foreach (var факт in _клиент.ReadFactsAsync(принят.Session)) факты.Add(факт);
+        Assert.Contains(факты, f => f.Kind == ProgramFactKinds.ProgramAttached);
+
+        var второй = await Assert.ThrowsAsync<ObserverException>(() => _клиент.AttachAsync());
+        Assert.Equal(ObserverErrors.ProgramRunning, второй.Error!.Error);
+        foreach (var text in new[] { "close", "render", "press OK" })
+        {
+            var отказ = await Assert.ThrowsAsync<ObserverException>(() => _клиент.RunAsync(text));
+            Assert.Equal(ObserverErrors.PassiveSession, отказ.Error!.Error);
+        }
+        Assert.Equal(0, run.CloseRequests);
+        Assert.Equal(0, run.RenderRequests);
+        Assert.Empty(run.Pressed);
+
+        await _клиент.StopAsync(принят.Session);
+        Assert.True(run.Disposed);
+        Assert.True(_запуск.Foreign);
+        var итог = await ДоКонцаСеанса(принят.Session);
+        Assert.Equal(SessionEndReasons.Stopped, итог[^1].Data.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task Сырьё_ETW_выдаётся_только_за_запрошенный_интервал()
+    {
+        _запуск.Foreign = true;
+        var принят = await _клиент.AttachAsync();
+        var каталог = EtwFiles.Directory(_каталог);
+        Directory.CreateDirectory(каталог);
+        var раньше = new EtwRawEvent(DateTime.UnixEpoch, 1000, "read", "a", 1, null);
+        var внутри = new EtwRawEvent(DateTime.UnixEpoch.AddMinutes(1), 1000, "write", "b", 2, null);
+        await File.WriteAllLinesAsync(EtwFiles.Raw(_каталог, принят.Session),
+            [System.Text.Json.JsonSerializer.Serialize(раньше, ObservationJson.Options),
+             System.Text.Json.JsonSerializer.Serialize(внутри, ObservationJson.Options)]);
+        using var ответ = new MemoryStream();
+        await _клиент.DownloadRawAsync(принят.Session, DateTime.UnixEpoch.AddSeconds(30),
+            DateTime.UnixEpoch.AddMinutes(2), ответ);
+        var строки = Encoding.UTF8.GetString(ответ.ToArray()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Single(строки);
+        Assert.Contains("\"b\"", строки[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"a\"", строки[0], StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task Второй_запуск_при_живом_сеансе_отказ()
     {
         var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"");
@@ -122,6 +184,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
         foreach (var (метод, путь) in new[]
                  {
                      (HttpMethod.Post, ObserverRoutes.Scenarios),
+                     (HttpMethod.Post, ObserverRoutes.Attach),
                      (HttpMethod.Post, ObserverRoutes.CancelScenario),
                      (HttpMethod.Get, ObserverRoutes.Sessions),
                      (HttpMethod.Get, ObserverRoutes.Stream("20260917-000000-000")),
@@ -357,7 +420,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
         using var голый = new HttpClient { BaseAddress = new Uri(_наблюдатель.Urls.Single()) };
         голый.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Ключ);
 
-        using var есть = await голый.GetAsync(ObserverRoutes.Raw(принят.Session) + "?from=0&to=10");
+        using var есть = await голый.GetAsync(ObserverRoutes.Raw(принят.Session) + "?from=1970-01-01T00%3A00%3A00Z&to=1970-01-01T00%3A00%3A10Z");
         using var нет = await голый.GetAsync(ObserverRoutes.Raw("20000101-000000-000"));
         using var чужой = await голый.GetAsync(ObserverRoutes.Facts("..%2F..%2Fsecret"));
 
