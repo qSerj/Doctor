@@ -24,3 +24,4 @@ reports/
 /lab/transfer.local.json
 /lab/transfer.*.local.json
 /lab/__pycache__/
+/scripts/__pycache__/

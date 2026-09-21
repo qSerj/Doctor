@@ -167,11 +167,7 @@ public static class ShowFileParser
 
             if (!current.TrySetScalar(last.Name, value, out var previous))
             {
-                problems.Add(new ParseProblem(
-                    value.LineNumber,
-                    Describe(steps),
-                    ParseProblemKind.DuplicateKey,
-                    $"ключ уже встречался на строке {previous.LineNumber}; победило последнее значение"));
+                problems.Add(Repeat(value, previous, Describe(steps)));
             }
 
             return;
@@ -181,15 +177,28 @@ public static class ShowFileParser
 
         if (item.OwnValue is { } existing)
         {
-            problems.Add(new ParseProblem(
-                value.LineNumber,
-                Describe(steps),
-                ParseProblemKind.DuplicateKey,
-                $"ключ уже встречался на строке {existing.LineNumber}; победило последнее значение"));
+            problems.Add(Repeat(value, existing, Describe(steps)));
         }
 
         item.OwnValue = value;
     }
+
+    /// <summary>
+    /// Ключ встретился второй раз. Совпавшее значение — не противоречие: программа так пишет
+    /// сама, и сведений при этом не теряется. Разные значения — файл спорит сам с собой.
+    /// </summary>
+    private static ParseProblem Repeat(ShowValue value, ShowValue previous, string key) =>
+        string.Equals(value.Raw, previous.Raw, StringComparison.Ordinal)
+            ? new ParseProblem(
+                value.LineNumber,
+                key,
+                ParseProblemKind.RepeatedKey,
+                $"ключ уже встречался на строке {previous.LineNumber} с тем же значением")
+            : new ParseProblem(
+                value.LineNumber,
+                key,
+                ParseProblemKind.DuplicateKey,
+                $"ключ уже встречался на строке {previous.LineNumber} со значением «{previous.Raw}»; победило последнее");
 
     private static string Describe(List<ShowPathStep> steps)
     {

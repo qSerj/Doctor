@@ -18,8 +18,12 @@ Photodex закрылись около 2020 года. ProShow остался 32-
 src/PsDoctor.Core             модель .psh, правила, диагнозы, арифметика. Без I/O и без Windows
 src/PsDoctor.Infrastructure   файлы, кодировки, процессы, Win32, ffmpeg
 src/PsDoctor.Cli              прогон и отчёт без интерфейса
-src/PsDoctor.App              Avalonia: отчёт, одна кнопка, трей
-tests/PsDoctor.Core.Tests     xunit
+src/PsDoctor.Observer         сетевой наблюдатель живой программы на стенде
+src/PsDoctor.Observer.Client  типизированный клиент API наблюдателя
+src/PsDoctor.Workbench        Avalonia: технический пульт стенда
+src/PsDoctor.App              Avalonia: будущие отчёт, одна кнопка и трей; пока каркас
+tests/                        пять проектов xUnit
+lab/                          оснастка лаборатории, в поставку не входит
 inbound/                      двор для пациентов, в историю не попадает
 ```
 

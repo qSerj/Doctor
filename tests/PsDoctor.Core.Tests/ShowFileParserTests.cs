@@ -144,6 +144,28 @@ public sealed class ShowFileParserTests
     }
 
     [Fact]
+    public void Повторный_ключ_с_тем_же_значением_не_противоречие()
+    {
+        // По хранилищу владельца — 390 повторов `shadowColor` в 32 файлах, все с совпавшим
+        // значением. Мешать их с настоящим противоречием значит записать три десятка
+        // здоровых проектов в подозреваемые.
+        var result = SyntheticShow.Parse("title=одно", "title=одно");
+
+        Assert.Equal("одно", result.Document!.Root.Text("title"));
+        Assert.Contains(result.Problems, p => p.Kind == ParseProblemKind.RepeatedKey);
+        Assert.DoesNotContain(result.Problems, p => p.Kind == ParseProblemKind.DuplicateKey);
+    }
+
+    [Fact]
+    public void Повторный_элемент_массива_с_тем_же_значением_не_противоречие()
+    {
+        var result = SyntheticShow.Parse("cells=1", "cell[0]=8", "cell[0]=8");
+
+        Assert.Contains(result.Problems, p => p.Kind == ParseProblemKind.RepeatedKey);
+        Assert.DoesNotContain(result.Problems, p => p.Kind == ParseProblemKind.DuplicateKey);
+    }
+
+    [Fact]
     public void Конфликт_листа_и_узла_записан_проблемой()
     {
         var result = SyntheticShow.Parse("sound=2", "sound.file=audio/x.mp3");
