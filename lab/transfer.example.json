@@ -1,0 +1,65 @@
+{
+  "machine": "replace-with-source-machine-name",
+  "portable_root": "REPLACE_WITH_ABSOLUTE_PORTABLE_ROOT",
+  "portable_marker": {
+    "path": ".portable-kit-identity",
+    "sha256": "replace-with-sha256-of-manually-created-marker-file"
+  },
+  "sources": [
+    {
+      "name": "vm",
+      "path": "REPLACE_WITH_ABSOLUTE_VM_DIRECTORY",
+      "target": "vm",
+      "required": true
+    },
+    {
+      "name": "exchange-projects",
+      "path": "REPLACE_WITH_ABSOLUTE_EXCHANGE_PROJECTS_DIRECTORY",
+      "target": "exchange/projects",
+      "required": false
+    },
+    {
+      "name": "exchange-logs",
+      "path": "REPLACE_WITH_ABSOLUTE_EXCHANGE_LOGS_DIRECTORY",
+      "target": "exchange/logs",
+      "required": false
+    },
+    {
+      "name": "secrets",
+      "path": "REPLACE_WITH_ABSOLUTE_SECRETS_DIRECTORY_OR_FILE",
+      "target": "secrets",
+      "required": false
+    },
+    {
+      "name": "local-agent-state",
+      "path": "REPLACE_WITH_ABSOLUTE_LOCAL_AGENT_STATE_DIRECTORY",
+      "target": "agent-state",
+      "required": false
+    },
+    {
+      "name": "local-config",
+      "path": "REPLACE_WITH_ABSOLUTE_LOCAL_CONFIG_DIRECTORY_OR_FILE",
+      "target": "local-config",
+      "required": false
+    },
+    {
+      "name": "dirty-source",
+      "path": "REPLACE_WITH_ABSOLUTE_DIRTY_SOURCE_DIRECTORY",
+      "target": "dirty-source",
+      "required": false
+    }
+  ],
+  "vm": {
+    "source": "vm",
+    "name": "replace-with-virtual-machine-name",
+    "vboxmanage": "REPLACE_WITH_ABSOLUTE_VBOXMANAGE_PATH",
+    "vbox_file": "replace-with-vm-config.vbox"
+  },
+  "repositories": [
+    {
+      "name": "project",
+      "path": "REPLACE_WITH_ABSOLUTE_PROJECT_REPOSITORY_PATH",
+      "required": false
+    }
+  ]
+}

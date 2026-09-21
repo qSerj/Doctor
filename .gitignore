@@ -16,6 +16,12 @@ reports/
 # Память проекта: свой закрытый репозиторий
 /Memorex/
 
-# Особенности конкретной машины: пути, инструменты, оболочка. Шаблон — CLAUDE.local.md.example.
-/CLAUDE.local.md
-.claude/settings.local.json
+# Особенности конкретной машины: пути, инструменты, оболочка. Шаблон — AGENTS.local.md.example.
+/AGENTS.local.md
+/handoff.local.json
+
+# Локальная конфигурация переноса и кэш Python-оснастки.
+/lab/transfer.local.json
+/lab/transfer.*.local.json
+/lab/__pycache__/
+/scripts/__pycache__/
