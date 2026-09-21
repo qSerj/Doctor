@@ -18,6 +18,7 @@ reports/
 
 # Особенности конкретной машины: пути, инструменты, оболочка. Шаблон — AGENTS.local.md.example.
 /AGENTS.local.md
+/handoff.local.json
 
 # Локальная конфигурация переноса и кэш Python-оснастки.
 /lab/transfer.local.json
