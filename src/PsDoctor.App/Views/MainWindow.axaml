@@ -31,9 +31,7 @@
       <Button Content="Открыть проект…" Click="ОткрытьПроект"
               Background="#176BC1" Foreground="White" FontWeight="SemiBold" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch"/>
       <Button Content="Проверить проект" Click="ПроверитьПроект" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
-      <Button x:Name="ProblemButton" Content="Разобраться с проблемой" Click="РазобратьсяСПроблемой" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
-      <Button x:Name="DiagnosticButton" Content="Запустить проект с диагностикой" Click="ДиагностическийЗапуск" IsVisible="False" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
-      <Button x:Name="RepairButton" Content="Исправить типичные сбои" Click="ИсправитьСбои" IsVisible="False" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+      <Button x:Name="ProblemButton" Content="Решить проблему" Click="РазобратьсяСПроблемой" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
       <Border x:Name="AdviceBorder" Background="#EAF4FF" CornerRadius="7" Padding="11">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
           <TextBlock x:Name="AdviceText" Text="Совет: выберите проект и проверьте его, чтобы увидеть рекомендации." TextWrapping="Wrap" Classes="caption"/>
@@ -41,10 +39,7 @@
         </Grid>
       </Border>
       <TextBlock x:Name="ResultText" TextWrapping="Wrap" Classes="caption" IsVisible="False"/>
-      <Grid ColumnDefinitions="*,Auto" Margin="2,3,2,0">
-        <TextBlock x:Name="FooterStatus" Classes="caption" Text="Состояние неизвестно"/>
-        <TextBlock Grid.Column="1" Text="v 0.1" Classes="caption"/>
-      </Grid>
+      <TextBlock Text="v 0.1" Classes="caption" HorizontalAlignment="Right" Margin="2,3,2,0"/>
     </StackPanel>
   </ScrollViewer>
 </Window>

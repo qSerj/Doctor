@@ -41,12 +41,9 @@ public sealed partial class App : Application
             var project = new NativeMenuItem("Открыть проект…");
             project.Click += async (_, _) => { ShowWindow(window); await window.OpenProjectAsync(); };
             menu.Add(project);
-            var problem = new NativeMenuItem("Разобраться с проблемой");
+            var problem = new NativeMenuItem("Решить проблему");
             problem.Click += async (_, _) => { ShowWindow(window); await window.ShowProblemAsync(); };
             menu.Add(problem);
-            var repair = new NativeMenuItem("Исправить типичные сбои");
-            repair.Click += async (_, _) => { ShowWindow(window); await window.RepairAsync(); };
-            menu.Add(repair);
             var settings = new NativeMenuItem("Настройки пока недоступны");
             settings.IsEnabled = false;
             menu.Add(settings);
