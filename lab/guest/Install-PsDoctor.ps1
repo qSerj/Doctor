@@ -22,10 +22,32 @@ if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) { throw "нет 
 $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
 if ($manifest.schema -ne 1 -or $manifest.runtime -ne 'win-x64') { throw 'неподдерживаемый манифест релиза' }
 
+function Stop-DoctorProcess($process) {
+    $process.CloseMainWindow() | Out-Null
+    if (-not $process.WaitForExit(3000)) {
+        $process.Kill()
+        $process.WaitForExit(5000)
+    }
+}
+
+$stopped = @{}
 foreach ($name in @('PsDoctor.Observer', 'PsDoctor.Workbench', 'PsDoctor.App')) {
     Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
-        $_.CloseMainWindow() | Out-Null
-        if (-not $_.WaitForExit(3000)) { $_.Kill(); $_.WaitForExit(5000) }
+        if (-not $stopped.ContainsKey($_.Id)) {
+            Stop-DoctorProcess $_
+            $stopped[$_.Id] = $true
+        }
+    }
+}
+# Имя процесса может отличаться от имени сборки. Проверяем путь, чтобы обновление
+# не упиралось в работающий Doctor, запущенный не через ярлык.
+$rootPrefix = ([IO.Path]::GetFullPath($Root)).TrimEnd('\') + '\'
+Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+    try { $path = $_.Path } catch { $path = $null }
+    if ($path -and $path.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $stopped.ContainsKey($_.Id)) {
+        Stop-DoctorProcess $_
+        $stopped[$_.Id] = $true
     }
 }
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
