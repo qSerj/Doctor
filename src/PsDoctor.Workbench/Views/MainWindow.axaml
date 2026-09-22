@@ -39,6 +39,17 @@
           <Button Content="Запустить" IsEnabled="{Binding CanRun}" Click="Запустить" />
           <Button Content="Закрыть программу" IsEnabled="{Binding CanRun}" Click="ЗакрытьПрограмму" />
         </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Button Content="Рендер без диалогов" IsEnabled="{Binding CanRun}" Click="РендерБезДиалогов" />
+          <Button Content="Рендер с Ok to All" IsEnabled="{Binding CanRun}" Click="РендерСДиалогом" />
+        </StackPanel>
+        <TextBlock Classes="caption" Text="каталог обмена" />
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBox Width="270" Text="{Binding ExchangeDirectory, Mode=TwoWay}" PlaceholderText="/home/.../Lab/exchange" />
+          <Button Content="..." Click="ВыбратьКаталогОбмена" />
+        </StackPanel>
+        <CheckBox Content="включить сырой ETW" IsChecked="{Binding IncludeRaw, Mode=TwoWay}" />
+        <Button Content="Собрать пакет" IsEnabled="{Binding CanExport}" Click="СобратьПакет" />
       </StackPanel>
     </Grid>
 
@@ -82,7 +93,7 @@
         </ListBox>
       </DockPanel>
 
-      <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,*">
+      <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,Auto,*,Auto,*">
         <TextBlock Grid.Row="0" Classes="caption" Text="шаги сценария" Margin="0,0,0,4" />
         <ListBox Grid.Row="1" ItemsSource="{Binding Steps}">
           <ListBox.ItemTemplate>
@@ -97,11 +108,22 @@
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="4" Margin="0,6,0,4">
+        <TextBlock Grid.Row="2" Classes="caption" Text="результаты рендера" Margin="0,6,0,4" />
+        <ListBox Grid.Row="3" ItemsSource="{Binding Artifacts}" SelectedItem="{Binding SelectedArtifact, Mode=TwoWay}">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding Name}" />
+                <TextBlock Classes="caption" Text="{Binding Bytes}" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="4" Margin="0,6,0,4">
           <TextBlock Classes="caption" Text="диалоги" VerticalAlignment="Center" />
           <Button Content="Обновить" Click="ОбновитьДиалоги" />
         </StackPanel>
-        <ListBox Grid.Row="3" ItemsSource="{Binding Dialogs}">
+        <ListBox Grid.Row="6" ItemsSource="{Binding Dialogs}">
           <ListBox.ItemTemplate>
             <DataTemplate>
               <StackPanel Spacing="2">

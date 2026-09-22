@@ -57,6 +57,9 @@ public static class ProgramFactKinds
     /// <summary>Действие <c>render</c> послало главному окну команду меню; данные — <see cref="RenderRequested"/>.</summary>
     public const string RenderRequested = "render-requested";
 
+    /// <summary>MP4, появившиеся или изменившиеся после рендера.</summary>
+    public const string RenderArtifacts = "render-artifacts";
+
     /// <summary>Снимок служебных файлов программы снят до запуска; данные — <see cref="ServiceFilesTaken"/>.</summary>
     public const string ServiceFilesBefore = "service-files-before";
 
@@ -173,6 +176,8 @@ public sealed record CloseRequested(long Handle);
 
 /// <param name="Command">Номер пункта меню, посланный <c>WM_COMMAND</c>.</param>
 public sealed record RenderRequested(long Handle, int Command);
+
+public sealed record RenderArtifacts(IReadOnlyList<SessionArtifact> Items);
 
 /// <summary>
 /// Окна и кнопки ProShow, которые узнаются по имени. Ядру они нужны для правила <c>wait render-done</c>,

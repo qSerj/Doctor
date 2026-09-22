@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
 using PsDoctor.Core.Observation;
@@ -27,17 +28,23 @@ public sealed class ObservationSession : IProgramEvents
     private bool launched;
     private bool passive;
     private bool mainExited;
+    private bool renderRequested;
+    private readonly string? showDirectory;
+    private readonly Dictionary<string, (long Bytes, DateTime LastWriteUtc)> mp4Before;
     private string? title;
     private bool finishing;
     private Channel<ScenarioSignal>? signals;
     private Task? scenario;
 
-    private ObservationSession(string id, string journalPath, TextWriter file, Action<ObservationSession> onFinished)
+    private ObservationSession(string id, string journalPath, TextWriter file, Action<ObservationSession> onFinished,
+        string? showPath)
     {
         Id = id;
         JournalPath = journalPath;
         this.file = file;
         this.onFinished = onFinished;
+        showDirectory = string.IsNullOrWhiteSpace(showPath) ? null : Path.GetDirectoryName(showPath);
+        mp4Before = SnapshotMp4(showDirectory);
         Log = new FactLog(new FactJournalWriter(file, id, () => clock.Elapsed));
         ticker = new Timer(_ => Send(new TimeTick(clock.Elapsed)), null, TickInterval, TickInterval);
     }
@@ -68,7 +75,8 @@ public sealed class ObservationSession : IProgramEvents
         string id,
         ObserverHealth build,
         Action<ObservationSession> onFinished,
-        TextWriter? journal = null)
+        TextWriter? journal = null,
+        string? showPath = null)
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, id + SessionIds.JournalExtension);
@@ -76,7 +84,7 @@ public sealed class ObservationSession : IProgramEvents
         var writer = journal ?? new StreamWriter(
             new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        var session = new ObservationSession(id, path, writer, onFinished);
+        var session = new ObservationSession(id, path, writer, onFinished, showPath);
         session.Log.Record(ProgramFactKinds.SessionStarted, new { startedAt = DateTimeOffset.Now, observer = build });
         return session;
     }
@@ -214,9 +222,22 @@ public sealed class ObservationSession : IProgramEvents
 
     /// <summary>Действие <c>render</c>.</summary>
     public Task<ActionResult> RenderAsync(CancellationToken cancellationToken) =>
-        Program() is { } run
-            ? run.RenderAsync(cancellationToken)
-            : Task.FromResult(ActionResult.Failed(WindowActionFailures.NoProgram));
+        RenderCoreAsync(cancellationToken);
+
+    private async Task<ActionResult> RenderCoreAsync(CancellationToken cancellationToken)
+    {
+        var run = Program();
+        if (run is null)
+        {
+            return ActionResult.Failed(WindowActionFailures.NoProgram);
+        }
+        var result = await run.RenderAsync(cancellationToken).ConfigureAwait(false);
+        if (result.Succeeded)
+        {
+            lock (gate) renderRequested = true;
+        }
+        return result;
+    }
 
     void IProgramEvents.TitleChanged(string? text)
     {
@@ -304,6 +325,11 @@ public sealed class ObservationSession : IProgramEvents
         if (run is not null)
         {
             await Task.Run(run.Conclude).ConfigureAwait(false);
+            if (renderRequested)
+            {
+                var artifacts = await Task.Run(ChangedMp4).ConfigureAwait(false);
+                Log.Record(ProgramFactKinds.RenderArtifacts, new RenderArtifacts(artifacts));
+            }
         }
 
         // Хвост закрытия — через finally: не записался последний факт или не закрылся файл (на стенде кончается
@@ -371,5 +397,61 @@ public sealed class ObservationSession : IProgramEvents
         {
             signals?.Writer.TryWrite(signal);
         }
+    }
+
+    private IReadOnlyList<SessionArtifact> ChangedMp4()
+    {
+        if (showDirectory is null || !Directory.Exists(showDirectory))
+        {
+            return [];
+        }
+        var result = new List<SessionArtifact>();
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(showDirectory, "*.mp4", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var info = new FileInfo(path);
+                    if (mp4Before.TryGetValue(path, out var before)
+                        && before.Bytes == info.Length && before.LastWriteUtc == info.LastWriteTimeUtc)
+                    {
+                        continue;
+                    }
+                    using var stream = info.OpenRead();
+                    using var sha = SHA256.Create();
+                    var digest = Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+                    var id = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..24];
+                    result.Add(new SessionArtifact(id, info.Name, info.Length, info.LastWriteTimeUtc, digest));
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return result;
+    }
+
+    private static Dictionary<string, (long Bytes, DateTime LastWriteUtc)> SnapshotMp4(string? directory)
+    {
+        var result = new Dictionary<string, (long, DateTime)>(StringComparer.OrdinalIgnoreCase);
+        if (directory is null || !Directory.Exists(directory)) return result;
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(directory, "*.mp4", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var info = new FileInfo(path);
+                    result[path] = (info.Length, info.LastWriteTimeUtc);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return result;
     }
 }

@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using PsDoctor.Core.Observation;
 using PsDoctor.Core.Scenarios;
 using PsDoctor.Observer.Client;
+using PsDoctor.Workbench;
 
 namespace PsDoctor.Workbench.ViewModels;
 
@@ -49,6 +50,9 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private bool connected;
     private bool scenarioRunning;
     private bool busy;
+    private string exchangeDirectory;
+    private bool includeRaw;
+    private SessionArtifact? selectedArtifact;
 
     /// <param name="connect">Как создаётся клиент; тест подставляет свой.</param>
     /// <param name="environment">Откуда берутся значения по умолчанию для адреса и ключа.</param>
@@ -58,6 +62,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         this.environment = environment ?? Environment.GetEnvironmentVariable;
         address = this.environment(ObserverConnection.UrlVariable) ?? "";
         keyFile = this.environment(ObserverConnection.KeyFileVariable) ?? "";
+        exchangeDirectory = this.environment("PSDOCTOR_EXCHANGE_DIR") ?? WorkbenchSettings.LoadExchangeDirectory() ?? "";
     }
 
     public string Address
@@ -70,6 +75,21 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     {
         get => keyFile;
         set => SetProperty(ref keyFile, value);
+    }
+
+    public string ExchangeDirectory
+    {
+        get => exchangeDirectory;
+        set
+        {
+            if (SetProperty(ref exchangeDirectory, value)) OnPropertyChanged(nameof(CanExport));
+        }
+    }
+
+    public bool IncludeRaw
+    {
+        get => includeRaw;
+        set => SetProperty(ref includeRaw, value);
     }
 
     /// <summary>Последнее, что случилось: отказ наблюдателя устойчивым именем, обрыв, принятый сценарий.</summary>
@@ -104,6 +124,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             if (SetProperty(ref connected, value))
             {
                 OnPropertyChanged(nameof(CanRun));
+                OnPropertyChanged(nameof(CanExport));
             }
         }
     }
@@ -123,6 +144,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     /// <summary>Второй сценарий одновременно наблюдатель не принимает — кнопка не предлагает этого и пультом.</summary>
     public bool CanRun => Connected && !ScenarioRunning;
+
+    public bool CanExport => Connected && !Busy && SelectedSession is { Finished: true } && ExchangeDirectory.Length > 0;
 
     public string ScenarioText
     {
@@ -152,18 +175,35 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<DialogRow> Dialogs { get; } = [];
 
+    public ObservableCollection<SessionArtifact> Artifacts { get; } = [];
+
     /// <summary>Выбранный сеанс. Выбор переключает ленту: для этого есть <see cref="SelectAsync"/>.</summary>
     public SessionRow? SelectedSession
     {
         get => selectedSession;
-        private set => SetProperty(ref selectedSession, value);
+        private set
+        {
+            if (SetProperty(ref selectedSession, value))
+            {
+                OnPropertyChanged(nameof(CanExport));
+            }
+        }
+    }
+
+    public SessionArtifact? SelectedArtifact
+    {
+        get => selectedArtifact;
+        set => SetProperty(ref selectedArtifact, value);
     }
 
     /// <summary>Идёт запрос к наблюдателю. Ленты не касается: она живёт своим потоком.</summary>
     public bool Busy
     {
         get => busy;
-        private set => SetProperty(ref busy, value);
+        private set
+        {
+            if (SetProperty(ref busy, value)) OnPropertyChanged(nameof(CanExport));
+        }
     }
 
     /// <summary>Связывается с наблюдателем: читает ключ из файла, спрашивает <c>/health</c>, берёт сеансы.</summary>
@@ -177,6 +217,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         Sessions.Clear();
         Facts.Clear();
         Dialogs.Clear();
+        Artifacts.Clear();
+        SelectedArtifact = null;
         SelectedSession = null;
 
         if (!Uri.TryCreate(Address, UriKind.Absolute, out var uri))
@@ -230,12 +272,49 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             return;
         }
         await RefreshDialogsAsync();
+        await RefreshArtifactsAsync();
         pumpCancel = new CancellationTokenSource();
         pump = PumpAsync(session.Id, pumpCancel.Token);
     }
 
     /// <summary>Отдаёт наблюдателю текст из поля сценария.</summary>
     public Task RunAsync() => RunTextAsync(ScenarioText);
+
+    public Task RunDiagnosticAsync(bool withStartupDialog)
+    {
+        ScenarioText = DiagnosticScenario(withStartupDialog);
+        return RunAsync();
+    }
+
+    public async Task ExportAsync()
+    {
+        if (client is null || SelectedSession is not { Finished: true } session)
+        {
+            Status = "для экспорта нужен закрытый сеанс";
+            return;
+        }
+        if (ExchangeDirectory.Length == 0)
+        {
+            Status = "не указан каталог обмена";
+            return;
+        }
+        Busy = true;
+        try
+        {
+            WorkbenchSettings.SaveExchangeDirectory(ExchangeDirectory);
+            var path = await new LabPackageExporter().ExportAsync(client, session.Id, ScenarioText, ShowPath,
+                ExchangeDirectory, SelectedArtifact, IncludeRaw);
+            Status = $"пакет сохранён: {path}";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObserverException)
+        {
+            Status = $"пакет не собран: {e.Message}";
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
 
     /// <summary>Быстрая кнопка «Запустить»: сценарий из одной строки.</summary>
     public Task LaunchAsync() => RunTextAsync($"launch {Quote(ShowPath)}");
@@ -281,6 +360,15 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
     });
 
+    public Task RefreshArtifactsAsync() => GuardAsync(async () =>
+    {
+        Artifacts.Clear();
+        SelectedArtifact = null;
+        if (SelectedSession is not { Finished: true } session) return;
+        foreach (var artifact in await client!.ArtifactsAsync(session.Id)) Artifacts.Add(artifact);
+        if (Artifacts.Count == 1) SelectedArtifact = Artifacts[0];
+    });
+
     public void Dispose()
     {
         pumpCancel?.Cancel();
@@ -292,6 +380,25 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     /// <summary>Аргумент с пробелами сценарий берёт в кавычки — те же правила, что у разбора.</summary>
     private static string Quote(string value) => value.Contains(' ', StringComparison.Ordinal) ? $"\"{value}\"" : value;
+
+    private string DiagnosticScenario(bool withStartupDialog)
+    {
+        var normalized = ShowPath.Replace('\\', '/');
+        var name = Path.GetFileName(normalized);
+        var lines = new List<string> { $"launch {Quote(ShowPath)}" };
+        if (withStartupDialog)
+        {
+            lines.Add("wait dialog 180");
+            lines.Add("press \"Ok to All\"");
+        }
+        lines.Add($"wait title {Quote(name)} 1800");
+        lines.Add("render");
+        lines.Add("wait render-done 7200");
+        lines.Add("press \"Ok\"");
+        lines.Add("close");
+        lines.Add("wait exit 180");
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private async Task RunTextAsync(string text)
     {
@@ -368,6 +475,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
                 Status = $"сеанс {session} закрыт";
                 ScenarioRunning = false;
                 await GuardAsync(LoadSessionsAsync);
+                await RefreshArtifactsAsync();
                 return;
             }
             catch (OperationCanceledException)

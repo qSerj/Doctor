@@ -99,6 +99,41 @@ public sealed class ObserverClient : IDisposable
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Скачивает весь сохранённый кольцевой буфер ETW сеанса.</summary>
+    public async Task DownloadRawAsync(string session, Stream destination, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendForStreamAsync(ObserverRoutes.RawAll(session), "application/x-ndjson", cancellationToken)
+            .ConfigureAwait(false);
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<SessionArtifact>> ArtifactsAsync(string session, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.GetAsync(ObserverRoutes.Artifacts(session), timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<List<SessionArtifact>>(response, timeout.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>Скачивает журнал фактов без разбора и повторной сериализации.</summary>
+    public async Task DownloadFactsAsync(string session, Stream destination, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendForStreamAsync(ObserverRoutes.Facts(session) + "?after=0", "application/x-ndjson", cancellationToken)
+            .ConfigureAwait(false);
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Скачивает артефакт во временный файл вызывающей стороны.</summary>
+    public async Task DownloadArtifactAsync(string session, string id, Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendForStreamAsync(ObserverRoutes.Artifact(session, id), "application/octet-stream", cancellationToken)
+            .ConfigureAwait(false);
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
     /// <summary>Журнал сеанса, сколько есть на момент запроса, с номера.</summary>
     public async IAsyncEnumerable<Fact> ReadFactsAsync(
         string session,

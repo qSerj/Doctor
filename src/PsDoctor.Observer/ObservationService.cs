@@ -66,7 +66,8 @@ public sealed class ObservationService : IAsyncDisposable
                     directory,
                     SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
                     build,
-                    OnFinished);
+                    OnFinished,
+                    showPath: ((LaunchStep)parsed.Scenario.Steps[0]).ShowPath);
                 current = session;
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
@@ -271,6 +272,57 @@ public sealed class ObservationService : IAsyncDisposable
         }
         var path = Path.Combine(directory, id + SessionIds.JournalExtension);
         return File.Exists(path) ? path : null;
+    }
+
+    public IReadOnlyList<SessionArtifact>? Artifacts(string id)
+    {
+        var facts = ReadFacts(id);
+        if (facts is null) return null;
+        return facts
+            .Where(f => f.Kind == ProgramFactKinds.RenderArtifacts)
+            .SelectMany(f => JsonSerializer.Deserialize<RenderArtifacts>(f.Data.GetRawText(), ObservationJson.Options)?.Items ?? [])
+            .ToList();
+    }
+
+    public (SessionArtifact Artifact, string Path)? ArtifactFile(string id, string artifactId)
+    {
+        var facts = ReadFacts(id);
+        if (facts is null) return null;
+        var launched = facts.FirstOrDefault(f => f.Kind == ProgramFactKinds.ProgramLaunched);
+        var root = launched is { } started
+            && started.Data.TryGetProperty("workingDirectory", out var workingDirectory)
+            && workingDirectory.ValueKind == JsonValueKind.String
+            ? workingDirectory.GetString()
+            : null;
+        if (string.IsNullOrWhiteSpace(root)) return null;
+        var rootPath = root!;
+        var artifact = facts
+            .Where(f => f.Kind == ProgramFactKinds.RenderArtifacts)
+            .SelectMany(f => JsonSerializer.Deserialize<RenderArtifacts>(f.Data.GetRawText(), ObservationJson.Options)?.Items ?? [])
+            .FirstOrDefault(item => item.Id == artifactId);
+        if (artifact is null) return null;
+        var path = Path.GetFullPath(Path.Combine(rootPath, artifact.Name));
+        var directory = Path.GetFullPath(rootPath);
+        if (!path.StartsWith(directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(path)) return null;
+        var info = new FileInfo(path);
+        if (info.Length != artifact.Bytes || info.LastWriteTimeUtc != artifact.LastWriteUtc) return null;
+        return (artifact, path);
+    }
+
+    private IReadOnlyList<Fact>? ReadFacts(string id)
+    {
+        var live = Live(id);
+        if (live is not null) return live.After(0);
+        var path = JournalPath(id);
+        if (path is null) return null;
+        try
+        {
+            using var reader = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 64 * 1024);
+            return FactJournalReader.ReadAfter(reader, 0).ToList();
+        }
+        catch (IOException) { return null; }
+        catch (InvalidDataException) { return null; }
     }
 
     /// <summary>Остановка наблюдателя: сеанс закрывается, программа продолжает работать.</summary>

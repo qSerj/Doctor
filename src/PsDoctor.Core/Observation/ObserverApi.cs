@@ -38,6 +38,16 @@ public static class ObserverRoutes
 
     /// <summary>GET <c>?from=&amp;to=</c>: сырьё сеанса за отрезок. До Э4.2 сырья нет — ответ <see cref="ObserverErrors.NoRaw"/>.</summary>
     public static string Raw(string session) => $"/sessions/{Uri.EscapeDataString(session)}/raw";
+
+    /// <summary>GET: все доступные ETW-события сеанса.</summary>
+    public static string RawAll(string session) => $"/sessions/{Uri.EscapeDataString(session)}/raw/all";
+
+    /// <summary>GET: MP4, изменившиеся в результате рендера сеанса.</summary>
+    public static string Artifacts(string session) => $"/sessions/{Uri.EscapeDataString(session)}/artifacts";
+
+    /// <summary>GET: скачать один артефакт по непрозрачному идентификатору.</summary>
+    public static string Artifact(string session, string id) =>
+        $"/sessions/{Uri.EscapeDataString(session)}/artifacts/{Uri.EscapeDataString(id)}";
 }
 
 /// <summary>Устойчивые имена отказов API, не фразы.</summary>
@@ -63,6 +73,7 @@ public static class ObserverErrors
     public const string NothingRunning = "nothing-running";
 
     public const string NoRaw = "no-raw";
+    public const string NoArtifacts = "no-artifacts";
     public const string ProgramNotRunning = "program-not-running";
     public const string AmbiguousProgram = "ambiguous-program";
     public const string AttachFailed = "attach-failed";
@@ -93,3 +104,6 @@ public sealed record CancelAccepted(string Session);
 
 /// <summary>Ответ <c>/health</c>.</summary>
 public sealed record ObserverHealth(string Version, string? Commit);
+
+/// <summary>Результат рендера, зарегистрированный наблюдателем после закрытия программы.</summary>
+public sealed record SessionArtifact(string Id, string Name, long Bytes, DateTime LastWriteUtc, string Sha256);

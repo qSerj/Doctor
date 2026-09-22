@@ -40,6 +40,25 @@ public sealed partial class MainWindow : Window
 
     private async void ЗакрытьПрограмму(object? sender, RoutedEventArgs e) => await model.CloseProgramAsync();
 
+    private async void РендерБезДиалогов(object? sender, RoutedEventArgs e) => await model.RunDiagnosticAsync(false);
+
+    private async void РендерСДиалогом(object? sender, RoutedEventArgs e) => await model.RunDiagnosticAsync(true);
+
+    private async void СобратьПакет(object? sender, RoutedEventArgs e) => await model.ExportAsync();
+
+    private async void ВыбратьКаталогОбмена(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Каталог обмена",
+            AllowMultiple = false,
+        });
+        if (folders.Count == 1)
+        {
+            model.ExchangeDirectory = folders[0].Path.LocalPath;
+        }
+    }
+
     private async void ОбновитьСеансы(object? sender, RoutedEventArgs e) => await model.RefreshSessionsAsync();
 
     private async void ОбновитьДиалоги(object? sender, RoutedEventArgs e) => await model.RefreshDialogsAsync();

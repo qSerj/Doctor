@@ -108,6 +108,32 @@ public static class ObserverHost
 
         app.MapGet("/sessions/{id}/raw", (HttpContext context, string id) => WriteRawEventsAsync(context, service, id));
 
+        app.MapGet("/sessions/{id}/raw/all", (HttpContext context, string id) => WriteAllRawEventsAsync(context, service, id));
+
+        app.MapGet("/sessions/{id}/artifacts", (string id) =>
+        {
+            var artifacts = service.Artifacts(id);
+            return artifacts is not null
+                ? Results.Json(artifacts, ObservationJson.Options)
+                : Results.Json(new ObserverError(ObserverErrors.UnknownSession), ObservationJson.Options, statusCode: StatusCodes.Status404NotFound);
+        });
+
+        app.MapGet("/sessions/{id}/artifacts/{artifactId}", async (HttpContext context, string id, string artifactId) =>
+        {
+            var found = service.ArtifactFile(id, artifactId);
+            if (found is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status404NotFound, ObserverErrors.NoArtifacts);
+                return;
+            }
+            var (artifact, path) = found.Value;
+            context.Response.ContentType = "application/octet-stream";
+            context.Response.ContentLength = artifact.Bytes;
+            context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{artifact.Name.Replace("\"", "", StringComparison.Ordinal)}\"");
+            await using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            await source.CopyToAsync(context.Response.Body, context.RequestAborted);
+        });
+
         return app;
     }
 
@@ -142,6 +168,26 @@ public static class ObserverHost
         context.Response.ContentType = "application/x-ndjson; charset=utf-8";
         await using var writer = new StreamWriter(context.Response.Body, new UTF8Encoding(false));
         foreach (var value in EtwBridge.RawBetween(directory, id, from, to))
+            await writer.WriteLineAsync(JsonSerializer.Serialize(value, ObservationJson.Options));
+        await writer.FlushAsync(context.RequestAborted);
+    }
+
+    private static async Task WriteAllRawEventsAsync(HttpContext context, ObservationService service, string id)
+    {
+        if (service.Live(id) is null && service.JournalPath(id) is null)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status404NotFound, ObserverErrors.UnknownSession);
+            return;
+        }
+        var directory = service.DataDirectory;
+        if (!Enumerable.Range(0, EtwFiles.SegmentCount).Any(i => File.Exists(EtwFiles.Raw(directory, id, i))))
+        {
+            await WriteErrorAsync(context, StatusCodes.Status404NotFound, ObserverErrors.NoRaw);
+            return;
+        }
+        context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+        await using var writer = new StreamWriter(context.Response.Body, new UTF8Encoding(false));
+        foreach (var value in EtwBridge.RawBetween(directory, id, DateTime.UnixEpoch, DateTime.MaxValue))
             await writer.WriteLineAsync(JsonSerializer.Serialize(value, ObservationJson.Options));
         await writer.FlushAsync(context.RequestAborted);
     }
