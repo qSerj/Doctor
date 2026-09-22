@@ -2,7 +2,7 @@
 # Оснастка стенда. Не часть продукта, см. lab/README.md.
 # Собрать приложения Doctor на хосте и положить готовый релиз в папку обмена.
 # В ВМ релиз устанавливается командой:
-#   powershell -ExecutionPolicy Bypass -File \\VBoxSvr\exchange\psdoctor\Install-PsDoctor.ps1
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File \\VBoxSvr\exchange\psdoctor\Install-PsDoctor.ps1
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,4 +51,4 @@ cp "$release/Install-PsDoctor.ps1" "$release_root/Install-PsDoctor.ps1"
 printf '%s\n' "releases/$release_id" > "$release_root/current.txt.new"
 mv -f "$release_root/current.txt.new" "$release_root/current.txt"
 printf 'Готово: %s\n' "$release_root/current.txt" >&2
-printf 'На ВМ: powershell -ExecutionPolicy Bypass -File \\\\VBoxSvr\\exchange\\psdoctor\\Install-PsDoctor.ps1\n' >&2
+printf 'На ВМ: pwsh -NoProfile -ExecutionPolicy Bypass -File \\\\VBoxSvr\\exchange\\psdoctor\\Install-PsDoctor.ps1\n' >&2

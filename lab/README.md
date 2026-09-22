@@ -71,7 +71,11 @@ checks/<id>/
 В гостевой Windows один раз запускается:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File \\VBoxSvr\exchange\psdoctor\Install-PsDoctor.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File \\VBoxSvr\exchange\psdoctor\Install-PsDoctor.ps1
 ```
 
 Установщик обновляет каталоги `C:\lab\psdoctor\<программа>` и не удаляет файлы, которых нет в новом релизе. Пути можно переопределить параметрами `-Exchange` и `-Root`; рабочие пути конкретной машины в репозитории не фиксируются.
+
+После установки точки входа лежат в меню «Пуск → PsDoctor» и на рабочем столе: `Doctor` — окно доктора, `Workbench` — пульт наблюдателя. В каталоге установки есть `Run-Cli.cmd` для `psdoctor.exe` и `README-START.txt` с последовательностью запуска. `Run-App.cmd` и `Run-Workbench.cmd` сами выставляют пути к установленным программам и, если они настроены, `PSDOCTOR_OBSERVER_URL` и `PSDOCTOR_OBSERVER_KEY_FILE`.
+
+Обычная последовательность на стенде: сначала доставить и запустить Observer существующим `lab/observer.sh`, затем установить этот комплект и открыть `Workbench` или `Doctor`; для одиночной проверки файла — `Run-Cli.cmd "C:\путь\проект.psh"`. Параметр `-ObserverUrl` установщика сохраняет адрес Observer рядом с программами и в пользовательской конфигурации Windows.
