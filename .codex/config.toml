@@ -1,3 +1,0 @@
-[mcp_servers.windows-lab]
-url = "http://192.168.56.5:8000/mcp"
-http_headers_helper = "bash lab/codex-mcp-headers.sh"

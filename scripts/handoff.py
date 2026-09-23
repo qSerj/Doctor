@@ -133,7 +133,7 @@ def add_untracked_archive(repo: Path, destination: Path) -> tuple[int, list[str]
     names = [name for name in raw.split("\0") if name]
     if not names:
         return 0, []
-    excluded = [name for name in names if name in {"handoff.local.json", "AGENTS.local.md"}]
+    excluded = [name for name in names if name in {"handoff.local.json", "CLAUDE.local.md"}]
     names = [name for name in names if name not in set(excluded)]
     if not names:
         return 0, excluded
