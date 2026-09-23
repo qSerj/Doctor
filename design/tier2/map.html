@@ -113,13 +113,13 @@ a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
 <header>
   <div class="eyebrow">Второй раунд проектирования · сверено с владельцем 23.09.2026</div>
   <h1>Карта Doctor</h1>
-  <p class="lede">App применяет готовые рецепты. Рецепты создают инженер и агент — на Workbench, стенде и опытах. Ниже: кто работает с Doctor, на каких машинах, кто кого вызывает, чего каждая часть не делает и какие сценарии подтверждены. Сплошная линия есть в коде, пунктир ещё не решён.</p>
+  <p class="lede">App применяет готовые рецепты. Рецепты создают инженер и агент — на Workbench, стенде и опытах. Ниже: кто работает с Doctor, на каких машинах, кто кого вызывает, чего каждая часть не делает и какие сценарии подтверждены. Сплошная линия есть в коде, пунктир решён, но в коде его нет.</p>
   <div class="legend">
     <span><span class="dot" style="background:var(--olya)"></span>монтажёр</span>
     <span><span class="dot" style="background:var(--eng)"></span>инженер</span>
     <span><span class="dot" style="background:var(--lab)"></span>стенд</span>
     <span><span class="sw"></span>есть в коде</span>
-    <span><span class="sw open"></span>не решено</span>
+    <span><span class="sw open"></span>решено, в коде нет</span>
   </div>
 </header>
 
@@ -233,7 +233,7 @@ a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
       <!-- Пакет сеанса -->
       <rect class="box" x="200" y="470" width="190" height="44" rx="6" style="stroke:var(--open);stroke-dasharray:5 4"/>
       <text class="bt" x="295" y="490" text-anchor="middle">пакет сеанса</text>
-      <text class="bs" x="295" y="505" text-anchor="middle">для агента · вид не решён</text>
+      <text class="bs" x="295" y="505" text-anchor="middle">делает Workbench · для агента</text>
       <path class="ar open" d="M115,358 L115,492 L200,492" marker-end="url(#aho)"/>
       <path class="ar open" d="M390,492 L540,492 L540,204 L590,204" marker-end="url(#aho)"/>
       <text class="al open" x="548" y="480">на машину разработки</text>
@@ -379,10 +379,10 @@ a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
         <td><span class="st ok">работает на стенде</span></td></tr>
       <tr><td class="name">И2</td><td>Разбор записанного у Оли</td>
         <td><div class="flow"><span class="s e">Workbench</span><i>→</i><span class="s">Observer Оли</span><i>или</i><span class="s x">пакет</span><i>→</i><span class="s l">агент</span></div></td>
-        <td><span class="st warn">вид пакета не решён</span></td></tr>
+        <td><span class="st warn">пакет есть для стенда</span></td></tr>
       <tr><td class="name">И3</td><td>Рецепт: от паттерна до App</td>
         <td><div class="flow"><span class="s e">паттерн</span><i>→</i><span class="s x">код или правила</span><i>→</i><span class="s x">обновление</span><i>→</i><span class="s o">App</span></div></td>
-        <td><span class="st open">не спроектирован</span></td></tr>
+        <td><span class="st na">решено, не реализовано</span></td></tr>
       <tr><td class="name">И4</td><td>Установка и обновление</td>
         <td><div class="flow"><span class="s e">инженер</span><i>→</i><span class="s x">установщик с флэшки</span><i>→</i><span class="s">Observer, ETW, App, ключ</span></div></td>
         <td><span class="st warn">на стенд — скрипт</span></td></tr>
@@ -397,7 +397,7 @@ a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
     <article class="fork">
       <h3>Как Observer живёт у Оли</h3>
       <div class="opt"><span><b>Процесс в сеансе пользователя</b>, как на стенде: видит окна.</span><span><b>Со сторожем</b>, который перезапускает зависший, или <b>короткий процесс на сеанс</b> — «зонд» из памяти 15.09.</span></div>
-      <div class="lean"><b>Решать после:</b> от длины и риска сеансов М4 и М5.</div>
+      <div class="lean"><b>Решено 23.09.2026:</b> как на стенде плюс сторож; «зонд» — только если зависания подтвердятся.</div>
     </article>
     <article class="fork">
       <h3>Откуда права для ETW</h3>
@@ -412,7 +412,7 @@ a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
     <article class="fork">
       <h3>Пакет и срок хранения</h3>
       <div class="opt"><span>Что входит в пакет сеанса с машины Оли и как его увезти.</span><span>Сколько журналов держит Observer, чтобы не съесть диск.</span></div>
-      <div class="lean"><b>Пути нужны оба:</b> файлом и по сети.</div>
+      <div class="lean"><b>Решено 23.09.2026:</b> пакет только из Workbench; хранение по сроку и объёму, сеансы с эпизодами дольше.</div>
     </article>
   </div>
 </section>
