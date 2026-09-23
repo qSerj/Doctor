@@ -130,6 +130,7 @@ internal sealed class EtwCapture : IDisposable
     private StreamWriter raw;
     private TraceEventSession? session;
     private Thread? reader;
+    private bool stopping;
     private bool disposed;
     private long lastLost;
 
@@ -303,14 +304,21 @@ internal sealed class EtwCapture : IDisposable
     {
         lock (gate)
         {
-            if (disposed) return;
-            disposed = true;
+            if (stopping) return;
+            stopping = true;
         }
+        // События доходят до потребителя с задержкой буфера ETW, до секунды. Закрытие программы — ровно
+        // последняя секунда перед stop (e42-load-001: 260 записей .pxc при выходе). Поэтому буферы сначала
+        // сливаются и дочитываются, и только потом Add перестаёт принимать события.
         lastLost = Math.Max(lastLost, session?.EventsLost ?? 0);
-        session?.Dispose();
+        try { session?.Flush(); }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+        session?.Stop(noThrow: true);
         if (reader is { IsAlive: true } && reader != Thread.CurrentThread) reader.Join(TimeSpan.FromSeconds(5));
+        session?.Dispose();
         lock (gate)
         {
+            disposed = true;
             foreach (var (key, value) in totals)
                 WriteSummary(new EtwSummary(key.Second, key.Pid, key.File, value.Opens, value.Reads,
                     value.ReadBytes, value.Writes, value.WriteBytes, value.SharingViolations));
