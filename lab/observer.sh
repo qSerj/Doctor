@@ -43,9 +43,11 @@ sync_dir artifacts/lab/observer "$stage/bin"
 cp -f lab/guest/Deploy-Observer.ps1 lab/guest/Test-Stand.ps1 "$stage/lab/"
 if [ "$tests" = 1 ]; then
   # Исходники — то, что видит git, без двора и памяти: они в .gitignore и на стенд не уходят.
+  step "исходники для тестов на стенде"
   rm -rf "$stage/src.new"; mkdir -p "$stage/src.new"
   git ls-files -co --exclude-standard -z | tar -c --null -T - | tar -x -C "$stage/src.new"
   for project in "$stage"/src.new/tests/*/*.csproj; do
+    step "пакеты для $(basename "$project")"
     dotnet restore "$project" --packages "$stage/packages" --verbosity quiet
   done
   rm -rf "$stage/src"; mv "$stage/src.new" "$stage/src"
