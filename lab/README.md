@@ -8,12 +8,14 @@
 
 ## Передача проверки
 
+Сборка и тесты на хосте в пакет не оформляются: владелец запускает их в Rider и сообщает коммит и итог. Пакет нужен для стенда (`observer.sh`) и для опытов, результат которых закрывает пункт плана; стенд запускается только после зелёного хоста.
+
 Каждая проверка получает отдельный каталог `<LAB_EXCHANGE>/checks/<id>/`. Он находится вне `observer`, которым пользуется доставка. Новый прогон — новый id; старые результаты не перезаписываются. Агент готовит `request.md`: цель, команда, рабочая машина/каталог, необходимые ручные действия, ожидаемый результат и нужные файлы. Образец — [check-request.example.md](check-request.example.md).
 
 Владелец запускает команду через [run-check.py](run-check.py) на хосте. Требуется Python 3; на Linux это обычно `python3`, на Windows — `python`. Например, из корня репозитория:
 
 ```bash
-python3 lab/run-check.py --exchange "$HOME/Lab/exchange" --id core-001 --request artifacts/checks/core-request.md -- dotnet test tests/PsDoctor.Core.Tests --logger trx --results-directory "$HOME/Lab/exchange/checks/core-001/results"
+python3 lab/run-check.py --exchange "$HOME/Lab/exchange" --id stand-001 --request artifacts/checks/stand-001/request.md -- bash lab/observer.sh
 ```
 
 Путь exchange на Windows берётся из локальной настройки. Скрипт запускает ровно переданную команду, сохраняет объединённый вывод, код выхода и метаданные версии. Команда не исполняется через shell: для существующего shell-скрипта указывать `bash lab/observer.sh`, а для PowerShell — `pwsh -File <скрипт>`. Запуск `observer.sh` включает deploy и тесты стенда — это должно быть явно сказано в задании. Не передавать секреты аргументами: аргументы попадут в метаданные; ключи читать из файлов по существующим настройкам.
