@@ -1,0 +1,432 @@
+<title>Карта Doctor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f4f6f8; --surface:#ffffff; --ink:#18202a; --muted:#5b6674; --line:#d5dbe2;
+  --olya:#b4690e; --olya-tint:#fbf1e3;
+  --eng:#1f5fae; --eng-tint:#e8f0fb;
+  --lab:#6a4fa3; --lab-tint:#f0ecf8;
+  --open:#d0461f; --ok:#2d7d46; --warn:#a76a00; --na:#7a8491;
+  --chip:#eef1f4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#12161b; --surface:#1a2028; --ink:#e4e9ef; --muted:#9aa5b2; --line:#2f3946;
+    --olya:#e9a24a; --olya-tint:#2a2117;
+    --eng:#6ea4ec; --eng-tint:#17222f;
+    --lab:#a88fe0; --lab-tint:#221c2f;
+    --open:#ff7a52; --ok:#5fc27d; --warn:#e3a93a; --na:#8b95a1;
+    --chip:#232b35;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#12161b; --surface:#1a2028; --ink:#e4e9ef; --muted:#9aa5b2; --line:#2f3946;
+  --olya:#e9a24a; --olya-tint:#2a2117;
+  --eng:#6ea4ec; --eng-tint:#17222f;
+  --lab:#a88fe0; --lab-tint:#221c2f;
+  --open:#ff7a52; --ok:#5fc27d; --warn:#e3a93a; --na:#8b95a1;
+  --chip:#232b35;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 "Onest",system-ui,-apple-system,"Segoe UI",sans-serif;padding-inline:16px;padding-block:32px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:48px}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:34px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:22px;font-weight:600}
+h3{font-size:16px;font-weight:600}
+p{margin:0;max-width:68ch}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:.88em}
+.lede{color:var(--muted);font-size:16px}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+header{display:flex;flex-direction:column;gap:12px}
+section{display:flex;flex-direction:column;gap:16px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.sw{width:28px;height:0;border-top:2px solid var(--ink)}
+.sw.open{border-top:2px dashed var(--open)}
+.dot{width:12px;height:12px;border-radius:3px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px}
+.scroll{overflow-x:auto}
+figure svg{display:block;width:100%;min-width:760px;height:auto;color:var(--ink)}
+figcaption{margin-top:12px;font-size:13px;color:var(--muted);max-width:none}
+/* svg classes */
+.z-olya{fill:var(--olya-tint);stroke:var(--olya)}
+.z-eng{fill:var(--eng-tint);stroke:var(--eng)}
+.z-lab{fill:var(--lab-tint);stroke:var(--lab)}
+.zone{stroke-width:1.2}
+.zt{font:600 13px "Onest",system-ui,sans-serif}
+.zt.olya{fill:var(--olya)} .zt.eng{fill:var(--eng)} .zt.lab{fill:var(--lab)}
+.box{fill:var(--surface);stroke:currentColor;stroke-width:1.2}
+.box.key{stroke-width:2}
+.bt{font:600 13px "Onest",system-ui,sans-serif;fill:currentColor}
+.bs{font:400 11px "Onest",system-ui,sans-serif;fill:var(--muted)}
+.al{font:400 11px "Onest",system-ui,sans-serif;fill:var(--muted)}
+.al.open{fill:var(--open);font-weight:500}
+.ar{fill:none;stroke:currentColor;stroke-width:1.3}
+.ar.open{stroke:var(--open);stroke-dasharray:5 4}
+/* roles */
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.role{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--c);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.role .who{color:var(--muted);font-size:13px}
+.role ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.role .no li::marker{content:"✕  ";color:var(--open)}
+.role .yes li::marker{content:"✓  ";color:var(--ok)}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--muted);white-space:nowrap}
+/* tables */
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line)}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--chip)}
+tr:last-child td{border-bottom:0}
+td ul{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:3px}
+td.name{font-weight:600;white-space:nowrap}
+td.name small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;white-space:nowrap}
+.st::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--c)}
+.st.ok{--c:var(--ok)} .st.warn{--c:var(--warn)} .st.open{--c:var(--open)} .st.na{--c:var(--na)}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:13px}
+.flow .s{padding:2px 8px;border-radius:6px;background:var(--chip)}
+.flow .s.o{background:var(--olya-tint);color:var(--olya)}
+.flow .s.e{background:var(--eng-tint);color:var(--eng)}
+.flow .s.l{background:var(--lab-tint);color:var(--lab)}
+.flow .s.x{border:1px dashed var(--open);background:transparent;color:var(--open)}
+.flow i{font-style:normal;color:var(--muted)}
+/* forks */
+.forks{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.fork{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.fork .opt{font-size:14px;display:flex;flex-direction:column;gap:6px}
+.fork .lean{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px}
+.fork .lean b{color:var(--ink);font-weight:600}
+.gaps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.gap{border:1px dashed var(--line);border-radius:10px;padding:14px;font-size:14px;display:flex;flex-direction:column;gap:6px}
+footer{font-size:13px;color:var(--muted)}
+a{color:var(--eng)}
+a:focus-visible{outline:2px solid var(--eng);outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Второй раунд проектирования · сверено с владельцем 23.09.2026</div>
+  <h1>Карта Doctor</h1>
+  <p class="lede">App применяет готовые рецепты. Рецепты создают инженер и агент — на Workbench, стенде и опытах. Ниже: кто работает с Doctor, на каких машинах, кто кого вызывает, чего каждая часть не делает и какие сценарии подтверждены. Сплошная линия есть в коде, пунктир ещё не решён.</p>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--olya)"></span>монтажёр</span>
+    <span><span class="dot" style="background:var(--eng)"></span>инженер</span>
+    <span><span class="dot" style="background:var(--lab)"></span>стенд</span>
+    <span><span class="sw"></span>есть в коде</span>
+    <span><span class="sw open"></span>не решено</span>
+  </div>
+</header>
+
+<section>
+  <h2>Как появляется рецепт</h2>
+  <div class="flow" style="font-size:14px;gap:8px 8px">
+    <span class="s e">опыт на Workbench</span><i>→</i><span class="s">паттерн в журналах</span><i>→</i><span class="s l">инженер и агент закрепляют в коде или правилах</span><i>→</i><span class="s l">доставка обновлением</span><i>→</i><span class="s o">App узнаёт и советует</span>
+  </div>
+  <p class="lede" style="font-size:14px">Опыты идут на стенде и на машине Оли одинаково. Не узнал — App молчит, а записанное остаётся у Observer для разбора. Детектор живёт в Core и выполняется в Observer, эпизод пишется фактом; App переводит его во фразу и кнопку. Рецепт доезжает обновлением через установщик, пороги — данные.</p>
+</section>
+
+<section>
+  <h2>Машины и связи</h2>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 530" role="img" aria-label="Схема: на машине Оли App вызывает Observer по loopback, Observer наблюдает ProShow и пишет журналы; Workbench подключается и к Observer Оли, и к Observer стенда; вид пакета сеанса для агента не решён.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="aho" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--open)"/></marker>
+      </defs>
+
+      <!-- Зона монтажёра -->
+      <rect class="zone z-olya" x="20" y="40" width="440" height="380" rx="10"/>
+      <text class="zt olya" x="36" y="64">Машина монтажёра · Windows</text>
+
+      <rect class="box" x="250" y="80" width="170" height="48" rx="6"/>
+      <text class="bt" x="335" y="101" text-anchor="middle">ProShow</text>
+      <text class="bs" x="335" y="117" text-anchor="middle">запущен Олей или через App</text>
+
+      <rect class="box key" x="40" y="200" width="150" height="56" rx="6"/>
+      <text class="bt" x="115" y="223" text-anchor="middle">App</text>
+      <text class="bs" x="115" y="240" text-anchor="middle">рецепты · окно · трей</text>
+
+      <rect class="box key" x="250" y="200" width="170" height="56" rx="6"/>
+      <text class="bt" x="335" y="223" text-anchor="middle">Observer</text>
+      <text class="bs" x="335" y="240" text-anchor="middle">сеанс · факты · API</text>
+
+      <rect class="box" x="250" y="310" width="170" height="48" rx="6"/>
+      <text class="bt" x="335" y="331" text-anchor="middle">ETW-помощник</text>
+      <text class="bs" x="335" y="347" text-anchor="middle">права администратора</text>
+
+      <rect class="box" x="40" y="310" width="150" height="48" rx="6"/>
+      <text class="bt" x="115" y="331" text-anchor="middle">журналы сеансов</text>
+      <text class="bs" x="115" y="347" text-anchor="middle">JSONL · сырой ETW</text>
+
+      <!-- App → ProShow -->
+      <path class="ar" d="M115,200 L115,104 L250,104" marker-end="url(#ah)"/>
+      <text class="al" x="124" y="96">открыть .psh</text>
+      <!-- App → Observer -->
+      <path class="ar" d="M190,228 L250,228" marker-end="url(#ah)"/>
+      <text class="al" x="220" y="192" text-anchor="middle">attach · stop</text>
+      <!-- Observer → ProShow -->
+      <path class="ar" d="M335,200 L335,128" marker-end="url(#ah)"/>
+      <text class="al" x="343" y="168">процессы, окна</text>
+      <!-- ETW ↔ Observer -->
+      <path class="ar" d="M335,310 L335,256" marker-start="url(#ah)" marker-end="url(#ah)"/>
+      <text class="al" x="343" y="287">файловый канал</text>
+      <!-- Observer → журналы -->
+      <path class="ar" d="M250,244 L220,244 L220,334 L190,334" marker-end="url(#ah)"/>
+      <text class="al" x="226" y="296">пишет</text>
+      <text class="al" x="36" y="400">Прав администратора у окна App нет — перетаскивание файлов.</text>
+
+      <!-- Зона инженера -->
+      <rect class="zone z-eng" x="560" y="40" width="420" height="220" rx="10"/>
+      <text class="zt eng" x="576" y="64">Машина разработки · сегодня Linux</text>
+
+      <rect class="box" x="590" y="76" width="170" height="48" rx="6"/>
+      <text class="bt" x="675" y="97" text-anchor="middle">хранилище проектов</text>
+      <text class="bs" x="675" y="113" text-anchor="middle">только чтение</text>
+
+      <rect class="box" x="790" y="76" width="170" height="48" rx="6"/>
+      <text class="bt" x="875" y="97" text-anchor="middle">psdoctor файл.psh</text>
+      <text class="bs" x="875" y="113" text-anchor="middle">приёмка · JSONL</text>
+      <path class="ar" d="M790,100 L760,100" marker-end="url(#ah)"/>
+
+      <rect class="box key" x="590" y="160" width="170" height="56" rx="6"/>
+      <text class="bt" x="675" y="183" text-anchor="middle">Workbench</text>
+      <text class="bs" x="675" y="200" text-anchor="middle">лаборатория инженера</text>
+
+      <rect class="box" x="790" y="160" width="170" height="56" rx="6"/>
+      <text class="bt" x="875" y="183" text-anchor="middle">psdoctor observe</text>
+      <text class="bs" x="875" y="200" text-anchor="middle">агент из оболочки</text>
+
+      <!-- Зона стенда -->
+      <rect class="zone z-lab" x="560" y="300" width="420" height="160" rx="10"/>
+      <text class="zt lab" x="576" y="324">Стенд · ВМ Windows</text>
+
+      <rect class="box" x="590" y="380" width="170" height="48" rx="6"/>
+      <text class="bt" x="675" y="401" text-anchor="middle">Observer + ETW</text>
+      <text class="bs" x="675" y="417" text-anchor="middle">активные сценарии</text>
+
+      <rect class="box" x="790" y="380" width="170" height="48" rx="6"/>
+      <text class="bt" x="875" y="401" text-anchor="middle">ProShow</text>
+      <text class="bs" x="875" y="417" text-anchor="middle">проекты опытов</text>
+      <path class="ar" d="M760,404 L790,404" marker-end="url(#ah)"/>
+      <text class="al" x="775" y="446" text-anchor="middle">launch · press · render</text>
+
+      <!-- Workbench → стенд -->
+      <path class="ar" d="M640,216 L640,380" marker-end="url(#ah)"/>
+      <text class="al" x="648" y="284">сценарии, поток</text>
+      <text class="al" x="648" y="298">фактов, пакеты</text>
+      <!-- CLI → стенд -->
+      <path class="ar" d="M875,216 L875,350 L720,350 L720,380" marker-end="url(#ah)"/>
+      <text class="al" x="883" y="284">то же API</text>
+
+      <!-- Workbench → Observer монтажёра, не решено -->
+      <path class="ar" d="M590,176 L505,176 L505,228 L420,228" marker-end="url(#ah)"/>
+      <text class="al" x="512" y="152" text-anchor="middle">по локальной сети</text>
+      <text class="al" x="512" y="165" text-anchor="middle">или на месте</text>
+
+      <!-- Пакет сеанса -->
+      <rect class="box" x="200" y="470" width="190" height="44" rx="6" style="stroke:var(--open);stroke-dasharray:5 4"/>
+      <text class="bt" x="295" y="490" text-anchor="middle">пакет сеанса</text>
+      <text class="bs" x="295" y="505" text-anchor="middle">для агента · вид не решён</text>
+      <path class="ar open" d="M115,358 L115,492 L200,492" marker-end="url(#aho)"/>
+      <path class="ar open" d="M390,492 L540,492 L540,204 L590,204" marker-end="url(#aho)"/>
+      <text class="al open" x="548" y="480">на машину разработки</text>
+    </svg>
+    </div>
+    <figcaption>Observer — один движок на каждой машине с ProShow. App, Workbench и CLI — клиенты одного API; своей логики наблюдения нет ни у одного. Workbench безразличен к машине: стенд и машина Оли для него одинаковы, опыты идут и там и там. App активных команд не посылает никогда; от столкновения с работой Оли защищает Observer: запуск отказывает при работающем ProShow, пассивный сеанс команд не принимает.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Роли</h2>
+  <div class="roles">
+    <article class="role" style="--c:var(--olya)">
+      <h3>Монтажёр</h3>
+      <div class="who">Оля · App · зарабатывает в ProShow</div>
+      <ul class="yes">
+        <li>открывает проекты как привыкла</li>
+        <li>бросает <code>.psh</code> на Doctor до работы</li>
+        <li>жмёт «Решить проблему» и отвечает, помогло ли</li>
+        <li>получает совет, когда Doctor узнал проблему</li>
+        <li>откатывается к резервному срезу</li>
+      </ul>
+      <ul class="no">
+        <li>не видит журналов, PID, ETW, путей к кэшам</li>
+        <li>не настраивает адреса, ключи и параметры перекодирования</li>
+      </ul>
+    </article>
+    <article class="role" style="--c:var(--eng)">
+      <h3>Инженер</h3>
+      <div class="who">автор и настройщик · Workbench · сегодня владелец</div>
+      <ul class="yes">
+        <li>ставит опыты на стенде и на машине Оли</li>
+        <li>ищет паттерны, создаёт рецепты</li>
+        <li>забирает сеансы на разбор</li>
+        <li>ставит и обновляет Doctor установщиком</li>
+      </ul>
+      <ul class="no">
+        <li>не получает вердиктов от инструмента</li>
+      </ul>
+    </article>
+    <article class="role" style="--c:var(--lab)">
+      <h3>Агент</h3>
+      <div class="who">Claude Code · <code>psdoctor observe</code> и код</div>
+      <ul class="yes">
+        <li>пишет код, тесты, документы</li>
+        <li>разбирает принесённые журналы и пакеты</li>
+        <li>закрепляет найденное в коде и правилах</li>
+      </ul>
+      <ul class="no">
+        <li>не запускает сборку, тесты и стенд без поручения</li>
+        <li>не ходит к машине монтажёра</li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h2>Части: что делает и чего не делает</h2>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Часть</th><th>Где и для кого</th><th>Делает</th><th>Не делает</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="name">App<small>PsDoctor.App</small></td>
+        <td>машина монтажёра · монтажёр</td>
+        <td><ul><li>применяет рецепты: совет по известной проблеме</li><li>открывает <code>.psh</code> обычным способом</li><li>холодная проверка через Core, рекомендации</li><li>мастер «Решить проблему», история попыток</li><li>откладывает <code>proshow.phd</code> и <code>.pxc</code> при закрытом ProShow</li><li>начинает и заканчивает пассивное наблюдение</li></ul></td>
+        <td><ul><li>не показывает технических фактов</li><li>не повышает права</li><li>не закрывает и не убивает ProShow</li><li>не меняет ассоциацию <code>.psh</code></li><li>не трогает медиа и сам <code>.psh</code></li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">Observer<small>PsDoctor.Observer</small></td>
+        <td>там, где ProShow · клиенты App, Workbench, CLI</td>
+        <td><ul><li>запуск ProShow под заданием Windows или пассивное подключение</li><li>факты: процессы, окна, диалоги, счётчики</li><li>журнал JSONL, поток SSE с переподключением</li><li>сценарии — только в сеансе, начатом запуском</li><li>MP4 после рендера, сырой ETW по запросу</li></ul></td>
+        <td><ul><li>вердиктов не выносит</li><li>не убивает ProShow</li><li>не пишет в каталог проекта</li><li>один живой сеанс, одна программа</li><li>пассивный сеанс не принимает команд</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">ETW-помощник<small>в составе Observer</small></td>
+        <td>там, где ProShow · только Observer</td>
+        <td><ul><li>держит трассировку с повышенными правами</li><li>файловая активность куста ProShow</li></ul></td>
+        <td><ul><li>не говорит по сети</li><li>не читает окна</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">Workbench<small>PsDoctor.Workbench</small></td>
+        <td>любая машина с доступом к Observer · инженер</td>
+        <td><ul><li>опыты: сценарий, рендер, повтор</li><li>лента фактов, шаги сценария</li><li>сценарии, кнопки диалогов, отмена, stop</li><li>пакет <code>exchange/checks/&lt;id&gt;</code>: журнал, MP4, суммы</li></ul></td>
+        <td><ul><li>своей логики наблюдения нет</li><li>графиков и сводок нет</li><li>слов монтажёра и вердиктов нет</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">psdoctor <span class="mono">файл.psh</span><small>PsDoctor.Cli</small></td>
+        <td>где угодно · инженер, агент, пачки</td>
+        <td><ul><li>приёмка: JSON Lines, строка на файл</li><li>прогон по хранилищу</li></ul></td>
+        <td><ul><li>не лечит</li><li>не пишет в чужой каталог</li><li>человеческих фраз нет</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">psdoctor observe<small>PsDoctor.Cli</small></td>
+        <td>машина инженера · агент</td>
+        <td><ul><li>те же команды, что у Workbench</li><li>факты в stdout как есть</li></ul></td>
+        <td><ul><li>не толкует факты</li><li>своя таблица кодов возврата</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">Core<small>PsDoctor.Core</small></td>
+        <td>внутри App, CLI, Observer</td>
+        <td><ul><li>модель <code>.psh</code>, правила, арифметика, факты, сценарии</li></ul></td>
+        <td><ul><li>не открывает файлы, не знает времени</li><li>порогов у правил пока нет</li></ul></td>
+      </tr>
+      <tr>
+        <td class="name">lab/<small>оснастка</small></td>
+        <td>машина инженера и стенд · инженер</td>
+        <td><ul><li>доставка на стенд, установка, циклы опытов</li><li>задания проверки <code>checks/&lt;id&gt;</code></li></ul></td>
+        <td><ul><li>в поставку не едет</li><li>архитектурой не является</li></ul></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Сценарии</h2>
+  <p class="lede">М — сценарии монтажёра в App, И — сценарии инженера и агента. Сверено с владельцем 23.09.2026; состояние кода — со слов владельца, до сверки с журналами.</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>№</th><th>Сценарий</th><th>Кто кого вызывает</th><th>Состояние</th></tr></thead>
+    <tbody>
+      <tr><td class="name">М1</td><td>Приём проекта до работы</td>
+        <td><div class="flow"><span class="s o">Оля бросает .psh</span><i>→</i><span class="s o">App</span><i>→</i><span class="s">Core</span><i>→</i><span class="s o">совет</span></div></td>
+        <td><span class="st warn">проверка реализована</span></td></tr>
+      <tr><td class="name">М2</td><td>«Решить проблему»: восстановление служебных файлов</td>
+        <td><div class="flow"><span class="s o">Оля</span><i>→</i><span class="s o">мастер</span><i>→</i><span class="s o">отложить служебные файлы</span><i>→</i><span class="s o">помогло?</span><i>→</i><span class="s">наблюдение</span></div></td>
+        <td><span class="st ok">скорее проверено</span></td></tr>
+      <tr><td class="name">М3</td><td>Неоптимальный материал: сообщить, кнопка внешнего перекодировщика</td>
+        <td><div class="flow"><span class="s">Core</span><i>→</i><span class="s o">«видео тяжёлое»</span><i>→</i><span class="s x">ffmpeg или HandBrake с готовыми параметрами</span></div></td>
+        <td><span class="st warn">сообщение есть, кнопки нет</span></td></tr>
+      <tr><td class="name">М4</td><td>Под наблюдением: узнать известный паттерн и посоветовать</td>
+        <td><div class="flow"><span class="s o">App</span><i>→</i><span class="s">Observer запуск или подключение</span><i>→</i><span class="s x">распознавание</span><i>→</i><span class="s o">совет</span></div></td>
+        <td><span class="st warn">подключение не проверено</span></td></tr>
+      <tr><td class="name">М5</td><td>Дежурство за каждым запуском ProShow</td>
+        <td><div class="flow"><span class="s">ProShow запущен</span><i>→</i><span class="s o">App</span><i>→</i><span class="s">Observer</span><i>→</i><span class="s o">молчит или советует</span></div></td>
+        <td><span class="st open">после замера цены</span></td></tr>
+      <tr><td class="name">М6</td><td>Откат к резервному срезу <code>.bNN</code></td>
+        <td><div class="flow"><span class="s o">App</span><i>→</i><span class="s o">шкала по времени</span><i>→</i><span class="s o">«добавлен слайд»</span><i>→</i><span class="s o">восстановить в копию</span></div></td>
+        <td><span class="st na">не реализовано</span></td></tr>
+      <tr><td class="name">И1</td><td>Опыт: сценарий, рендер, изменение, повтор</td>
+        <td><div class="flow"><span class="s e">инженер</span><i>или</i><span class="s l">агент</span><i>→</i><span class="s">Observer стенда или Оли</span><i>→</i><span class="s e">пакет</span></div></td>
+        <td><span class="st ok">работает на стенде</span></td></tr>
+      <tr><td class="name">И2</td><td>Разбор записанного у Оли</td>
+        <td><div class="flow"><span class="s e">Workbench</span><i>→</i><span class="s">Observer Оли</span><i>или</i><span class="s x">пакет</span><i>→</i><span class="s l">агент</span></div></td>
+        <td><span class="st warn">вид пакета не решён</span></td></tr>
+      <tr><td class="name">И3</td><td>Рецепт: от паттерна до App</td>
+        <td><div class="flow"><span class="s e">паттерн</span><i>→</i><span class="s x">код или правила</span><i>→</i><span class="s x">обновление</span><i>→</i><span class="s o">App</span></div></td>
+        <td><span class="st open">не спроектирован</span></td></tr>
+      <tr><td class="name">И4</td><td>Установка и обновление</td>
+        <td><div class="flow"><span class="s e">инженер</span><i>→</i><span class="s x">установщик с флэшки</span><i>→</i><span class="s">Observer, ETW, App, ключ</span></div></td>
+        <td><span class="st warn">на стенд — скрипт</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Развилки</h2>
+  <div class="forks">
+    <article class="fork">
+      <h3>Как Observer живёт у Оли</h3>
+      <div class="opt"><span><b>Процесс в сеансе пользователя</b>, как на стенде: видит окна.</span><span><b>Со сторожем</b>, который перезапускает зависший, или <b>короткий процесс на сеанс</b> — «зонд» из памяти 15.09.</span></div>
+      <div class="lean"><b>Решать после:</b> от длины и риска сеансов М4 и М5.</div>
+    </article>
+    <article class="fork">
+      <h3>Откуда права для ETW</h3>
+      <div class="opt"><span><b>Однократно при установке</b>: задача или служба.</span><span><b>Запрос UAC</b> на каждый сеанс.</span></div>
+      <div class="lean"><b>Решено 23.09.2026:</b> при установке, без UAC на каждый сеанс.</div>
+    </article>
+    <article class="fork">
+      <h3>Где живёт распознавание</h3>
+      <div class="opt"><span><b>Core</b>: детектор над фактами, проверяется тестами без Windows.</span><span><b>Observer</b>: эпизод как факт. <b>App</b>: сверка в окне.</span></div>
+      <div class="lean"><b>Решено 23.09.2026:</b> детектор в Core, выполняется в Observer, эпизод — факт журнала; App переводит во фразу; рецепт — обновлением, пороги — данные.</div>
+    </article>
+    <article class="fork">
+      <h3>Пакет и срок хранения</h3>
+      <div class="opt"><span>Что входит в пакет сеанса с машины Оли и как его увезти.</span><span>Сколько журналов держит Observer, чтобы не съесть диск.</span></div>
+      <div class="lean"><b>Пути нужны оба:</b> файлом и по сети.</div>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h2>Отложено и идеи</h2>
+  <div class="gaps">
+    <div class="gap"><h3>Сопровождение</h3>Открытие через Doctor с гигиеной и замером — маловероятно для Оли; замер уходит в опыты И1.</div>
+    <div class="gap"><h3>Прокси-монтаж</h3>Лёгкие копии видео для монтажа — «в дальний ящик», не снимается.</div>
+    <div class="gap"><h3>Подёргивание</h3>Исследуется опытами; может дать рецепт для М4.</div>
+    <div class="gap"><h3>After Effects</h3>«Адская» идея: наблюдать и другую программу. Первый шаг — вынести знание о ProShow в данные сеанса.</div>
+  </div>
+</section>
+
+<footer>Источник — <code>design/tier2/roles.md</code>, <code>design/tier2/ideas.md</code> и README проектов на 23.09.2026. Состояния сценариев — со слов владельца, до сверки с журналами.</footer>
+
+</div>
