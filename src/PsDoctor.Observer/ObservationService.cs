@@ -20,6 +20,9 @@ public sealed class ObservationService : IAsyncDisposable
     private readonly Lock gate = new();
     private ObservationSession? current;
     private CancellationTokenSource? scenario;
+    // Сеансы, открытые под запуск или подключение, которые отвергнуты до начала наблюдения. В списке их нет,
+    // журнал удаляется, как только сеанс закрыт: пустой сеанс нельзя выдавать за наблюдение.
+    private readonly HashSet<string> discarded = [];
 
     public ObservationService(string directory, IProgramLauncher launcher, ObserverHealth build, TimeSpan? actionTimeout = null, Func<DateTime>? utcNow = null)
     {
@@ -75,7 +78,7 @@ public sealed class ObservationService : IAsyncDisposable
                         Path.GetFileName(proshow.ProgramPath), session.Log)); }
                     catch (EtwStartException)
                     {
-                        _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                        Discard(session);
                         return Refuse(StatusCodes.Status503ServiceUnavailable,
                             new ObserverError(ObserverErrors.EtwUnavailable));
                     }
@@ -131,12 +134,12 @@ public sealed class ObservationService : IAsyncDisposable
             }
             catch (EtwStartException)
             {
-                _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                Discard(session);
                 return (null, StatusCodes.Status503ServiceUnavailable, new ObserverError(ObserverErrors.EtwUnavailable));
             }
             catch (ProgramAttachException error)
             {
-                _ = Task.Run(() => session.FinishAsync(SessionEndReasons.NoProgram));
+                Discard(session);
                 return (null, StatusCodes.Status409Conflict, new ObserverError(error.Reason));
             }
         }
@@ -184,11 +187,17 @@ public sealed class ObservationService : IAsyncDisposable
         {
             live = current;
         }
+        HashSet<string> hidden;
+        lock (gate)
+        {
+            hidden = [.. discarded];
+        }
         var ids = Directory.Exists(directory)
             ? Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension)
                 .Select(Path.GetFileNameWithoutExtension)
                 .Where(SessionIds.IsValid)
                 .Select(id => id!)
+                .Where(id => !hidden.Contains(id))
             : [];
         return ids
             .Order(StringComparer.Ordinal)
@@ -269,6 +278,13 @@ public sealed class ObservationService : IAsyncDisposable
         if (!SessionIds.IsValid(id))
         {
             return null;
+        }
+        lock (gate)
+        {
+            if (discarded.Contains(id))
+            {
+                return null;
+            }
         }
         var path = Path.Combine(directory, id + SessionIds.JournalExtension);
         return File.Exists(path) ? path : null;
@@ -352,6 +368,27 @@ public sealed class ObservationService : IAsyncDisposable
             }
         }
         cancellation.Dispose();
+    }
+
+    /// <summary>
+    /// Сеанс отвергнут до начала наблюдения: из списка он пропадает сразу, журнал удаляется после закрытия.
+    /// Зовётся под <see cref="gate"/>, поэтому закрытие уходит в фон: оно само берёт замок в <see cref="OnFinished"/>.
+    /// </summary>
+    private void Discard(ObservationSession session)
+    {
+        discarded.Add(session.Id);
+        _ = Task.Run(async () =>
+        {
+            await session.FinishAsync(SessionEndReasons.NoProgram).ConfigureAwait(false);
+            try
+            {
+                File.Delete(session.JournalPath);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Файл остаётся на диске, но в список и в API не попадает до перезапуска наблюдателя.
+            }
+        });
     }
 
     private void OnFinished(ObservationSession session)

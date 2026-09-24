@@ -105,6 +105,56 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Отказ_подключения_после_открытия_сеанса_не_оставляет_сеанса()
+    {
+        _запуск.Foreign = true;
+        _запуск.AttachFails = true;
+
+        var отказ = await Assert.ThrowsAsync<ObserverException>(() => _клиент.AttachAsync());
+
+        Assert.Equal(ObserverErrors.AttachFailed, отказ.Error!.Error);
+        Assert.Empty(await _клиент.SessionsAsync());
+        // Журнал закрывается в фоне и удаляется следом: на диске от отказа ничего не остаётся.
+        using var время = new CancellationTokenSource(Терпение);
+        while (Directory.EnumerateFiles(_каталог, "*" + SessionIds.JournalExtension).Any())
+        {
+            await Task.Delay(50, время.Token);
+        }
+
+        // Наблюдатель не занят отвергнутым сеансом: следующее подключение проходит.
+        _запуск.AttachFails = false;
+        AttachAccepted? принят = null;
+        while (принят is null)
+        {
+            try
+            {
+                принят = await _клиент.AttachAsync();
+            }
+            catch (ObserverException e) when (e.Error?.Error == ObserverErrors.ProgramRunning)
+            {
+                await Task.Delay(50, время.Token);
+            }
+        }
+        Assert.Equal(принят.Session, Assert.Single(await _клиент.SessionsAsync()).Id);
+    }
+
+    [Fact]
+    public void Неотвеченный_старт_ETW_оставляет_помощнику_команду_остановки()
+    {
+        var журнал = new FactLog(new FactJournalWriter(new StringWriter(), "тест", () => TimeSpan.Zero));
+        const string сеанс = "20260924-120000-000";
+
+        var отказ = Assert.Throws<EtwStartException>(() =>
+            EtwBridge.Start(_каталог, сеанс, 1000, "proshow.exe", журнал, readyTimeout: TimeSpan.FromMilliseconds(300)));
+
+        Assert.Equal(ObserverErrors.EtwUnavailable, отказ.Message);
+        var команда = System.Text.Json.JsonSerializer.Deserialize<EtwCommand>(
+            File.ReadAllText(EtwFiles.Command(_каталог)), ObservationJson.Options)!;
+        Assert.Equal("stop", команда.Action);
+        Assert.Equal(сеанс, команда.Session);
+    }
+
+    [Fact]
     public async Task Пассивный_сеанс_читает_факты_и_не_принимает_команды()
     {
         _запуск.Foreign = true;

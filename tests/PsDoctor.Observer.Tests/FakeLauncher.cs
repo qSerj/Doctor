@@ -26,6 +26,9 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
     /// <summary>Запуск не удаётся: Windows не создала процесс.</summary>
     public bool Fails { get; set; }
 
+    /// <summary>Процесс найден, но подключиться к нему не удаётся — например, он вышел между поиском и подключением.</summary>
+    public bool AttachFails { get; set; }
+
     public bool IsProgramRunning() => Foreign;
 
     public ProgramTarget FindRunning() => Foreign
@@ -34,7 +37,7 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
 
     public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
     {
-        if (!Foreign || target.ProcessId != 1000)
+        if (AttachFails || !Foreign || target.ProcessId != 1000)
             throw new ProgramAttachException(ObserverErrors.AttachFailed);
         var run = new FakeRun(target.ProcessId, facts, events);
         facts.Record(ProgramFactKinds.ProgramAttached, target, target.ProcessId);

@@ -25,7 +25,11 @@ public sealed class EtwBridge : IDisposable
         reader = Task.Run(ReadSummariesAsync);
     }
 
-    public static EtwBridge Start(string sessions, string id, int rootPid, string programImage, IFactRecorder facts, IReadOnlyCollection<int>? initialPids = null)
+    /// <summary>Сколько ждать ответа помощника на команду начать запись.</summary>
+    public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(10);
+
+    public static EtwBridge Start(string sessions, string id, int rootPid, string programImage, IFactRecorder facts,
+        IReadOnlyCollection<int>? initialPids = null, TimeSpan? readyTimeout = null)
     {
         var command = new EtwCommand(Guid.NewGuid().ToString("N"), id, "start", rootPid, Environment.ProcessId, programImage, initialPids?.ToArray());
         try { EtwFiles.WriteAtomically(EtwFiles.Command(sessions), command); }
@@ -35,7 +39,7 @@ public sealed class EtwBridge : IDisposable
         }
         var statusPath = EtwFiles.Status(sessions, id);
         var wait = Stopwatch.StartNew();
-        while (wait.Elapsed < TimeSpan.FromSeconds(10))
+        while (wait.Elapsed < (readyTimeout ?? ReadyTimeout))
         {
             var status = ReadStatus(statusPath);
             if (status?.State == "ready")
@@ -46,6 +50,16 @@ public sealed class EtwBridge : IDisposable
             if (status?.State == "failed")
                 throw new EtwStartException(status.Error ?? ObserverErrors.EtwUnavailable);
             Thread.Sleep(100);
+        }
+        // Помощник не ответил — возможно, он не запущен. Команда «начать» осталась бы в файле, и помощник, запущенный
+        // позже, начал бы писать сырьё сеанса, которого нет. Команда «остановить» её заменяет.
+        try
+        {
+            EtwFiles.WriteAtomically(EtwFiles.Command(sessions),
+                new EtwCommand(Guid.NewGuid().ToString("N"), id, "stop", 0, Environment.ProcessId, ""));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
         }
         throw new EtwStartException(ObserverErrors.EtwUnavailable);
     }
