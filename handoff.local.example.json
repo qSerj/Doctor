@@ -1,19 +1,6 @@
 {
   "machine": "HOME",
   "transit_root": "REPLACE_WITH_ABSOLUTE_TRANSIT_ROOT",
-  "additional_repositories": [],
-  "additional_materials": [
-    {
-      "name": "exchange-checks",
-      "path": "REPLACE_WITH_ABSOLUTE_EXCHANGE_CHECKS_DIRECTORY",
-      "required": false,
-      "sensitivity": "ordinary"
-    },
-    {
-      "name": "observer-key",
-      "path": "REPLACE_WITH_ABSOLUTE_KEY_FILE",
-      "required": false,
-      "sensitivity": "potentially-secret"
-    }
-  ]
+  "exchange_checks": "REPLACE_WITH_ABSOLUTE_EXCHANGE_CHECKS_DIRECTORY",
+  "chats_readonly": "REPLACE_WITH_ABSOLUTE_DIRECTORY_FOR_FOREIGN_CHATS"
 }

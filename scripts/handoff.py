@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Оснастка разработки: офлайн-передача рабочего состояния между машинами.
+"""Оснастка разработки: перенос работы Doctor между машинами без участия ИИ.
 
-Скрипт не обращается к сети и не изменяет репозитории. Он сохраняет Git-историю
-в bundle и незакоммиченное состояние отдельно, а inspect только сравнивает его.
+У переноса одна машина-источник. export собирает на накопитель всё, без чего
+работу не продолжить: Git обоих репозиториев, чаты агента, пакеты проверок,
+artifacts/ и локальный профиль для справки. receive сверяет пакет с этой машиной
+и без --apply ничего не меняет; с --apply только перематывает Git вперёд и
+докладывает файлы. Слияния нет: любое расхождение — остановка с объяснением.
 """
 
 from __future__ import annotations
@@ -12,18 +15,17 @@ import datetime as dt
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import uuid
 
 
-FORMAT_VERSION = 1
-EXCLUDED_MATERIAL_WORDS = ("secret", "credential", "password", "private-key", "private_key")
-SECRET_SUFFIXES = (".key", ".pem", ".pfx", ".p12")
+FORMAT_VERSION = 2
+JOURNAL = Path("memory") / "Ход работы.md"
+BACKUP_DIR = ".handoff-backup"
 
 
 class HandoffError(Exception):
@@ -34,6 +36,18 @@ def log(level: str, message: str) -> None:
     print(f"{level}: {message}")
 
 
+def run(arguments: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(arguments, text=True, encoding="utf-8", errors="replace", capture_output=True)
+    if check and result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "неизвестная ошибка"
+        raise HandoffError(f"{' '.join(arguments[:4])}: код {result.returncode}: {detail}")
+    return result
+
+
+def git(repo: Path, *arguments: str, check: bool = True) -> str:
+    return run(["git", "-C", str(repo), *arguments], check=check).stdout.strip()
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -42,323 +56,353 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_json(path: Path, value: object) -> None:
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def files_under(root: Path) -> list[Path]:
+    return sorted(path for path in root.rglob("*") if path.is_file() and not path.is_symlink())
+
+
+def same_file(left: Path, right: Path) -> bool:
+    return left.stat().st_size == right.stat().st_size and sha256(left) == sha256(right)
 
 
 def repo_root() -> Path:
-    script_root = Path(__file__).resolve().parents[1]
-    result = run(["git", "-C", str(script_root), "rev-parse", "--show-toplevel"], check=False)
-    if result.returncode == 0:
-        return Path(result.stdout.strip())
-    return script_root
-
-
-def run(arguments: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(arguments, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True)
-    if check and result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "неизвестная ошибка"
-        raise HandoffError(f"команда {' '.join(arguments[:3])} завершилась с кодом {result.returncode}: {detail}")
-    return result
+    return Path(git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel"))
 
 
 def read_config(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise HandoffError(f"не прочитан локальный конфиг {path}") from error
-    if not isinstance(value, dict):
-        raise HandoffError("корень handoff.local.json должен быть объектом")
-    for name in ("machine", "transit_root"):
+        raise HandoffError(f"не прочитан локальный конфиг {path}; шаблон — handoff.local.example.json") from error
+    for name in ("machine", "transit_root", "exchange_checks"):
         if not isinstance(value.get(name), str) or not value[name]:
-            raise HandoffError(f"в конфиге требуется непустой {name}")
-    if not Path(value["transit_root"]).is_absolute():
-        raise HandoffError("transit_root должен быть абсолютным путём локальной машины")
+            raise HandoffError(f"в {path.name} требуется непустой {name}")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value["machine"]):
+        raise HandoffError("machine — только латиница, цифры, _ и -")
     return value
 
 
-def safe_name(value: str, label: str) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value):
-        raise HandoffError(f"{label} содержит недопустимые символы")
-    return value
+def claude_projects() -> Path:
+    base = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(base) if base else Path.home() / ".claude") / "projects"
 
 
-def relative(path: Path, root: Path) -> str:
-    return path.relative_to(root).as_posix()
+def chats_name(root: Path) -> str:
+    """Имя каталога чатов Claude Code: путь проекта, где всё, кроме букв и цифр, заменено на '-'."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(root))
 
 
-def git(repo: Path, arguments: list[str], *, check: bool = True) -> str:
-    return run(["git", "-C", str(repo), *arguments], check=check).stdout
+def repositories(root: Path) -> dict[str, Path]:
+    found = {"doctor": root}
+    if (root / "Memorex" / ".git").exists():
+        found["memorex"] = root / "Memorex"
+    return found
 
 
-def git_bytes(repo: Path, arguments: list[str]) -> bytes:
-    result = subprocess.run(["git", "-C", str(repo), *arguments], cwd=repo, capture_output=True)
-    if result.returncode:
-        raise HandoffError(f"git diff завершился с кодом {result.returncode}")
-    return result.stdout
+def journal_tail(memorex: Path | None) -> str:
+    if memorex is None or not (memorex / JOURNAL).is_file():
+        return ""
+    text = (memorex / JOURNAL).read_text(encoding="utf-8")
+    sections = re.split(r"(?m)^(?=## )", text)
+    return sections[-1].strip() if len(sections) > 1 else ""
 
 
-def repository_entries(root: Path, config: dict) -> list[tuple[str, Path]]:
-    entries: list[tuple[str, Path]] = [("Doctor", root)]
-    memorex = root / "Memorex"
-    if (memorex / ".git").exists():
-        entries.append(("Memorex", memorex))
-    for item in config.get("additional_repositories", []):
-        if not isinstance(item, dict):
-            raise HandoffError("additional_repositories содержит не объект")
-        name = safe_name(str(item.get("name", "")), "имя дополнительного репозитория")
-        raw_path = item.get("path")
-        if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
-            raise HandoffError(f"репозиторий {name} требует абсолютный локальный path")
-        path = Path(raw_path)
-        if not (path / ".git").exists():
-            raise HandoffError(f"не найден Git-репозиторий {name}")
-        entries.append((name, path))
-    names = [name for name, _ in entries]
-    if len(set(names)) != len(names):
-        raise HandoffError("имена репозиториев должны быть уникальны")
-    return entries
+# ---------- export ----------
+
+def check_source_repo(name: str, repo: Path, push: bool) -> dict:
+    dirty = git(repo, "status", "--porcelain=v1").splitlines()
+    if dirty:
+        listing = "\n  ".join(dirty[:20]) + ("\n  …" if len(dirty) > 20 else "")
+        raise HandoffError(f"{name}: незакоммиченные изменения — закоммитьте или отложите сами:\n  {listing}")
+    branch = git(repo, "branch", "--show-current")
+    if not branch:
+        raise HandoffError(f"{name}: HEAD отсоединён; перенос делается с ветки")
+    if run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "@{u}"], check=False).returncode:
+        raise HandoffError(f"{name}: у ветки {branch} нет upstream")
+    if run(["git", "-C", str(repo), "fetch", "--quiet"], check=False).returncode:
+        log("WARNING", f"{name}: fetch не прошёл (нет сети?); отправленность сверяется с последним известным origin")
+    ahead = int(git(repo, "rev-list", "--count", "@{u}..HEAD"))
+    behind = int(git(repo, "rev-list", "--count", "HEAD..@{u}"))
+    if behind:
+        raise HandoffError(f"{name}: в origin на {behind} коммит(ов) больше, чем здесь — источник устарел; сначала заберите их")
+    if ahead:
+        if not push:
+            raise HandoffError(f"{name}: {ahead} неотправленных коммит(ов); отправьте сами или запустите export --push")
+        run(["git", "-C", str(repo), "push", "--quiet"])
+        log("OK", f"{name}: отправлено {ahead} коммит(ов)")
+    return {"branch": branch, "head": git(repo, "rev-parse", "HEAD")}
 
 
-def tracked_counts(repo: Path) -> tuple[int, int, bool]:
-    status = git(repo, ["status", "--porcelain=v1", "-z"])
-    entries = [item for item in status.split("\0") if item]
-    modified = sum(1 for item in entries if not item.startswith("?? "))
-    untracked = sum(1 for item in entries if item.startswith("?? "))
-    return modified, untracked, bool(entries)
+def copy_tree(source: Path, target: Path, skip: tuple[str, ...] = ()) -> None:
+    shutil.copytree(source, target, symlinks=False, ignore=shutil.ignore_patterns("__pycache__", *skip))
 
 
-def add_untracked_archive(repo: Path, destination: Path) -> tuple[int, list[str]]:
-    raw = run(["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard", "-z"]).stdout
-    names = [name for name in raw.split("\0") if name]
-    if not names:
-        return 0, []
-    excluded = [name for name in names if name in {"handoff.local.json", "CLAUDE.local.md"}]
-    names = [name for name in names if name not in set(excluded)]
-    if not names:
-        return 0, excluded
-    with tarfile.open(destination, "w:gz", format=tarfile.PAX_FORMAT, dereference=False) as archive:
-        for name in names:
-            pure = PurePosixPath(name)
-            if pure.is_absolute() or ".." in pure.parts:
-                raise HandoffError("Git вернул небезопасный путь untracked-файла")
-            source = repo.joinpath(*pure.parts)
-            if not source.exists() and not source.is_symlink():
-                raise HandoffError(f"untracked-файл исчез при упаковке: {name}")
-            archive.add(source, arcname=name, recursive=False)
-    with tarfile.open(destination, "r:gz") as archive:
-        for member in archive.getmembers():
-            pure = PurePosixPath(member.name)
-            if pure.is_absolute() or ".." in pure.parts:
-                raise HandoffError("архив untracked содержит небезопасный путь")
-    return len(names), excluded
+def readme(manifest: dict) -> str:
+    repos = manifest["repositories"]
+    lines = [f"# Перенос работы Doctor — {manifest['name']}", "",
+             f"Собрано `scripts/handoff.py export` на машине {manifest['machine']}, {manifest['created_at']}. "
+             + ", ".join(f"{name} `{info['branch']}` = `{info['head'][:7]}`" for name, info in repos.items())
+             + "; всё закоммичено и отправлено в origin.", "", "## Где остановились", "",
+             manifest["journal"] or "Раздела нет: страница `Memorex/memory/Ход работы.md` пуста или отсутствует.", "",
+             "## Состав", "",
+             "- `git/*.bundle` — все ветки репозиториев, если на приёме нет сети.",
+             f"- `chats/{manifest['chats']}/` — сессии агента и его `memory/`.",
+             "- `experiments/lab-exchange-checks/` — пакеты проверок.",
+             "- `experiments/repo-artifacts/` — игнорируемый `artifacts/` репозитория.",
+             "- `context/CLAUDE.local.md` — профиль машины-источника, только для справки.", "",
+             "Не включены: ВМ, `inbound/`, хранилище проектов, ключи, `handoff.local.json`, `bin/obj`.", "",
+             "## Приёмка", "", "```text", f"python3 scripts/handoff.py receive {manifest['name']}",
+             f"python3 scripts/handoff.py receive {manifest['name']} --apply", "```", "",
+             "Первая команда только сверяет и показывает план; вторая выполняет, если сверка не нашла препятствий.", ""]
+    return "\n".join(lines)
 
 
-def create_repo_package(name: str, repo: Path, package: Path) -> dict:
-    package.mkdir(parents=True)
-    branch = git(repo, ["branch", "--show-current"]).strip() or "(detached)"
-    head = git(repo, ["rev-parse", "HEAD"]).strip()
-    modified, untracked, dirty = tracked_counts(repo)
-    run(["git", "-C", str(repo), "bundle", "create", str(package / "repo.bundle"), "--all"])
-    run(["git", "bundle", "verify", str(package / "repo.bundle")])
-    (package / "status.txt").write_text(git(repo, ["status", "--short", "--branch"]), encoding="utf-8")
-    (package / "log.txt").write_text(git(repo, ["log", "--oneline", "--decorate", "-30"]), encoding="utf-8")
-    (package / "remotes.txt").write_text(git(repo, ["remote", "-v"]), encoding="utf-8")
-    (package / "dirty.patch").write_bytes(git_bytes(repo, ["diff", "--binary", "HEAD"]))
-    archived_untracked, excluded_untracked = add_untracked_archive(repo, package / "untracked.tar.gz") if untracked else (0, [])
-    local_commits = int(git(repo, ["rev-list", "--count", "HEAD", "--not", "--remotes"]).strip() or "0")
-    return {"name": name, "branch": branch, "head": head, "clean": not dirty, "modified": modified,
-            "untracked": untracked, "untracked_archived": archived_untracked, "excluded_untracked": excluded_untracked,
-            "local_commits": local_commits,
-            "bundle": f"repositories/{name}/repo.bundle"}
-
-
-def copy_materials(config: dict, destination: Path) -> tuple[list[dict], list[str]]:
-    copied: list[dict] = []
-    warnings: list[str] = []
-    destination.mkdir(parents=True, exist_ok=True)
-    entries = config.get("additional_materials", [])
-    if not isinstance(entries, list):
-        raise HandoffError("additional_materials должен быть списком")
-    for item in entries:
-        if not isinstance(item, dict):
-            raise HandoffError("additional_materials содержит не объект")
-        name = safe_name(str(item.get("name", "")), "имя дополнительного материала")
-        sensitivity = item.get("sensitivity", "ordinary")
-        if sensitivity != "ordinary":
-            warnings.append(f"материал {name} не включён: sensitivity={sensitivity}; переносите его вручную")
-            continue
-        if any(word in name.lower() for word in EXCLUDED_MATERIAL_WORDS):
-            warnings.append(f"материал {name} не включён: имя похоже на секрет")
-            continue
-        raw_path = item.get("path")
-        if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
-            raise HandoffError(f"материал {name} требует абсолютный локальный path")
-        source = Path(raw_path)
-        if not source.exists():
-            if item.get("required", False):
-                raise HandoffError(f"не найден обязательный материал {name}")
-            warnings.append(f"необязательный материал {name} не найден")
-            continue
-        if source.is_symlink():
-            raise HandoffError(f"материал {name} является символической ссылкой")
-        candidates = [source] if source.is_file() else list(source.rglob("*"))
-        for candidate in candidates:
-            lowered_parts = {part.lower() for part in candidate.relative_to(source).parts}
-            lowered_name = candidate.name.lower()
-            if lowered_parts & {"secrets", ".ssh", "credentials"} or any(word in lowered_name for word in EXCLUDED_MATERIAL_WORDS) or lowered_name.endswith(SECRET_SUFFIXES):
-                raise HandoffError(f"материал {name} содержит похожий на секрет файл/каталог ({candidate.name}); укажите узкий безопасный источник")
-        target = destination / name
-        if source.is_file():
-            shutil.copy2(source, target)
-            kind = "file"
-        elif source.is_dir():
-            shutil.copytree(source, target, symlinks=True)
-            kind = "directory"
-        else:
-            raise HandoffError(f"материал {name} не является файлом или каталогом")
-        copied.append({"name": name, "kind": kind, "path": f"materials/{name}"})
-    return copied, warnings
-
-
-def checksum_file(package: Path) -> None:
-    paths = sorted(path for path in package.rglob("*") if path.is_file() and path.name != "checksums.sha256")
-    (package / "checksums.sha256").write_text("".join(f"{sha256(path)}  {relative(path, package)}\n" for path in paths), encoding="utf-8")
-
-
-def verify_package(package: Path) -> None:
-    required = [package / "HANDOFF.md", package / "manifest.json", package / "checksums.sha256"]
-    if any(not path.is_file() for path in required):
-        raise HandoffError("не созданы обязательные файлы hand-off")
-    manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-    for repo in manifest["repositories"]:
-        run(["git", "bundle", "verify", str(package / repo["bundle"])])
-    for line in (package / "checksums.sha256").read_text(encoding="utf-8").splitlines():
-        digest, name = line.split("  ", 1)
-        pure = PurePosixPath(name)
-        if pure.is_absolute() or ".." in pure.parts or sha256(package.joinpath(*pure.parts)) != digest:
-            raise HandoffError("контрольная сумма пакета не совпала")
-    for archive in package.rglob("*.tar.gz"):
-        with tarfile.open(archive, "r:gz") as value:
-            value.getmembers()
-
-
-def handoff_markdown(manifest: dict) -> str:
-    rows = ["# Офлайн hand-off", "", f"Создан: {manifest['created_at']}", f"Машина: {manifest['machine']}", "",
-            "| Репозиторий | Branch | HEAD | Состояние | Локальных коммитов | Modified | Untracked |",
-            "| --- | --- | --- | --- | ---: | ---: | ---: |"]
-    for repo in manifest["repositories"]:
-        rows.append(f"| {repo['name']} | `{repo['branch']}` | `{repo['head'][:12]}` | {'clean' if repo['clean'] else 'dirty'} | {repo['local_commits']} | {repo['modified']} | {repo['untracked']} |")
-    rows += ["", "Проверка целостности: OK.", "", "Пакет автономен: Git-история хранится в `repo.bundle`, а незакоммиченные tracked-изменения — в `dirty.patch`; untracked-файлы — в `untracked.tar.gz`."]
-    if manifest["additional_materials"]:
-        rows += ["", "Дополнительные материалы: " + ", ".join(item["name"] for item in manifest["additional_materials"]) + "."]
-    if manifest["warnings"]:
-        rows += ["", "Предупреждения:"] + [f"- {warning}" for warning in manifest["warnings"]]
-    return "\n".join(rows) + "\n"
-
-
-def export(config: dict, root: Path) -> Path:
+def export(config: dict, root: Path, push: bool) -> Path:
+    repos = repositories(root)
+    heads = {name: check_source_repo(name, path, push) for name, path in repos.items()}
     transit = Path(config["transit_root"])
     transit.mkdir(parents=True, exist_ok=True)
-    machine = safe_name(config["machine"], "machine")
-    stamp = dt.datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
-    final = transit / f"{stamp}_{machine}"
-    building = transit / f".building-{stamp}_{machine}-{uuid.uuid4().hex[:8]}"
+    base = f"{dt.date.today().isoformat()}-{config['machine']}"
+    name, number = base, 2
+    while (transit / name).exists():
+        name, number = f"{base}-{number}", number + 1
+    building = transit / f".building-{name}-{uuid.uuid4().hex[:8]}"
     building.mkdir()
     try:
-        repositories = [create_repo_package(name, path, building / "repositories" / name) for name, path in repository_entries(root, config)]
-        materials, warnings = copy_materials(config, building / "materials")
-        for repository in repositories:
-            for excluded in repository.get("excluded_untracked", []):
-                warnings.append(f"{repository['name']}/{excluded} не включён: это локальная конфигурация машины")
-        created_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-        manifest = {"format_version": FORMAT_VERSION, "created_at": created_at, "machine": machine,
-                    "repositories": repositories, "additional_materials": materials, "warnings": warnings,
-                    "integrity": {"status": "OK", "algorithm": "SHA-256"}}
-        for warning in warnings:
-            log("WARNING", warning)
-        write_json(building / "manifest.json", manifest)
-        (building / "HANDOFF.md").write_text(handoff_markdown(manifest), encoding="utf-8")
-        checksum_file(building)
-        verify_package(building)
-        if final.exists():
-            final = transit / f"{stamp}_{machine}-{uuid.uuid4().hex[:8]}"
-        os.replace(building, final)
-        latest_temp = transit / f".latest-{uuid.uuid4().hex}.tmp"
-        latest_temp.write_text(final.name + "\n", encoding="utf-8")
-        os.replace(latest_temp, transit / "latest.txt")
-        with (transit / "handoff.log").open("a", encoding="utf-8") as stream:
-            stream.write(f"{created_at} OK export {final.name}\n")
-        log("OK", f"создан пакет {final}")
-        return final
-    except Exception as error:
-        (building / "ERROR.log").write_text(f"ERROR: {error}\n", encoding="utf-8")
-        log("ERROR", f"пакет не завершён; журнал: {building / 'ERROR.log'}")
+        (building / "git").mkdir()
+        for repo_name, path in repos.items():
+            bundle = building / "git" / f"{repo_name}.bundle"
+            run(["git", "-C", str(path), "bundle", "create", str(bundle), "--branches", "--tags"])
+            run(["git", "-C", str(path), "bundle", "verify", str(bundle)])
+        chats = claude_projects() / chats_name(root)
+        if chats.is_dir():
+            copy_tree(chats, building / "chats" / chats.name)
+        else:
+            log("WARNING", f"каталог чатов не найден: {chats}")
+        checks = Path(config["exchange_checks"])
+        if checks.is_dir():
+            copy_tree(checks, building / "experiments" / "lab-exchange-checks")
+        else:
+            log("WARNING", f"exchange_checks не найден: {checks}")
+        if (root / "artifacts").is_dir():
+            copy_tree(root / "artifacts", building / "experiments" / "repo-artifacts", (BACKUP_DIR,))
+        if (root / "CLAUDE.local.md").is_file():
+            (building / "context").mkdir()
+            shutil.copy2(root / "CLAUDE.local.md", building / "context" / "CLAUDE.local.md")
+        journal = journal_tail(repos.get("memorex"))
+        if not journal:
+            log("WARNING", "нет раздела в Memorex/memory/Ход работы.md — «где остановились» будет пустым")
+        manifest = {"format": FORMAT_VERSION, "name": name, "machine": config["machine"],
+                    "created_at": dt.datetime.now().astimezone().replace(microsecond=0).isoformat(),
+                    "repositories": heads, "chats": chats.name, "journal": journal}
+        (building / "README.md").write_text(readme(manifest), encoding="utf-8")
+        manifest["files"] = {path.relative_to(building).as_posix(): sha256(path) for path in files_under(building)}
+        (building / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(building, transit / name)
+    except BaseException:
+        log("ERROR", f"пакет не собран; неполный каталог оставлен для разбора: {building}")
         raise
+    log("OK", f"пакет {transit / name}")
+    return transit / name
 
 
-def package_from_argument(transit: Path, argument: str | None) -> Path:
-    if argument:
-        path = Path(argument)
-        return path if path.is_absolute() else transit / path
-    latest = transit / "latest.txt"
-    if not latest.is_file():
-        raise HandoffError("latest.txt отсутствует; укажите пакет явно")
-    return transit / latest.read_text(encoding="utf-8").strip()
+# ---------- receive ----------
+
+class Plan:
+    def __init__(self) -> None:
+        self.blockers: list[str] = []
+        self.steps: list[tuple[str, object]] = []
+        self.notes: list[str] = []
+
+    def block(self, text: str) -> None:
+        self.blockers.append(text)
+
+    def step(self, text: str, action: object = None) -> None:
+        self.steps.append((text, action))
 
 
-def relation(local: Path, handoff_head: str) -> str:
-    if run(["git", "-C", str(local), "merge-base", "--is-ancestor", handoff_head, "HEAD"], check=False).returncode == 0:
-        count = git(local, ["rev-list", "--count", f"{handoff_head}..HEAD"]).strip()
-        return "одинаковые истории" if count == "0" else f"local ahead by {count} commits"
-    if run(["git", "-C", str(local), "merge-base", "--is-ancestor", "HEAD", handoff_head], check=False).returncode == 0:
-        count = git(local, ["rev-list", "--count", f"HEAD..{handoff_head}"]).strip()
-        return f"handoff ahead by {count} commits"
-    return "histories diverged"
+def load_package(config: dict, argument: str) -> tuple[Path, dict]:
+    package = Path(argument)
+    if not package.is_absolute():
+        package = Path(config["transit_root"]) / package
+    try:
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HandoffError(f"нет manifest.json в {package}; это не пакет export") from error
+    if manifest.get("format") != FORMAT_VERSION:
+        raise HandoffError(f"формат пакета {manifest.get('format')} не поддерживается (нужен {FORMAT_VERSION})")
+    broken = [name for name, digest in manifest["files"].items()
+              if not (package / name).is_file() or sha256(package / name) != digest]
+    if broken:
+        raise HandoffError("пакет повреждён, не совпали контрольные суммы:\n  " + "\n  ".join(broken[:20]))
+    return package, manifest
 
 
-def inspect(config: dict, root: Path, argument: str | None) -> None:
-    package = package_from_argument(Path(config["transit_root"]), argument)
-    verify_package(package)
-    manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-    local_repos = dict(repository_entries(root, config))
-    log("OK", f"пакет {package.name} проверен")
-    with (Path(config["transit_root"]) / "handoff.log").open("a", encoding="utf-8") as stream:
-        stream.write(f"{dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()} OK inspect {package.name}\n")
-    for item in manifest["repositories"]:
-        print(f"\n{item['name']}")
-        local = local_repos.get(item["name"])
-        print(f"handoff HEAD: {item['head']}")
-        print(f"handoff branch: {item['branch']}")
-        print(f"handoff worktree: {'clean' if item['clean'] else 'dirty'}")
-        print(f"handoff modified: {item['modified']}")
-        print(f"handoff untracked: {item['untracked']}")
-        if local is None:
-            print("local: репозиторий отсутствует")
+def plan_repo(plan: Plan, name: str, repo: Path | None, info: dict, bundle: Path) -> None:
+    if repo is None:
+        plan.block(f"{name}: репозитория здесь нет — склонируйте его, затем повторите")
+        return
+    dirty = git(repo, "status", "--porcelain=v1").splitlines()
+    if dirty:
+        plan.block(f"{name}: здесь есть незакоммиченное ({len(dirty)}), первое: {dirty[0].strip()} — закоммитьте и отправьте или отложите сами")
+    branch = git(repo, "branch", "--show-current")
+    if branch != info["branch"]:
+        plan.block(f"{name}: здесь ветка «{branch or 'отсоединён'}», в пакете «{info['branch']}»")
+        return
+    head, target = git(repo, "rev-parse", "HEAD"), info["head"]
+    if head == target:
+        plan.notes.append(f"{name}: уже на {target[:7]}")
+        return
+    if run(["git", "-C", str(repo), "cat-file", "-e", f"{target}^{{commit}}"], check=False).returncode:
+        run(["git", "-C", str(repo), "fetch", "--quiet"], check=False)
+    if run(["git", "-C", str(repo), "cat-file", "-e", f"{target}^{{commit}}"], check=False).returncode:
+        run(["git", "-C", str(repo), "fetch", "--quiet", str(bundle), f"+refs/heads/*:refs/handoff/{name}/*"])
+    if run(["git", "-C", str(repo), "merge-base", "--is-ancestor", head, target], check=False).returncode == 0:
+        count = git(repo, "rev-list", "--count", f"{head}..{target}")
+        plan.step(f"{name}: перемотать {branch} вперёд на {count} коммит(ов) до {target[:7]}",
+                  lambda: run(["git", "-C", str(repo), "merge", "--ff-only", "--quiet", target]))
+    elif run(["git", "-C", str(repo), "merge-base", "--is-ancestor", target, head], check=False).returncode == 0:
+        count = git(repo, "rev-list", "--count", f"{target}..{head}")
+        plan.block(f"{name}: здесь {count} коммит(ов), которых нет в пакете — пакет старее этой машины или источник собран без них")
+    else:
+        plan.block(f"{name}: история здесь и в пакете разошлась — сливать скрипт не будет, разберитесь вручную")
+
+
+def copy_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def plan_checks(plan: Plan, source: Path, target: Path) -> None:
+    if not source.is_dir():
+        return
+    added = 0
+    for item in sorted(source.iterdir()):
+        local = target / item.name
+        if not local.exists():
+            added += 1
+            plan.step(f"проверка {item.name}: добавить", lambda s=item, t=local: shutil.copytree(s, t))
             continue
-        local_head = git(local, ["rev-parse", "HEAD"]).strip()
-        modified, untracked, dirty = tracked_counts(local)
-        print(f"local HEAD:   {local_head}")
-        print(f"local worktree: {'dirty' if dirty else 'clean'} (modified {modified}, untracked {untracked})")
-        print(relation(local, item["head"]))
+        theirs = {p.relative_to(item) for p in files_under(item)}
+        ours = {p.relative_to(local) for p in files_under(local)}
+        if theirs != ours or any(not same_file(item / p, local / p) for p in theirs):
+            plan.block(f"проверка {item.name}: здесь есть одноимённая с другим содержимым — результаты проверок не перезаписываются")
+    if not added:
+        plan.notes.append("пакеты проверок: новых нет")
+
+
+def plan_artifacts(plan: Plan, source: Path, target: Path, package_name: str) -> None:
+    if not source.is_dir():
+        return
+    added = replaced = 0
+    backup = target / BACKUP_DIR / package_name
+    for path in files_under(source):
+        relative = path.relative_to(source)
+        local = target / relative
+        if not local.exists():
+            added += 1
+            plan.step("", lambda s=path, t=local: copy_file(s, t))
+        elif not same_file(path, local):
+            replaced += 1
+            plan.step("", lambda s=path, t=local, b=backup / relative: (copy_file(t, b), copy_file(s, t)))
+    if added or replaced:
+        plan.step(f"artifacts/: добавить {added}, заменить {replaced}" + (f" (прежние — в artifacts/{BACKUP_DIR}/{package_name}/)" if replaced else ""))
+    else:
+        plan.notes.append("artifacts/: совпадает с пакетом")
+
+
+def plan_chats(plan: Plan, source: Path, root: Path, config: dict, package_name: str) -> None:
+    if not source.is_dir():
+        return
+    local_chats = claude_projects() / chats_name(root)
+    memory_source = source / "memory"
+    if source.name == local_chats.name:
+        target, readonly = local_chats, False
+    else:
+        target, readonly = Path(config.get("chats_readonly", Path.home() / "Lab" / "chats")) / package_name, True
+    added = replaced = 0
+    for path in files_under(source):
+        relative = path.relative_to(source)
+        if relative.parts[0] == "memory":
+            continue
+        local = target / relative
+        if not local.exists():
+            added += 1
+            plan.step("", lambda s=path, t=local: copy_file(s, t))
+        elif not same_file(path, local):
+            if path.stat().st_size > local.stat().st_size:
+                replaced += 1
+                plan.step("", lambda s=path, t=local: copy_file(s, t))
+            else:
+                plan.notes.append(f"чат {relative}: здесь не короче, чем в пакете — оставлен здешний")
+    where = f"{target} — только для чтения: путь проекта на той машине другой, --resume их не найдёт" if readonly else str(target)
+    if added or replaced:
+        plan.step(f"чаты: добавить {added}, дополнить {replaced} → {where}")
+    else:
+        plan.notes.append("чаты: новых нет")
+    if not memory_source.is_dir():
+        return
+    memory_target = local_chats / "memory"
+    for path in files_under(memory_source):
+        relative = path.relative_to(memory_source)
+        local = memory_target / relative
+        if not local.exists():
+            plan.step(f"память агента: добавить {relative}", lambda s=path, t=local: copy_file(s, t))
+        elif not same_file(path, local):
+            plan.notes.append(f"память агента: {relative} различается — оставлен здешний, сведите вручную или через skill")
+
+
+def receive(config: dict, root: Path, argument: str, apply: bool) -> int:
+    package, manifest = load_package(config, argument)
+    log("OK", f"пакет {manifest['name']} с машины {manifest['machine']}, {manifest['created_at']}: контрольные суммы совпали")
+    plan = Plan()
+    local_repos = repositories(root)
+    for name, info in manifest["repositories"].items():
+        plan_repo(plan, name, local_repos.get(name), info, package / "git" / f"{name}.bundle")
+    plan_checks(plan, package / "experiments" / "lab-exchange-checks", Path(config["exchange_checks"]))
+    plan_artifacts(plan, package / "experiments" / "repo-artifacts", root / "artifacts", manifest["name"])
+    plan_chats(plan, package / "chats" / manifest["chats"], root, config, manifest["name"])
+    plan.notes.append("CLAUDE.local.md не трогается: у этой машины свой профиль")
+
+    for note in plan.notes:
+        print(f"  = {note}")
+    for text, _ in plan.steps:
+        if text:
+            print(f"  + {text}")
+    for text in plan.blockers:
+        print(f"  ! {text}")
+    print("\nГде остановились:\n")
+    print(manifest["journal"] or "(раздела нет)")
+    print()
+    if plan.blockers:
+        log("STOP", f"препятствий: {len(plan.blockers)}; ничего не изменено")
+        return 1
+    if not apply:
+        log("OK", "препятствий нет; выполнить — та же команда с --apply")
+        return 0
+    for _, action in plan.steps:
+        if callable(action):
+            action()
+    log("OK", "принято")
+    return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Офлайн hand-off рабочего состояния Doctor")
-    parser.add_argument("--config", type=Path, help="локальный handoff.local.json")
+    parser = argparse.ArgumentParser(description="Перенос работы Doctor между машинами")
+    parser.add_argument("--config", type=Path, help="локальный handoff.local.json; по умолчанию в корне репозитория")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("export", help="создать новый автономный пакет")
-    inspect_parser = sub.add_parser("inspect", help="сверить пакет без изменений локального дерева")
-    inspect_parser.add_argument("package", nargs="?", help="имя или абсолютный путь пакета; по умолчанию latest")
+    export_parser = sub.add_parser("export", help="собрать пакет на накопитель")
+    export_parser.add_argument("--push", action="store_true", help="отправить неотправленные коммиты вместо остановки")
+    receive_parser = sub.add_parser("receive", help="сверить пакет с этой машиной; с --apply — принять")
+    receive_parser.add_argument("package", help="имя пакета в transit_root или путь к нему")
+    receive_parser.add_argument("--apply", action="store_true", help="выполнить план, если препятствий нет")
     args = parser.parse_args()
-    root = repo_root()
-    config = read_config(args.config or root / "handoff.local.json")
     try:
+        root = repo_root()
+        config = read_config(args.config or root / "handoff.local.json")
         if args.command == "export":
-            export(config, root)
-        else:
-            inspect(config, root, args.package)
-        return 0
+            export(config, root, args.push)
+            return 0
+        return receive(config, root, args.package, args.apply)
     except HandoffError as error:
         log("ERROR", str(error))
         return 2
