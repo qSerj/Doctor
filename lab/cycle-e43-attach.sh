@@ -1,7 +1,8 @@
 #!/bin/bash
 # Цикл опыта. Не часть продукта, см. lab/README.md.
-# Пункты 1, 3 и 4 критерия Э4.3: пассивное подключение к ProShow, запущенному вручную, отказы и живучесть программы.
-# Один шаг за запуск; ручное действие владельца — перед шагом или по подсказке во время него.
+# Пункты 1–4 критерия Э4.3: пассивное подключение к ProShow, запущенному вручную, отказы, живучесть программы
+# и ручной рендер под наблюдением. Один шаг за запуск; ручное действие владельца — перед шагом или по подсказке.
+#   lab/cycle-e43-attach.sh <шаг> [id пакета]   — id пакета задаёт results/, по умолчанию e43-attach-001-<шаг>
 #   lab/cycle-e43-attach.sh passive   — подключение, повторное подключение, команды программе, stop
 #   lab/cycle-e43-attach.sh restart   — перезапуск наблюдателя посреди сеанса: обрыв журнала
 #   lab/cycle-e43-attach.sh close     — владелец закрывает ProShow штатно во время сеанса
@@ -9,22 +10,24 @@
 #   lab/cycle-e43-attach.sh etw       — ETW-помощник остановлен: отказ подключения, затем восстановление
 #   lab/cycle-e43-attach.sh two       — владелец запустил второй экземпляр: выбор не делается молча
 #   lab/cycle-e43-attach.sh window    — окно «New Slide Show», открытое до подключения, видно в журнале
+#   lab/cycle-e43-attach.sh render    — владелец запускает вывод вручную; процессы, окна, файлы и сырьё за минуту
 #
 # Каждая проверка печатает строку «совпало» или «РАСХОЖДЕНИЕ»; код выхода — 0, если расхождений нет, иначе 1.
-# Факты сеансов шага ложатся в results/ пакета: $LAB_EXCHANGE/checks/e43-attach-001-<шаг>/results. Общую переменную
+# Факты сеансов шага ложатся в results/ пакета: $LAB_EXCHANGE/checks/<id пакета>/results. Общую переменную
 # OUT скрипт не читает: её выставляет lab/setup-env.sh для другого опыта.
 # Переменные: LAB_HOST, LAB_KEY, LAB_EXCHANGE, PSDOCTOR_OBSERVER_URL, PSDOCTOR_OBSERVER_KEY_FILE.
 set -uo pipefail
 . "$(dirname "$0")/portable.sh"
 
-step="${1:?укажите шаг: passive, restart, close, kill, etw, two или window}"
+step="${1:?укажите шаг: passive, restart, close, kill, etw, two, window или render}"
+package="${2:-e43-attach-001-$step}"
 host="${LAB_HOST:-192.168.56.5}"
 lab_key="${LAB_KEY:-$HOME/.ssh/lab_ed25519}"
 exchange="${LAB_EXCHANGE:-$HOME/Lab/exchange}"
 export PSDOCTOR_OBSERVER_URL="${PSDOCTOR_OBSERVER_URL:-http://$host:8100}"
 export PSDOCTOR_OBSERVER_KEY_FILE="${PSDOCTOR_OBSERVER_KEY_FILE:-$HOME/Lab/secrets/observer.key}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-out="$exchange/checks/e43-attach-001-$step/results"
+out="$exchange/checks/$package/results"
 mkdir -p "$out"
 ssh_opts=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$lab_key")
 mismatches=0
@@ -298,6 +301,76 @@ two)
       echo "Второго экземпляра нет — программа, похоже, не даёт запустить себя дважды. Проверка неприменима; запишите в чат, что было на экране."
       ;;
   esac
+  ;;
+
+render)
+  require_one_proshow
+  attach_or_die
+  # Окна рендера — из фактов сеанса: «Rendering Video» на время вывода, следом диалог об окончании.
+  windows_facts() {
+    "${psdoctor[@]}" observe facts "$session" --kind dialog-opened,dialog-closed,window-opened,window-closed 2>/dev/null
+  }
+  rendering() {
+    windows_facts | "$PYTHON" -c "
+import json,sys
+opened={}; state='none'
+for line in sys.stdin:
+    f=json.loads(line); d=f.get('data') or {}
+    if f['kind'] in ('dialog-opened','window-opened') and d.get('title')=='Rendering Video':
+        opened[d['handle']]=f['elapsed']; state='open'
+    if f['kind'] in ('dialog-closed','window-closed') and d.get('handle') in opened:
+        state='closed'
+print(state)"
+  }
+  say ">>> Запустите вывод вручную: меню вывода → «Video for Web, Devices and Computers» → Create → сохранить (новое имя файла). Жду окно «Rendering Video» до 5 минут."
+  for _ in $(seq 1 300); do [ "$(rendering)" = none ] || break; sleep 1; done
+  check "окно «Rendering Video» появилось" "$(is "$(rendering)" open)"
+  render_started="$(now_utc)"
+  echo "рендер начался около $render_started"
+  say "жду конца рендера до 30 минут"
+  for _ in $(seq 1 360); do [ "$(rendering)" = closed ] && break; sleep 5; done
+  check "окно «Rendering Video» закрылось" "$(is "$(rendering)" closed)"
+  render_finished="$(now_utc)"
+  echo "рендер кончился около $render_finished"
+  say ">>> Нажмите «Ok» в диалоге об окончании. Жду 2 минуты, пока открытые диалоги не исчезнут."
+  for _ in $(seq 1 120); do
+    [ -z "$("${psdoctor[@]}" observe dialogs "$session" 2>/dev/null)" ] && break
+    sleep 1
+  done
+  observe stop "$session"
+  check "stop принят (код 0)" "$(is "$code" 0)"
+  sleep 2
+  check "ProShow жив после stop" "$(alive "$pid")"
+  read -r kind reason <<< "$(last_fact "$session")"
+  check "последний факт session-finished/stopped (есть $kind/$reason)" "$(is "$kind/$reason" session-finished/stopped)"
+  # Минута посреди рендера: вторая минута от появления окна рендера, если рендер длился дольше двух минут.
+  minute_from="$("$PYTHON" -c "import datetime as d; t=d.datetime.fromisoformat('$render_started'.replace('Z','+00:00')); print((t+d.timedelta(seconds=60)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  minute_to="$("$PYTHON" -c "import datetime as d; t=d.datetime.fromisoformat('$render_started'.replace('Z','+00:00')); print((t+d.timedelta(seconds=120)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  "${psdoctor[@]}" observe raw "$session" "$minute_from" "$minute_to" > "$out/raw-minute-$session.jsonl" 2>"$out/raw-minute-$session.err"
+  rc=$?
+  check "сырьё за минуту $minute_from–$minute_to скачивается (код $rc, событий $(wc -l < "$out/raw-minute-$session.jsonl"))" "$(is "$rc" 0)"
+  say "сводка сеанса"
+  "$PYTHON" - "$out/facts-$session.jsonl" "$out/raw-minute-$session.jsonl" <<'PY'
+import json,sys,collections
+facts=[json.loads(l) for l in open(sys.argv[1],encoding='utf-8') if l.strip()]
+starts=[f for f in facts if f['kind'] in ('process-started','etw-process-started')]
+exits=[f for f in facts if f['kind']=='process-exited']
+images=collections.Counter((f['data'].get('image') or '?').split('\\')[-1] for f in starts if f['kind']=='process-started')
+print('процессов (process-started):', sum(1 for f in starts if f['kind']=='process-started'), dict(images))
+print('с командной строкой:', sum(1 for f in starts if f['kind']=='process-started' and f['data'].get('commandLine')))
+print('etw-process-started:', sum(1 for f in starts if f['kind']=='etw-process-started'))
+print('выходов процессов:', len(exits))
+for f in facts:
+    if f['kind'] in ('dialog-opened','window-opened'):
+        print('окно:', f['elapsed'][:8], f['kind'], f['data'].get('title'), f['data'].get('class'), f['data'].get('buttons'))
+io=[f['data'] for f in facts if f['kind']=='file-io']
+files=collections.Counter()
+for d in io: files[d.get('file') or '<null>']+=d.get('readBytes',0)
+print('file-io: записей', len(io), ', разных файлов', len(files), ', без имени', sum(1 for d in io if not d.get('file')))
+for name,b in files.most_common(8): print('  прочитано', b, name[-80:])
+raw=[json.loads(l) for l in open(sys.argv[2],encoding='utf-8') if l.strip()]
+print('сырьё за минуту: событий', len(raw), dict(collections.Counter(r.get('operation') for r in raw)), ', процессов', len({r.get('processId') for r in raw}))
+PY
   ;;
 
 *)
