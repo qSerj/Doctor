@@ -204,7 +204,8 @@ public sealed class ProgramRunTests
 
             Assert.True(нажатие.Succeeded, нажатие.Reason);
             await события.ВсеВышли.Task.WaitAsync(Терпение);
-            Assert.Contains(журнал.After(0), f => f.Kind == ProgramFactKinds.DialogClosed);
+            // Выход программы приходит уведомлением задания сразу, исчезновение окна — со следующим опросом.
+            await Дождаться(() => журнал.After(0).FirstOrDefault(f => f.Kind == ProgramFactKinds.DialogClosed));
         }
         finally
         {

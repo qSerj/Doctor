@@ -56,7 +56,8 @@ function Invoke-Tests {
     foreach ($project in Get-ChildItem (Join-Path $Root 'src\tests') -Filter *.csproj -Recurse) {
         dotnet restore $project.FullName --source (Join-Path $Root 'packages') --verbosity quiet
         if ($LASTEXITCODE) { "restore не прошёл: $($project.Name)"; $failed++; continue }
-        dotnet test $project.FullName --no-restore --disable-build-servers --verbosity quiet
+        # minimal, а не quiet: при quiet упавший тест виден только именем, без сообщения и стека.
+        dotnet test $project.FullName --no-restore --disable-build-servers --verbosity minimal
         if ($LASTEXITCODE) { $failed++ }
     }
     "проектов с ошибкой: $failed"
