@@ -326,12 +326,12 @@ print(state)"
   for _ in $(seq 1 300); do [ "$(rendering)" = none ] || break; sleep 1; done
   check "окно «Rendering Video» появилось" "$(is "$(rendering)" open)"
   render_started="$(now_utc)"
-  echo "рендер начался около $render_started"
+  echo "рендер начался около $render_started по часам хоста"
   say "жду конца рендера до 30 минут"
   for _ in $(seq 1 360); do [ "$(rendering)" = closed ] && break; sleep 5; done
   check "окно «Rendering Video» закрылось" "$(is "$(rendering)" closed)"
   render_finished="$(now_utc)"
-  echo "рендер кончился около $render_finished"
+  echo "рендер кончился около $render_finished по часам хоста"
   say ">>> Нажмите «Ok» в диалоге об окончании. Жду 2 минуты, пока открытые диалоги не исчезнут."
   for _ in $(seq 1 120); do
     [ -z "$("${psdoctor[@]}" observe dialogs "$session" 2>/dev/null)" ] && break
@@ -343,9 +343,19 @@ print(state)"
   check "ProShow жив после stop" "$(alive "$pid")"
   read -r kind reason <<< "$(last_fact "$session")"
   check "последний факт session-finished/stopped (есть $kind/$reason)" "$(is "$kind/$reason" session-finished/stopped)"
-  # Минута посреди рендера: вторая минута от появления окна рендера, если рендер длился дольше двух минут.
-  minute_from="$("$PYTHON" -c "import datetime as d; t=d.datetime.fromisoformat('$render_started'.replace('Z','+00:00')); print((t+d.timedelta(seconds=60)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
-  minute_to="$("$PYTHON" -c "import datetime as d; t=d.datetime.fromisoformat('$render_started'.replace('Z','+00:00')); print((t+d.timedelta(seconds=120)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  # Минута посреди рендера: вторая минута от появления окна рендера. Время — по часам гостя, из журнала: начало
+  # сеанса плюс смещение факта. Часы хоста для этого не годятся — после паузы ВМ они разошлись с гостем на минуты.
+  read -r minute_from minute_to <<< "$("$PYTHON" - "$out/facts-$session.jsonl" <<'PY'
+import datetime as d, json, sys
+facts = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+start = d.datetime.fromisoformat(next(f for f in facts if f['kind'] == 'session-started')['data']['startedAt'])
+opened = next(f for f in facts if f['kind'] in ('dialog-opened', 'window-opened') and f['data'].get('title') == 'Rendering Video')
+h, m, s = opened['elapsed'].split(':')
+at = start + d.timedelta(hours=int(h), minutes=int(m), seconds=float(s))
+utc = lambda t: t.astimezone(d.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+print(utc(at + d.timedelta(seconds=60)), utc(at + d.timedelta(seconds=120)))
+PY
+)"
   "${psdoctor[@]}" observe raw "$session" "$minute_from" "$minute_to" > "$out/raw-minute-$session.jsonl" 2>"$out/raw-minute-$session.err"
   rc=$?
   check "сырьё за минуту $minute_from–$minute_to скачивается (код $rc, событий $(wc -l < "$out/raw-minute-$session.jsonl"))" "$(is "$rc" 0)"
