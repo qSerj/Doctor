@@ -11,6 +11,7 @@
 #   lab/cycle-e43-attach.sh two       — владелец запустил второй экземпляр: выбор не делается молча
 #   lab/cycle-e43-attach.sh window    — окно «New Slide Show», открытое до подключения, видно в журнале
 #   lab/cycle-e43-attach.sh render    — владелец запускает вывод вручную; процессы, окна, файлы и сырьё за минуту
+#   lab/cycle-e43-attach.sh sessions  — снимок сеансов наблюдателя и ProShow в госте, до и после ручной проверки App
 #
 # Каждая проверка печатает строку «совпало» или «РАСХОЖДЕНИЕ»; код выхода — 0, если расхождений нет, иначе 1.
 # Факты сеансов шага ложатся в results/ пакета: $LAB_EXCHANGE/checks/<id пакета>/results. Общую переменную
@@ -19,7 +20,7 @@
 set -uo pipefail
 . "$(dirname "$0")/portable.sh"
 
-step="${1:?укажите шаг: passive, restart, close, kill, etw, two, window или render}"
+step="${1:?укажите шаг: passive, restart, close, kill, etw, two, window, render или sessions}"
 package="${2:-e43-attach-001-$step}"
 host="${LAB_HOST:-192.168.56.5}"
 lab_key="${LAB_KEY:-$HOME/.ssh/lab_ed25519}"
@@ -380,6 +381,33 @@ print('file-io: записей', len(io), ', разных файлов', len(fil
 for name,b in files.most_common(8): print('  прочитано', b, name[-80:])
 raw=[json.loads(l) for l in open(sys.argv[2],encoding='utf-8') if l.strip()]
 print('сырьё за минуту: событий', len(raw), dict(collections.Counter(r.get('operation') for r in raw)), ', процессов', len({r.get('processId') for r in raw}))
+PY
+  ;;
+
+sessions)
+  # Проверок нет: пакеты «до» и «после» сравнивает агент. Факты каждого сеанса ложатся в results/.
+  say "ProShow в госте: pid $(proshow_pids)"
+  say "сеансы наблюдателя"
+  "${psdoctor[@]}" observe sessions > "$out/sessions.jsonl" 2>&1
+  while IFS= read -r id; do
+    "${psdoctor[@]}" observe facts "$id" > "$out/facts-$id.jsonl" 2>/dev/null
+  done < <("$PYTHON" -c "
+import json,sys
+for l in open(sys.argv[1],encoding='utf-8'):
+    if l.strip(): print(json.loads(l)['id'])" "$out/sessions.jsonl")
+  "$PYTHON" - "$out" <<'PY'
+import json,sys,pathlib,collections
+out=pathlib.Path(sys.argv[1])
+for line in open(out/'sessions.jsonl',encoding='utf-8'):
+    if not line.strip(): continue
+    s=json.loads(line)
+    facts=[json.loads(l) for l in open(out/f"facts-{s['id']}.jsonl",encoding='utf-8') if l.strip()]
+    kinds=collections.Counter(f['kind'] for f in facts)
+    start=next((f['data'] for f in facts if f['kind']=='session-started'),{})
+    mode='attach' if kinds['program-attached'] else 'launch' if kinds['program-launched'] else '—'
+    last=facts[-1] if facts else {}
+    end=last.get('kind','') + ((' ' + last['data'].get('reason','')) if last.get('kind')=='session-finished' else '')
+    print(f"{s['id']}  {mode:7} начат {start.get('startedAt','?')[:19]}  активен={str(s['active']).lower()}  фактов {len(facts)}  file-io {kinds['file-io']}  последний: {end}")
 PY
   ;;
 

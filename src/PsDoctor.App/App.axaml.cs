@@ -48,7 +48,13 @@ public sealed partial class App : Application
             settings.IsEnabled = false;
             menu.Add(settings);
             var quit = new NativeMenuItem("Выход");
-            quit.Click += (_, _) => desktop.Shutdown();
+            quit.Click += async (_, _) =>
+            {
+                // Сеанс, брошенный открытым, не дал бы следующему запуску Doctor подключиться. Молчащий Observer выход не держит.
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await window.FinishObservationAsync(limit.Token);
+                desktop.Shutdown();
+            };
             menu.Add(quit);
             var tray = new TrayIcon
             {

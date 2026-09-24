@@ -66,6 +66,7 @@ public sealed partial class MainWindow : Window
             Control<TextBlock>("StatusIcon").Text = "?";
             Control<Button>("ProblemButton").IsVisible = true;
         }
+        Control<Button>("FinishButton").IsVisible = diagnosticSession is not null;
     }
 
     private void SetResult(string message)
@@ -338,9 +339,11 @@ public sealed partial class MainWindow : Window
 
     private async Task StartObservationForSymptomAsync(string symptom, string path)
     {
-        if (!cleaner.IsProgramRunning())
+        if (!cleaner.IsProgramRunning() && diagnosticSession is null)
         {
             showPath = path;
+            await ShowInfoAsync("Наблюдение за ProShow",
+                "ProShow сейчас не работает. Прошлый сбой записать уже нельзя: Doctor может запустить проект под наблюдением, чтобы вы повторили проблему.");
             await ShowDiagnosticAsync();
             return;
         }
@@ -520,29 +523,38 @@ public sealed partial class MainWindow : Window
         return new ObserverClient(new Uri(url), File.ReadAllText(keyFile).Trim());
     }
 
+    /// <summary>Заканчивает наблюдение: Observer перестаёт собирать факты, ProShow продолжает работать.</summary>
+    public async Task FinishObservationAsync(CancellationToken cancellationToken = default)
+    {
+        if (diagnosticSession is not { } session) return;
+        try
+        {
+            using var observer = CreateObserver();
+            await observer.StopAsync(session, cancellationToken);
+            diagnosticSession = null;
+            diagnosticTimer?.Stop();
+            SetResult(diagnosticDegraded ? "Наблюдение завершено. Факты сохранены, запись файловой активности неполная." : "Наблюдение завершено. Факты сеанса сохранены.");
+        }
+        catch (ObserverException error) when (error.Error?.Error == ObserverErrors.SessionFinished)
+        {
+            diagnosticSession = null;
+            diagnosticTimer?.Stop();
+            SetResult("Наблюдение уже завершилось. Записанные факты сохранены.");
+        }
+        catch (Exception error)
+        {
+            SetResult("Не удалось закончить наблюдение: " + error.Message);
+        }
+        RefreshStatus();
+    }
+
+    private async void ЗакончитьНаблюдение(object? sender, RoutedEventArgs args) => await FinishObservationAsync();
+
     private async Task ShowDiagnosticAsync()
     {
         if (diagnosticSession is not null)
         {
-            try
-            {
-                using var observer = CreateObserver();
-                await observer.StopAsync(diagnosticSession);
-                diagnosticSession = null;
-                diagnosticTimer?.Stop();
-                SetResult(diagnosticDegraded ? "Наблюдение завершено. Факты сохранены, запись файловой активности неполная." : "Наблюдение завершено. Факты сеанса сохранены.");
-            }
-            catch (ObserverException error) when (error.Error?.Error == ObserverErrors.SessionFinished)
-            {
-                diagnosticSession = null;
-                diagnosticTimer?.Stop();
-                SetResult("Наблюдение уже завершилось. Записанные факты сохранены.");
-            }
-            catch (Exception error)
-            {
-                SetResult("Не удалось закончить наблюдение: " + error.Message);
-            }
-            RefreshStatus();
+            await FinishObservationAsync();
             return;
         }
 

@@ -32,6 +32,8 @@
               Background="#176BC1" Foreground="White" FontWeight="SemiBold" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch"/>
       <Button Content="Проверить проект" Click="ПроверитьПроект" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
       <Button x:Name="ProblemButton" Content="Решить проблему" Click="РазобратьсяСПроблемой" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"/>
+      <Button x:Name="FinishButton" Content="Закончить наблюдение" Click="ЗакончитьНаблюдение" IsVisible="False"
+              Background="#176BC1" Foreground="White" FontWeight="SemiBold" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch"/>
       <Border x:Name="AdviceBorder" Background="#EAF4FF" CornerRadius="7" Padding="11">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
           <TextBlock x:Name="AdviceText" Text="Совет: выберите проект и проверьте его, чтобы увидеть рекомендации." TextWrapping="Wrap" Classes="caption"/>
