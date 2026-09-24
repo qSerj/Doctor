@@ -172,6 +172,53 @@ public sealed class ProgramRunTests
         }
     }
 
+    // Окно сообщения без владельца и без главного окна — как отказ старта ProShow «Startup Aborted».
+    private const string СкриптОтказаСтарта = """
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][System.Windows.Forms.MessageBox]::Show('текст отказа старта', 'psdoctor-отказ', 'OK')
+        """;
+
+    [Fact]
+    public async Task Окно_сообщения_без_владельца_видно_диалогом_а_не_главным_окном()
+    {
+        if (!OperatingSystem.IsWindows() || Process.GetCurrentProcess().SessionId == 0)
+        {
+            return;
+        }
+        var часы = Stopwatch.StartNew();
+        var журнал = new FactLog(new FactJournalWriter(new StringWriter(), "тест", () => часы.Elapsed));
+        var события = new События();
+        var powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        var закодирован = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(СкриптОтказаСтарта));
+
+        using var запуск = ProgramRun.Start(powershell, $"\"{powershell}\" -NoProfile -EncodedCommand {закодирован}", null, журнал, события);
+        try
+        {
+            var диалог = await Дождаться(() => события.Диалоги.FirstOrDefault(d => d.Title == "psdoctor-отказ"));
+            Assert.Equal("#32770", диалог.Class);
+            Assert.Contains("текст отказа старта", диалог.Texts);
+            Assert.Single(диалог.Buttons);
+            Assert.DoesNotContain(события.Заголовки, t => t == "psdoctor-отказ");
+
+            var нажатие = await запуск.PressAsync(диалог.Buttons[0], CancellationToken.None);
+
+            Assert.True(нажатие.Succeeded, нажатие.Reason);
+            await события.ВсеВышли.Task.WaitAsync(Терпение);
+            Assert.Contains(журнал.After(0), f => f.Kind == ProgramFactKinds.DialogClosed);
+        }
+        finally
+        {
+            try
+            {
+                using var программа = Process.GetProcessById(запуск.ProcessId);
+                программа.Kill(entireProcessTree: true);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+    }
+
     [Fact]
     public async Task Нажатие_без_диалога_и_закрытие_без_окна_срываются()
     {

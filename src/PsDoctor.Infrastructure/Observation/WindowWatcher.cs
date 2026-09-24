@@ -17,6 +17,11 @@ namespace PsDoctor.Infrastructure.Observation;
 /// но должно быть видно.
 /// </para>
 /// <para>
+/// Исключение — системное окно сообщения без владельца (<see cref="IsOwnerlessMessage"/>). Так ProShow
+/// сообщает об отказе старта («Startup Aborted», «Initialization Failure»): главного окна ещё нет, владельца
+/// у окна тоже. Прежде оно принималось за главное окно и теряло текст и кнопки; теперь идёт путём диалога.
+/// </para>
+/// <para>
 /// Опросу нужен рабочий стол: наблюдатель живёт в сеансе пользователя. В нулевом сеансе окон программы не видно.
 /// </para>
 /// </remarks>
@@ -129,7 +134,7 @@ public sealed class WindowWatcher : IDisposable
             {
                 continue;
             }
-            if (GetWindow(hwnd, GwOwner) != IntPtr.Zero)
+            if (GetWindow(hwnd, GwOwner) != IntPtr.Zero || IsOwnerlessMessage(hwnd))
             {
                 owned.Add((hwnd, processId));
             }
@@ -251,6 +256,13 @@ public sealed class WindowWatcher : IDisposable
             return dialogs.Exists(dialog => dialog.Handle == hwnd.ToInt64());
         }
     }
+
+    /// <summary>
+    /// Окно класса <c>#32770</c> без владельца, но с кнопкой — окно сообщения, а не главное окно. Без кнопки
+    /// окно этого класса остаётся кандидатом в главные: так устроены программы-диалоги.
+    /// </summary>
+    private static bool IsOwnerlessMessage(IntPtr hwnd) =>
+        ClassName(hwnd) == "#32770" && VisibleChildren(hwnd).Any(child => ClassName(child) == "Button");
 
     /// <summary>Об окне уже записан факт обычного окна.</summary>
     private bool Announced(IntPtr hwnd)
