@@ -8,21 +8,23 @@
 #   lab/cycle-e43-attach.sh kill      — скрипт снимает proshow.exe во время сеанса
 #   lab/cycle-e43-attach.sh etw       — ETW-помощник остановлен: отказ подключения, затем восстановление
 #   lab/cycle-e43-attach.sh two       — владелец запустил второй экземпляр: выбор не делается молча
+#   lab/cycle-e43-attach.sh window    — окно «New Slide Show», открытое до подключения, видно в журнале
 #
 # Каждая проверка печатает строку «совпало» или «РАСХОЖДЕНИЕ»; код выхода — 0, если расхождений нет, иначе 1.
-# Факты сеансов шага ложатся в OUT (по умолчанию $LAB_EXCHANGE/checks/e43-attach-001-<шаг>/results).
-# Переменные: LAB_HOST, LAB_KEY, LAB_EXCHANGE, PSDOCTOR_OBSERVER_URL, PSDOCTOR_OBSERVER_KEY_FILE, OUT.
+# Факты сеансов шага ложатся в results/ пакета: $LAB_EXCHANGE/checks/e43-attach-001-<шаг>/results. Общую переменную
+# OUT скрипт не читает: её выставляет lab/setup-env.sh для другого опыта.
+# Переменные: LAB_HOST, LAB_KEY, LAB_EXCHANGE, PSDOCTOR_OBSERVER_URL, PSDOCTOR_OBSERVER_KEY_FILE.
 set -uo pipefail
 . "$(dirname "$0")/portable.sh"
 
-step="${1:?укажите шаг: passive, restart, close, kill, etw или two}"
+step="${1:?укажите шаг: passive, restart, close, kill, etw, two или window}"
 host="${LAB_HOST:-192.168.56.5}"
 lab_key="${LAB_KEY:-$HOME/.ssh/lab_ed25519}"
 exchange="${LAB_EXCHANGE:-$HOME/Lab/exchange}"
 export PSDOCTOR_OBSERVER_URL="${PSDOCTOR_OBSERVER_URL:-http://$host:8100}"
 export PSDOCTOR_OBSERVER_KEY_FILE="${PSDOCTOR_OBSERVER_KEY_FILE:-$HOME/Lab/secrets/observer.key}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-out="${OUT:-$exchange/checks/e43-attach-001-$step/results}"
+out="$exchange/checks/e43-attach-001-$step/results"
 mkdir -p "$out"
 ssh_opts=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$lab_key")
 mismatches=0
@@ -246,7 +248,12 @@ Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-O
   sleep 2
   observe sessions
   echo "сеансы, появившиеся из-за отказа (для сверки с пунктом 5 — «без пустого сеанса»):"
-  diff <(printf '%s\n' "$before") <(printf '%s\n' "$reply") | grep '^>' || echo "  нет"
+  added="$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$reply") | grep '^>' || true)"
+  printf '%s\n' "${added:-  нет}"
+  for refused in $(printf '%s\n' "$added" | grep -o '"id":"[^"]*"' | cut -d'"' -f4); do
+    read -r kind reason <<< "$(last_fact "$refused")"
+    echo "  журнал $refused: $(wc -l < "$out/facts-$refused.jsonl") фактов, последний $kind $reason"
+  done
   check "ProShow жив после отказа" "$(alive "$(proshow_pids)")"
   say "запускаю ETW-помощник обратно"
   guest_ps "Start-ScheduledTask -TaskName psdoctor-etw
@@ -255,7 +262,27 @@ while (-not (Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe
 'помощник: ' + [bool](Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -match 'etw-helper' })"
   observe attach
   check "attach с восстановленным ETW принят (код 0)" "$(is "$code" 0)"
-  [ "$code" = 0 ] && { observe stop "$(json "$reply" session)"; check "  stop принят" "$(is "$code" 0)"; }
+  if [ "$code" = 0 ]; then
+    session="$(json "$reply" session)"
+    sleep 3
+    observe stop "$session"
+    check "  stop принят" "$(is "$code" 0)"
+    sleep 2
+    last_fact "$session" >/dev/null
+    check "  после восстановления в журнале etw-state" "$(has "$(kinds "$session")" etw-state)"
+  fi
+  ;;
+
+window)
+  require_one_proshow
+  attach_or_die
+  sleep 3
+  observe stop "$session"
+  sleep 2
+  last_fact "$session" >/dev/null
+  # Окно, открытое до подключения, должно прийти с первым опросом: диалогом, если в нём есть кнопки, иначе окном.
+  grep -E '"kind":"(dialog-opened|window-opened)"' "$out/facts-$session.jsonl" | cut -c1-400
+  check "окно «New Slide Show» есть в журнале" "$(has "$(cat "$out/facts-$session.jsonl")" 'New Slide Show')"
   ;;
 
 two)
