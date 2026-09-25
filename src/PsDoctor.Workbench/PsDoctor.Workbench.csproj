@@ -11,6 +11,10 @@
     <PackageReference Include="CommunityToolkit.Mvvm" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Сценарии опытов едут рядом с пультом и открываются из него списком. -->
+    <None Include="Experiments/*.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />
   </ItemGroup>
 </Project>

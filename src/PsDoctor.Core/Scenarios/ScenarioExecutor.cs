@@ -16,6 +16,13 @@ namespace PsDoctor.Core.Scenarios;
 /// останавливает сценарий сразу.
 /// </para>
 /// <para>
+/// Исключение — руки оператора, решение исполнителя Э4.5 25.09.2026. После <c>say</c> и до следующего действия
+/// окна — забота человека: он открывает «Slide Options» двойным щелчком, отвечает на вопрос о сохранении при
+/// закрытии. Такой диалог не останавливает сценарий, а остаётся в очереди и засчитывается <c>wait dialog</c>, если
+/// тот встретится. Действие снимает исключение: перед <c>press</c> или <c>close</c> открытый диалог оператора —
+/// снова неожиданный, наугад в нём ничего не нажимается.
+/// </para>
+/// <para>
 /// Часов у исполнителя нет: время приходит в сигналах, и по нему считаются таймауты шагов и их длительность.
 /// Единственное исключение — предел времени действия: он поставлен таймером на отмену действия, потому что
 /// сигналы кончаются вместе с программой, а ожидание итога действия должно сорваться и после этого.
@@ -74,6 +81,13 @@ public sealed class ScenarioExecutor
         private bool exited;
         private TimeSpan? quietSince;
 
+        // Сказано оператору, и действия после этого не было: окна — его забота, см. правило в описании класса.
+        private bool operatorHands;
+
+        // Идёт wait confirm: только ему засчитывается подтверждение; пришедшее раньше пропадает.
+        private bool awaitingConfirm;
+        private bool confirmed;
+
         // Ход рендера: хэндл окна рендера, если оно появлялось, и первый диалог после него.
         private long? rendering;
         private DialogInfo? renderDone;
@@ -97,20 +111,28 @@ public sealed class ScenarioExecutor
                     {
                         Apply(signal);
                     }
-                    if (step is not (WaitDialogStep or WaitRenderDoneStep) && unclaimed.Count > 0)
+                    if (step is ActionStep)
+                    {
+                        operatorHands = false;
+                    }
+                    if (step is not (WaitDialogStep or WaitRenderDoneStep or SayStep) && !operatorHands && unclaimed.Count > 0)
                     {
                         owner.facts.Record(ScenarioFactKinds.UnexpectedDialog, new { line = step.Line, dialog = unclaimed[0] });
                         return Finish(ScenarioStatus.Stopped, step.Line, StepFailures.UnexpectedDialog);
                     }
 
+                    awaitingConfirm = step is WaitConfirmStep;
+                    confirmed = false;
                     owner.facts.Record(ScenarioFactKinds.StepStarted, new { line = step.Line, step = step.Text });
                     var start = now;
                     var verdict = step switch
                     {
                         ActionStep action => await RunActionAsync(action, start),
                         WaitStep wait => await RunWaitAsync(wait, start),
+                        SayStep say => Say(say),
                         _ => throw new NotSupportedException(step.GetType().Name),
                     };
+                    awaitingConfirm = false;
                     var seconds = Math.Round((now - start).TotalSeconds, 3);
 
                     if (verdict.Reason is null)
@@ -190,6 +212,13 @@ public sealed class ScenarioExecutor
         private async Task<ActionResult> InvokeAsync(ActionStep step, CancellationToken token) =>
             await owner.actions.RunAsync(step, token);
 
+        private StepVerdict Say(SayStep step)
+        {
+            owner.facts.Record(ScenarioFactKinds.OperatorInstruction, new { line = step.Line, text = step.Message });
+            operatorHands = true;
+            return StepVerdict.Done;
+        }
+
         private async Task<StepVerdict> RunWaitAsync(WaitStep step, TimeSpan start)
         {
             while (true)
@@ -202,7 +231,7 @@ public sealed class ScenarioExecutor
                 if (inbox.TryDequeue(out var signal))
                 {
                     Apply(signal);
-                    if (signal is DialogOpened opened && step is not (WaitDialogStep or WaitRenderDoneStep))
+                    if (signal is DialogOpened opened && step is not (WaitDialogStep or WaitRenderDoneStep) && !operatorHands)
                     {
                         return new StepVerdict(StepFailures.UnexpectedDialog, opened.Dialog);
                     }
@@ -234,6 +263,11 @@ public sealed class ScenarioExecutor
                     rendering = null;
                     unclaimed.RemoveAll(open => open.Handle == finished.Handle);
                     return new StepVerdict(null, finished);
+                case WaitPauseStep pause when now - start >= pause.Duration:
+                    return StepVerdict.Done;
+                case WaitConfirmStep when confirmed:
+                    owner.facts.Record(ScenarioFactKinds.OperatorConfirmed, new { line = step.Line });
+                    return StepVerdict.Done;
                 case WaitTitleStep wait when title is not null && title.Contains(wait.Substring, StringComparison.Ordinal):
                 case WaitExitStep when exited:
                 case WaitIdleStep idle when quietSince is { } since && now - since >= idle.Quiet:
@@ -284,6 +318,9 @@ public sealed class ScenarioExecutor
                     break;
                 case ProgramExited:
                     exited = true;
+                    break;
+                case OperatorConfirmed:
+                    confirmed |= awaitingConfirm;
                     break;
             }
         }

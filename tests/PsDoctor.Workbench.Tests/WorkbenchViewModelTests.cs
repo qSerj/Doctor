@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using PsDoctor.Core.Observation;
+using PsDoctor.Core.Scenarios;
 using PsDoctor.Observer;
 using PsDoctor.Observer.Client;
 using PsDoctor.Workbench.ViewModels;
@@ -95,6 +96,63 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
+    public void Опыт_показывает_инструкцию_и_ждёт_кнопки_Сделано() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync();
+        пульт.ScenarioText = $"launch {Проект}\nwait dialog 10\npress \"Ok\"\n"
+            + "say \"Дважды щёлкните по третьему слайду\"\nwait confirm 20\nsay \"Закрывайте ProShow\"\nwait exit 20";
+
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.AwaitingConfirm, "ожидания подтверждения");
+        Assert.Equal("Дважды щёлкните по третьему слайду", пульт.Instruction);
+        Assert.True(пульт.CanConfirm);
+        Assert.True(пульт.Steps[4].IsCurrent);
+
+        await пульт.ConfirmAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.Instruction == "Закрывайте ProShow", "второй инструкции");
+        Assert.False(пульт.CanConfirm);
+        запуск.Последний!.Выйти();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+
+        Assert.Contains("completed", пульт.Outcome, StringComparison.Ordinal);
+        Assert.All(пульт.Steps, шаг => Assert.Equal(StepState.Done, шаг.State));
+        Assert.Contains(пульт.Facts, факт => факт.Kind == ScenarioFactKinds.OperatorConfirmed);
+    });
+
+    [Fact]
+    public void Опыты_открываются_списком_из_каталога() => ОдинПоток.Выполнить(async () =>
+    {
+        var опыты = Directory.CreateDirectory(Path.Combine(каталог, "experiments")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(опыты, "b-второй.txt"), "close");
+        await File.WriteAllTextAsync(Path.Combine(опыты, "a-первый.txt"), "say \"Закрывайте ProShow\"\nwait exit 60");
+        await File.WriteAllTextAsync(Path.Combine(опыты, "заметки.md"), "не сценарий");
+        using var пульт = new WorkbenchViewModel(environment: _ => null, experimentsDirectory: опыты);
+
+        await пульт.OpenExperimentAsync(пульт.Experiments[0]);
+
+        Assert.Equal(["a-первый", "b-второй"], пульт.Experiments.Select(опыт => опыт.Name));
+        Assert.Equal("say \"Закрывайте ProShow\"\nwait exit 60", пульт.ScenarioText);
+    });
+
+    [Fact]
+    public void Опыты_из_поставки_разбираются_и_пассивный_не_трогает_программу() => ОдинПоток.Выполнить(() =>
+    {
+        using var пульт = new WorkbenchViewModel(environment: _ => null);
+
+        Assert.Contains(пульт.Experiments, опыт => опыт.Name == "e42-slide-001");
+        foreach (var опыт in пульт.Experiments)
+        {
+            var разбор = ScenarioParser.Parse(File.ReadAllText(опыт.Path));
+            Assert.True(разбор.Errors.Count == 0, $"{опыт.Name}: {string.Join("; ", разбор.Errors)}");
+            if (опыт.Name.EndsWith("-attach", StringComparison.Ordinal))
+            {
+                Assert.False(разбор.Scenario!.DrivesProgram, опыт.Name);
+            }
+        }
+        return Task.CompletedTask;
+    });
+
+    [Fact]
     public void Прекращение_наблюдения_закрывает_сеанс_и_оставляет_программу() => ОдинПоток.Выполнить(async () =>
     {
         using var пульт = await ПодключённыйAsync();
@@ -165,6 +223,21 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
 
         Assert.False(пульт.Connected);
         Assert.Contains("401", пульт.Status, StringComparison.Ordinal);
+    });
+
+    [Fact]
+    public void Кнопки_до_подключения_не_роняют_пульт() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = new WorkbenchViewModel(environment: _ => null);
+
+        await пульт.RefreshSessionsAsync();
+        await пульт.RefreshDialogsAsync();
+        await пульт.CancelAsync();
+        await пульт.ConfirmAsync();
+        await пульт.AttachAsync();
+
+        Assert.Contains("нет связи", пульт.Status, StringComparison.Ordinal);
+        Assert.False(пульт.Busy);
     });
 
     [Fact]

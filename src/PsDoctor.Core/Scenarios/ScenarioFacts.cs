@@ -11,6 +11,12 @@ public static class ScenarioFactKinds
     /// <summary>Диалог, которого сценарий не ждал: с текстом и кнопками, ничего не нажато.</summary>
     public const string UnexpectedDialog = "unexpected-dialog";
 
+    /// <summary>Шаг <c>say</c>: строка и текст инструкции оператору.</summary>
+    public const string OperatorInstruction = "operator-instruction";
+
+    /// <summary>Подтверждение оператора, засчитанное шагу <c>wait confirm</c>.</summary>
+    public const string OperatorConfirmed = "operator-confirmed";
+
     public const string ScenarioFinished = "scenario-finished";
 }
 

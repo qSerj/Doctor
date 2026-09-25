@@ -26,6 +26,9 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// <summary>Сколько последних фактов держит лента. За рендер их тысячи, и держать всё пульту незачем.</summary>
     public const int TapeLimit = 2000;
 
+    /// <summary>Каталог сценариев опытов рядом с пультом: файл <c>*.txt</c> на опыт.</summary>
+    public const string ExperimentsFolder = "Experiments";
+
     /// <summary>Сколько раз пульт переподключается к оборванному потоку, прежде чем бросить.</summary>
     public const int StreamRetries = 5;
 
@@ -33,6 +36,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     private readonly Func<Uri, string, ObserverClient> connect;
     private readonly Func<string, string?> environment;
+    private readonly string experimentsDirectory;
 
     private ObserverClient? client;
     private CancellationTokenSource? pumpCancel;
@@ -53,13 +57,19 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private string exchangeDirectory;
     private bool includeRaw;
     private SessionArtifact? selectedArtifact;
+    private string instruction = "";
+    private bool awaitingConfirm;
 
     /// <param name="connect">Как создаётся клиент; тест подставляет свой.</param>
     /// <param name="environment">Откуда берутся значения по умолчанию для адреса и ключа.</param>
-    public WorkbenchViewModel(Func<Uri, string, ObserverClient>? connect = null, Func<string, string?>? environment = null)
+    /// <param name="experimentsDirectory">Каталог сценариев опытов; по умолчанию — <see cref="ExperimentsFolder"/> рядом с пультом.</param>
+    public WorkbenchViewModel(Func<Uri, string, ObserverClient>? connect = null, Func<string, string?>? environment = null,
+        string? experimentsDirectory = null)
     {
         this.connect = connect ?? ((uri, key) => new ObserverClient(uri, key));
         this.environment = environment ?? Environment.GetEnvironmentVariable;
+        this.experimentsDirectory = experimentsDirectory ?? Path.Combine(AppContext.BaseDirectory, ExperimentsFolder);
+        LoadExperiments();
         address = this.environment(ObserverConnection.UrlVariable) ?? "";
         keyFile = this.environment(ObserverConnection.KeyFileVariable) ?? "";
         exchangeDirectory = this.environment("PSDOCTOR_EXCHANGE_DIR") ?? WorkbenchSettings.LoadExchangeDirectory() ?? "";
@@ -125,9 +135,36 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             {
                 OnPropertyChanged(nameof(CanRun));
                 OnPropertyChanged(nameof(CanExport));
+                OnPropertyChanged(nameof(CanConfirm));
             }
         }
     }
+
+    /// <summary>Последняя инструкция оператору из факта <c>operator-instruction</c> выбранного сеанса.</summary>
+    public string Instruction
+    {
+        get => instruction;
+        private set => SetProperty(ref instruction, value);
+    }
+
+    /// <summary>Сценарий стоит на <c>wait confirm</c>: начат и ещё не кончился.</summary>
+    public bool AwaitingConfirm
+    {
+        get => awaitingConfirm;
+        private set
+        {
+            if (SetProperty(ref awaitingConfirm, value))
+            {
+                OnPropertyChanged(nameof(CanConfirm));
+            }
+        }
+    }
+
+    /// <summary>
+    /// «Сделано» предлагается, только пока сценарий ждёт подтверждения: в другое время наблюдатель его примет и
+    /// выбросит, и оператор решит, что подтвердил.
+    /// </summary>
+    public bool CanConfirm => Connected && AwaitingConfirm;
 
     /// <summary>Сценарий принят и ещё не кончился фактом <c>scenario-finished</c>.</summary>
     public bool ScenarioRunning
@@ -176,6 +213,9 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     public ObservableCollection<DialogRow> Dialogs { get; } = [];
 
     public ObservableCollection<SessionArtifact> Artifacts { get; } = [];
+
+    /// <summary>Сценарии опытов из каталога рядом с пультом, по имени файла.</summary>
+    public ObservableCollection<ExperimentRow> Experiments { get; } = [];
 
     /// <summary>Выбранный сеанс. Выбор переключает ленту: для этого есть <see cref="SelectAsync"/>.</summary>
     public SessionRow? SelectedSession
@@ -267,6 +307,9 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         SelectedSession = session;
         Facts.Clear();
         Dialogs.Clear();
+        // Лента пойдёт с начала журнала и снова назначит инструкцию и ожидание подтверждения.
+        Instruction = "";
+        AwaitingConfirm = false;
         if (session is null || client is null)
         {
             return;
@@ -315,6 +358,57 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             Busy = false;
         }
     }
+
+    /// <summary>Кнопка «Сделано»: оператор выполнил сказанное.</summary>
+    public Task ConfirmAsync() => GuardAsync(async () =>
+    {
+        var accepted = await client!.ConfirmAsync();
+        Status = $"подтверждение передано, сеанс {accepted.Session}";
+    });
+
+    /// <summary>Перечитывает каталог опытов. Нет каталога — пустой список, а не ошибка.</summary>
+    public void LoadExperiments()
+    {
+        Experiments.Clear();
+        if (!Directory.Exists(experimentsDirectory))
+        {
+            return;
+        }
+        foreach (var path in Directory.EnumerateFiles(experimentsDirectory, "*.txt").Order(StringComparer.Ordinal))
+        {
+            Experiments.Add(new ExperimentRow(Path.GetFileNameWithoutExtension(path), path));
+        }
+    }
+
+    /// <summary>Кладёт сценарий опыта в поле сценария; выполняет его, как любой другой текст, кнопка «Выполнить».</summary>
+    public async Task OpenExperimentAsync(ExperimentRow? experiment)
+    {
+        if (experiment is null)
+        {
+            return;
+        }
+        try
+        {
+            ScenarioText = await File.ReadAllTextAsync(experiment.Path);
+            Status = $"опыт {experiment.Name} загружен";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Status = $"опыт {experiment.Name} не прочитан: {e.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Пассивное подключение к ProShow, запущенному мимо наблюдателя. Программе потом даются только сценарии из
+    /// <c>say</c> и <c>wait</c> — так опыт ведётся над программой, которую открыл оператор.
+    /// </summary>
+    public Task AttachAsync() => GuardAsync(async () =>
+    {
+        var accepted = await client!.AttachAsync();
+        Status = $"подключён к ProShow, pid {accepted.ProcessId.ToString(CultureInfo.InvariantCulture)}, сеанс {accepted.Session}";
+        await LoadSessionsAsync();
+        await SelectAsync(Sessions.FirstOrDefault(s => s.Id == accepted.Session));
+    });
 
     /// <summary>Быстрая кнопка «Запустить»: сценарий из одной строки.</summary>
     public Task LaunchAsync() => RunTextAsync($"launch {Quote(ShowPath)}");
@@ -515,15 +609,24 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             case ScenarioFactKinds.StepStarted:
                 Mark(fact, StepState.Running, "");
+                // Шаг узнаётся по его тексту тем же разбором: сценарий мог дать и не пульт, а агент.
+                AwaitingConfirm = Text(fact, "step") is { } step
+                    && ScenarioParser.Parse(step).Scenario?.Steps[0] is WaitConfirmStep;
                 break;
             case ScenarioFactKinds.StepDone:
                 Mark(fact, StepState.Done, Seconds(fact));
+                AwaitingConfirm = false;
                 break;
             case ScenarioFactKinds.StepFailed:
                 Mark(fact, StepState.Failed, Text(fact, "reason") ?? "");
+                AwaitingConfirm = false;
+                break;
+            case ScenarioFactKinds.OperatorInstruction:
+                Instruction = Text(fact, "text") ?? "";
                 break;
             case ScenarioFactKinds.ScenarioFinished:
                 ScenarioRunning = false;
+                AwaitingConfirm = false;
                 var status = Text(fact, "status") ?? "";
                 Outcome = $"сценарий: {status}"
                     + (Text(fact, "reason") is { } reason ? $", {reason}" : "")
@@ -594,6 +697,12 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// </summary>
     private async Task GuardAsync(Func<Task> work)
     {
+        // Кнопки окна доступны и до подключения: без клиента говорить не с кем, а не падать.
+        if (client is null)
+        {
+            Status = "нет связи с наблюдателем: нажмите «Подключиться»";
+            return;
+        }
         Busy = true;
         try
         {

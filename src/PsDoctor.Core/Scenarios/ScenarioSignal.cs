@@ -21,6 +21,12 @@ public sealed record ActivitySampled(TimeSpan At, bool Quiet) : ScenarioSignal(A
 
 public sealed record ProgramExited(TimeSpan At, int? ExitCode) : ScenarioSignal(At);
 
+/// <summary>
+/// Оператор нажал «Сделано». Засчитывается только шагу <c>wait confirm</c>, который уже начат: подтверждение,
+/// пришедшее раньше, относилось не к нему и пропадает.
+/// </summary>
+public sealed record OperatorConfirmed(TimeSpan At) : ScenarioSignal(At);
+
 /// <param name="Handle">Хэндл окна диалога — по нему диалог узнаётся при закрытии.</param>
 /// <param name="Texts">Тексты дочерних <c>Static</c>; у окон, где текст нарисован программой, пусто.</param>
 /// <param name="Buttons">Тексты кнопок по порядку.</param>

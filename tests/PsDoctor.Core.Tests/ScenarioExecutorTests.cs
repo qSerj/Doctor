@@ -355,6 +355,134 @@ public sealed class ScenarioExecutorTests
         Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 2, StepFailures.Timeout), outcome);
     }
 
+    [Fact]
+    public async Task Пауза_длится_ровно_заданные_секунды()
+    {
+        var stand = new Stand();
+        stand.Send(new TimeTick(Seconds(10)));
+        stand.OnStepStarted(1, () =>
+        {
+            stand.Send(new TimeTick(Seconds(11)));
+            stand.Send(new TimeTick(TimeSpan.FromSeconds(11.9)));
+            stand.Send(new TimeTick(Seconds(12)));
+            stand.Send(new TimeTick(Seconds(13)));
+        });
+
+        var outcome = await stand.RunAsync("wait 2");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        var done = Assert.Single(stand.Facts, fact => fact.Kind == ScenarioFactKinds.StepDone);
+        Assert.Equal(2.0, done.Data.GetProperty("seconds").GetDouble());
+    }
+
+    [Fact]
+    public async Task Ожидание_подтверждения_без_подтверждения_отказывает_по_таймауту()
+    {
+        var stand = new Stand();
+        stand.OnStepStarted(1, () =>
+        {
+            stand.Send(new TimeTick(Seconds(4)));
+            stand.Send(new TimeTick(Seconds(5)));
+        });
+
+        var outcome = await stand.RunAsync("wait confirm 5\nsay \"не дойдём\"");
+
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 1, StepFailures.Timeout), outcome);
+        Assert.Equal(5.0, Assert.Single(stand.Facts, fact => fact.Kind == ScenarioFactKinds.StepFailed).Data.GetProperty("seconds").GetDouble());
+        Assert.DoesNotContain(stand.Facts, fact => fact.Kind is ScenarioFactKinds.OperatorConfirmed or ScenarioFactKinds.OperatorInstruction);
+    }
+
+    [Fact]
+    public async Task Подтверждение_завершает_ожидание_и_пишется_фактом()
+    {
+        var stand = new Stand();
+        stand.OnStepStarted(1, () =>
+        {
+            stand.Send(new TimeTick(Seconds(3)));
+            stand.Send(new OperatorConfirmed(Seconds(4)));
+        });
+
+        var outcome = await stand.RunAsync("wait confirm 5");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        Assert.Equal(1, Line(Assert.Single(stand.Facts, fact => fact.Kind == ScenarioFactKinds.OperatorConfirmed)));
+        Assert.Equal(4.0, Assert.Single(stand.Facts, fact => fact.Kind == ScenarioFactKinds.StepDone).Data.GetProperty("seconds").GetDouble());
+    }
+
+    [Fact]
+    public async Task Подтверждение_пришедшее_до_ожидания_ему_не_засчитывается()
+    {
+        var stand = new Stand();
+        stand.Send(new OperatorConfirmed(Seconds(1)));
+        stand.OnStepStarted(1, () =>
+        {
+            stand.Send(new TimeTick(Seconds(30)));
+        });
+
+        var outcome = await stand.RunAsync("wait confirm 20");
+
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Failed, 1, StepFailures.Timeout), outcome);
+        Assert.DoesNotContain(stand.Facts, fact => fact.Kind == ScenarioFactKinds.OperatorConfirmed);
+    }
+
+    [Fact]
+    public async Task Инструкция_оператору_пишется_фактом_с_текстом()
+    {
+        var stand = new Stand();
+
+        var outcome = await stand.RunAsync("say \"Дважды щёлкните по третьему слайду\"");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        var said = Assert.Single(stand.Facts, fact => fact.Kind == ScenarioFactKinds.OperatorInstruction);
+        Assert.Equal(1, Line(said));
+        Assert.Equal("Дважды щёлкните по третьему слайду", said.Data.GetProperty("text").GetString());
+        Assert.Equal(
+            [ScenarioFactKinds.ScenarioStarted, ScenarioFactKinds.StepStarted, ScenarioFactKinds.OperatorInstruction, ScenarioFactKinds.StepDone, ScenarioFactKinds.ScenarioFinished],
+            stand.Facts.Select(fact => fact.Kind));
+    }
+
+    [Fact]
+    public async Task Окно_открытое_оператором_после_инструкции_не_останавливает_сценарий()
+    {
+        var slideOptions = new DialogInfo(0x50, "Slide Options", [], ["OK", "Cancel"], "AGDSDocParent");
+        var stand = new Stand();
+        stand.Send(new TitleChanged(Seconds(1), "1.psh - ProShow Producer"));
+        stand.OnStepStarted(3, () =>
+        {
+            stand.Send(new TimeTick(Seconds(2)));
+            stand.Send(new DialogOpened(Seconds(3), slideOptions));
+            stand.Send(new OperatorConfirmed(Seconds(4)));
+        });
+        stand.OnStepStarted(4, () => stand.Send(new TimeTick(Seconds(10))));
+        stand.OnStepStarted(6, () =>
+        {
+            stand.Send(new DialogOpened(Seconds(11), MissingFont));
+            stand.Send(new ProgramExited(Seconds(12), 0));
+        });
+
+        var outcome = await stand.RunAsync(
+            "wait title \"1.psh\" 60\nsay \"Дважды щёлкните по третьему слайду\"\nwait confirm\nwait 5\nsay \"Закрывайте ProShow\"\nwait exit 60");
+
+        Assert.Equal(ScenarioStatus.Completed, outcome.Status);
+        Assert.DoesNotContain(stand.Facts, fact => fact.Kind == ScenarioFactKinds.UnexpectedDialog);
+    }
+
+    [Fact]
+    public async Task Действие_после_инструкции_снова_останавливается_на_открытом_диалоге()
+    {
+        var stand = new Stand();
+        stand.OnStepStarted(2, () =>
+        {
+            stand.Send(new DialogOpened(Seconds(3), MissingFont));
+            stand.Send(new OperatorConfirmed(Seconds(4)));
+        });
+
+        var outcome = await stand.RunAsync("say \"Откройте слайд\"\nwait confirm\nclose");
+
+        Assert.Equal(new ScenarioOutcome(ScenarioStatus.Stopped, 3, StepFailures.UnexpectedDialog), outcome);
+        Assert.Empty(stand.Actions.Called);
+    }
+
     private static TimeSpan Seconds(int seconds) => TimeSpan.FromSeconds(seconds);
 
     private static int Line(Fact fact) => fact.Data.GetProperty("line").GetInt32();

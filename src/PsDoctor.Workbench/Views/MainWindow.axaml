@@ -7,6 +7,17 @@
         MinHeight="560"
         Background="#15171B"
         Title="psdoctor — пульт наблюдателя">
+  <Window.Styles>
+    <!-- Шаг, на котором стоит сценарий. -->
+    <Style Selector="StackPanel.current TextBlock">
+      <Setter Property="Foreground" Value="#E8C35A" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+    <Style Selector="TextBlock.instruction">
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+  </Window.Styles>
   <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="8" ColumnDefinitions="*">
 
     <!-- Связь -->
@@ -29,16 +40,28 @@
                PlaceholderText="launch &quot;C:\lab\p1\1.psh&quot;&#10;wait title .psh 120&#10;close&#10;wait exit 60" />
       <StackPanel Grid.Column="1" Margin="8,0,0,0" Spacing="4" Width="320">
         <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBlock Classes="caption" Text="опыт" VerticalAlignment="Center" />
+          <ComboBox Width="220" ItemsSource="{Binding Experiments}" SelectionChanged="ОпытВыбран" PlaceholderText="сценарий из каталога опытов">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Button Content="↻" ToolTip.Tip="перечитать каталог опытов" Click="ОбновитьОпыты" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="4">
           <Button Content="Выполнить" IsEnabled="{Binding CanRun}" Click="Выполнить" />
           <Button Content="Отменить" IsEnabled="{Binding Connected}" Click="Отменить" />
           <Button Content="Прекратить наблюдение" IsEnabled="{Binding Connected}" Click="Прекратить" />
         </StackPanel>
         <TextBlock Classes="caption" Text="файл шоу в гостевой системе" />
         <TextBox Text="{Binding ShowPath, Mode=TwoWay}" PlaceholderText="C:\lab\p1\1.psh" />
-        <StackPanel Orientation="Horizontal" Spacing="4">
+        <WrapPanel ItemSpacing="4" LineSpacing="4">
           <Button Content="Запустить" IsEnabled="{Binding CanRun}" Click="Запустить" />
           <Button Content="Закрыть программу" IsEnabled="{Binding CanRun}" Click="ЗакрытьПрограмму" />
-        </StackPanel>
+          <Button Content="Подключиться к ProShow" IsEnabled="{Binding CanRun}" Click="ПодключитьсяКПрограмме" />
+        </WrapPanel>
         <StackPanel Orientation="Horizontal" Spacing="4">
           <Button Content="Рендер без диалогов" IsEnabled="{Binding CanRun}" Click="РендерБезДиалогов" />
           <Button Content="Рендер с Ok to All" IsEnabled="{Binding CanRun}" Click="РендерСДиалогом" />
@@ -93,12 +116,20 @@
         </ListBox>
       </DockPanel>
 
-      <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,Auto,*,Auto,*">
-        <TextBlock Grid.Row="0" Classes="caption" Text="шаги сценария" Margin="0,0,0,4" />
-        <ListBox Grid.Row="1" ItemsSource="{Binding Steps}">
+      <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,*">
+        <!-- Что сказано оператору и кнопка, которой он отвечает: то, ради чего опыт ведётся из пульта. -->
+        <Border Grid.Row="0" BorderBrush="#3A404A" BorderThickness="1" Padding="6" Margin="0,0,0,6">
+          <StackPanel Spacing="6">
+            <TextBlock Classes="caption" Text="инструкция оператору" />
+            <TextBlock Classes="instruction" Text="{Binding Instruction}" />
+            <Button Content="Сделано" IsEnabled="{Binding CanConfirm}" Click="Сделано" />
+          </StackPanel>
+        </Border>
+        <TextBlock Grid.Row="1" Classes="caption" Text="шаги сценария" Margin="0,0,0,4" />
+        <ListBox Grid.Row="2" ItemsSource="{Binding Steps}">
           <ListBox.ItemTemplate>
             <DataTemplate>
-              <StackPanel>
+              <StackPanel Classes.current="{Binding IsCurrent}">
                 <TextBlock Text="{Binding Text}" FontFamily="monospace" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
                   <TextBlock Classes="caption" Text="{Binding State}" />
@@ -108,8 +139,8 @@
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
-        <TextBlock Grid.Row="2" Classes="caption" Text="результаты рендера" Margin="0,6,0,4" />
-        <ListBox Grid.Row="3" ItemsSource="{Binding Artifacts}" SelectedItem="{Binding SelectedArtifact, Mode=TwoWay}">
+        <TextBlock Grid.Row="3" Classes="caption" Text="результаты рендера" Margin="0,6,0,4" />
+        <ListBox Grid.Row="4" ItemsSource="{Binding Artifacts}" SelectedItem="{Binding SelectedArtifact, Mode=TwoWay}">
           <ListBox.ItemTemplate>
             <DataTemplate>
               <StackPanel>

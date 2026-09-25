@@ -69,6 +69,18 @@ public sealed class ObservationApiTests : IAsyncLifetime
 
     private static string Статус(Fact завершение) => завершение.Data.GetProperty("status").GetString()!;
 
+    private static int Строка(Fact факт) => факт.Data.GetProperty("line").GetInt32();
+
+    private async Task<List<Fact>> Факты(string сеанс)
+    {
+        var факты = new List<Fact>();
+        await foreach (var факт in _клиент.ReadFactsAsync(сеанс))
+        {
+            факты.Add(факт);
+        }
+        return факты;
+    }
+
     [Fact]
     public async Task Сценарий_с_незнакомым_шагом_отвергается_с_номером_строки()
     {
@@ -186,6 +198,51 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Пассивный_сеанс_ведёт_опыт_оператора_до_выхода_программы()
+    {
+        _запуск.Foreign = true;
+        var сеанс = await _клиент.AttachAsync();
+
+        var принят = await _клиент.RunAsync(
+            "say \"Дважды щёлкните по третьему слайду\"\nwait confirm 30\nwait 2\nsay \"Закрывайте ProShow\"\nwait exit 30");
+        var поток = Task.Run(() => ДоКонцаСценария(принят));
+        await Ждать(async () => (await Факты(принят.Session)).Any(f => f.Kind == ScenarioFactKinds.StepStarted && Строка(f) == 2));
+        var подтверждено = await _клиент.ConfirmAsync();
+        await Ждать(async () => (await Факты(принят.Session)).Any(f => f.Kind == ScenarioFactKinds.OperatorInstruction && Строка(f) == 4));
+        _запуск.Runs[0].Exit(0);
+        var факты = await поток;
+
+        Assert.Equal(сеанс.Session, принят.Session);
+        Assert.Equal(принят.Session, подтверждено.Session);
+        Assert.Equal("completed", Статус(факты[^1]));
+        Assert.Equal(["Дважды щёлкните по третьему слайду", "Закрывайте ProShow"],
+            факты.Where(f => f.Kind == ScenarioFactKinds.OperatorInstruction).Select(f => f.Data.GetProperty("text").GetString()));
+        Assert.Equal(2, Строка(Assert.Single(факты, f => f.Kind == ScenarioFactKinds.OperatorConfirmed)));
+        // Пауза считается по тикам сеанса, а они идут четыре раза в секунду.
+        var пауза = факты.Single(f => f.Kind == ScenarioFactKinds.StepDone && Строка(f) == 3).Data.GetProperty("seconds").GetDouble();
+        Assert.InRange(пауза, 2, 3);
+        var run = _запуск.Runs[0];
+        Assert.Equal((0, 0), (run.CloseRequests, run.RenderRequests));
+        Assert.Empty(run.Pressed);
+    }
+
+    [Fact]
+    public async Task Пассивный_сеанс_отвергает_сценарий_с_действием_целиком_до_первого_шага()
+    {
+        _запуск.Foreign = true;
+        var сеанс = await _клиент.AttachAsync();
+
+        var отказ = await Assert.ThrowsAsync<ObserverException>(() => _клиент.RunAsync("say \"Нажмите\"\nwait confirm 30\npress Ok"));
+        var нечего = await Assert.ThrowsAsync<ObserverException>(() => _клиент.ConfirmAsync());
+
+        Assert.Equal(ObserverErrors.PassiveSession, отказ.Error!.Error);
+        Assert.Equal(ObserverErrors.NothingRunning, нечего.Error!.Error);
+        var факты = await Факты(сеанс.Session);
+        Assert.DoesNotContain(факты, f => f.Kind is ScenarioFactKinds.ScenarioStarted or ScenarioFactKinds.StepStarted or ScenarioFactKinds.OperatorInstruction);
+        Assert.Empty(_запуск.Runs[0].Pressed);
+    }
+
+    [Fact]
     public async Task Кто_начал_сеанс_пишется_в_его_первый_факт()
     {
         _запуск.Foreign = true;
@@ -256,6 +313,7 @@ public sealed class ObservationApiTests : IAsyncLifetime
                      (HttpMethod.Post, ObserverRoutes.Scenarios),
                      (HttpMethod.Post, ObserverRoutes.Attach),
                      (HttpMethod.Post, ObserverRoutes.CancelScenario),
+                     (HttpMethod.Post, ObserverRoutes.ConfirmScenario),
                      (HttpMethod.Get, ObserverRoutes.Sessions),
                      (HttpMethod.Get, ObserverRoutes.Stream("20260917-000000-000")),
                      (HttpMethod.Get, ObserverRoutes.Facts("20260917-000000-000")),

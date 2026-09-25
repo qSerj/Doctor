@@ -31,7 +31,8 @@ public sealed record ScenarioParseResult(Scenario? Scenario, IReadOnlyList<Scena
 
 /// <summary>
 /// Разбор текста сценария: строка на шаг, слова через пробел, аргумент с пробелами — в двойных кавычках.
-/// Пустые строки пропускаются. Разбор не бросает исключений на содержимое и собирает все ошибки сразу.
+/// Пустые строки и строки с <c>#</c> в начале пропускаются: файл опыта описывает себя сам. Разбор не бросает
+/// исключений на содержимое и собирает все ошибки сразу.
 /// </summary>
 public static class ScenarioParser
 {
@@ -46,7 +47,7 @@ public static class ScenarioParser
         {
             var line = index + 1;
             var source = lines[index].Trim();
-            if (source.Length == 0)
+            if (source.Length == 0 || source[0] == '#')
             {
                 continue;
             }
@@ -89,6 +90,7 @@ public static class ScenarioParser
             "close" => new CloseStep(line, text),
             "press" => arguments.Text(1) is { } button ? new PressStep(line, text, button) : null,
             "render" => new RenderStep(line, text),
+            "say" => arguments.Text(1) is { } message ? new SayStep(line, text, message) : null,
             "wait" => ParseWait(line, text, words, arguments),
             _ => null,
         };
@@ -113,6 +115,12 @@ public static class ScenarioParser
             return null;
         }
 
+        // Пауза: вместо вида ожидания сразу секунды.
+        if (words[1].Length > 0 && char.IsAsciiDigit(words[1][0]))
+        {
+            return arguments.Seconds(1) is { } duration ? new WaitPauseStep(line, text, duration) : null;
+        }
+
         return words[1] switch
         {
             "title" => arguments.Text(2) is { } substring && arguments.Seconds(3) is { } timeout
@@ -122,6 +130,9 @@ public static class ScenarioParser
             "idle" => arguments.Seconds(2) is { } quiet && arguments.Seconds(3) is { } timeout
                 ? new WaitIdleStep(line, text, quiet, timeout) : null,
             "render-done" => arguments.Seconds(2) is { } timeout ? new WaitRenderDoneStep(line, text, timeout) : null,
+            "confirm" => words.Count < 3
+                ? new WaitConfirmStep(line, text, WaitConfirmStep.Unlimited)
+                : arguments.Seconds(2) is { } timeout ? new WaitConfirmStep(line, text, timeout) : null,
             _ => null,
         };
     }

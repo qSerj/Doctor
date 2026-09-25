@@ -266,6 +266,9 @@ public sealed class ObservationSession : IProgramEvents
 
     public void AllExited() => _ = FinishAsync(SessionEndReasons.ProgramExited);
 
+    /// <summary>Оператор сделал сказанное. Без выполняемого сценария сигнал некому отдать, и он пропадает.</summary>
+    public void Confirm() => Send(new OperatorConfirmed(clock.Elapsed));
+
     /// <summary>
     /// Закрывает сеанс: сценарий дорабатывает на уже пришедших сигналах, наблюдение за программой
     /// прекращается (программа не закрывается), последний факт — причина закрытия.

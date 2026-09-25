@@ -104,6 +104,7 @@ public static class ObserveCommand
                 "raw" => await RawAsync(client, options, stdout, cancellationToken).ConfigureAwait(false),
                 "sessions" => output.Lines(await client.SessionsAsync(cancellationToken).ConfigureAwait(false)),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
+                "confirm" => output.Json(await client.ConfirmAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
                 "dialogs" => await DialogsAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
                 "facts" => await FactsAsync(client, options, output, cancellationToken).ConfigureAwait(false),
@@ -287,6 +288,7 @@ public static class ObserveCommand
         writer.WriteLine("  facts <сеанс>                   журнал сеанса");
         writer.WriteLine("  raw <сеанс> <от UTC> <до UTC>   сырьё ETW за интервал, JSON Lines");
         writer.WriteLine("  cancel                          отменить выполняемый сценарий");
+        writer.WriteLine("  confirm                         оператор сделал сказанное: засчитать шагу wait confirm");
         writer.WriteLine("  dialogs [сеанс]                 открытые диалоги с кнопками, строка на диалог");
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");
         writer.WriteLine();

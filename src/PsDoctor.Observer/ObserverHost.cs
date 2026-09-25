@@ -100,6 +100,11 @@ public static class ObserverHost
                 ? Results.Json(new CancelAccepted(session), ObservationJson.Options)
                 : Results.Json(new ObserverError(ObserverErrors.NothingRunning), ObservationJson.Options, statusCode: StatusCodes.Status409Conflict));
 
+        app.MapPost(ObserverRoutes.ConfirmScenario, () =>
+            service.Confirm() is { } session
+                ? Results.Json(new ConfirmAccepted(session), ObservationJson.Options)
+                : Results.Json(new ObserverError(ObserverErrors.NothingRunning), ObservationJson.Options, statusCode: StatusCodes.Status409Conflict));
+
         app.MapGet(ObserverRoutes.Sessions, () => Results.Json(service.Sessions(), ObservationJson.Options));
 
         app.MapPost("/sessions/{id}/stop", async (string id) =>

@@ -70,6 +70,39 @@ public sealed class ScenarioParserTests
         Assert.IsType<WaitRenderDoneStep>(steps[1]);
     }
 
+    [Fact]
+    public void Шаги_оператора_разбираются()
+    {
+        const string text = """
+            say "Дважды щёлкните по третьему слайду"
+            wait confirm
+            wait confirm 5
+            wait 120
+            """;
+
+        var steps = ScenarioParser.Parse(text).Scenario!.Steps;
+
+        Assert.Equal("Дважды щёлкните по третьему слайду", Assert.IsType<SayStep>(steps[0]).Message);
+        Assert.Equal(WaitConfirmStep.Unlimited, Assert.IsType<WaitConfirmStep>(steps[1]).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(5), Assert.IsType<WaitConfirmStep>(steps[2]).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(120), Assert.IsType<WaitPauseStep>(steps[3]).Duration);
+    }
+
+    [Fact]
+    public void Строка_с_решёткой_пропускается_а_номера_строк_остаются_номерами_файла()
+    {
+        var steps = ScenarioParser.Parse("# Опыт e42-slide-001\n  # повтор одним файлом\nclose").Scenario!.Steps;
+
+        Assert.Equal(3, Assert.IsType<CloseStep>(Assert.Single(steps)).Line);
+    }
+
+    [Fact]
+    public void Сценарий_без_действий_не_трогает_программу()
+    {
+        Assert.False(ScenarioParser.Parse("say \"Закрывайте ProShow\"\nwait 2\nwait confirm\nwait exit 60").Scenario!.DrivesProgram);
+        Assert.True(ScenarioParser.Parse("say \"Нажмите\"\nwait confirm\npress Ok").Scenario!.DrivesProgram);
+    }
+
     [Theory]
     [InlineData("launch", ScenarioErrorKind.MissingArgument, null)]
     [InlineData("press \"\"", ScenarioErrorKind.MissingArgument, null)]
@@ -83,6 +116,13 @@ public sealed class ScenarioParserTests
     [InlineData("close now", ScenarioErrorKind.ExtraArgument, "now")]
     [InlineData("wait exit 60 70", ScenarioErrorKind.ExtraArgument, "70")]
     [InlineData("press \"Ok to All", ScenarioErrorKind.UnterminatedQuote, null)]
+    [InlineData("say", ScenarioErrorKind.MissingArgument, null)]
+    [InlineData("say Дважды щёлкните", ScenarioErrorKind.ExtraArgument, "щёлкните")]
+    [InlineData("wait 0", ScenarioErrorKind.BadSeconds, "0")]
+    [InlineData("wait 2с", ScenarioErrorKind.BadSeconds, "2с")]
+    [InlineData("wait 120 30", ScenarioErrorKind.ExtraArgument, "30")]
+    [InlineData("wait confirm сейчас", ScenarioErrorKind.BadSeconds, "сейчас")]
+    [InlineData("wait confirm 5 6", ScenarioErrorKind.ExtraArgument, "6")]
     public void Кривой_шаг_отвергается_с_причиной(string line, ScenarioErrorKind kind, string? token)
     {
         var result = ScenarioParser.Parse("close\n" + line);
@@ -111,6 +151,7 @@ public sealed class ScenarioParserTests
     [Theory]
     [InlineData("")]
     [InlineData("\n  \n\r\n")]
+    [InlineData("# только описание опыта\n  # и ещё строка")]
     public void Пустой_сценарий_отвергается(string text)
     {
         var result = ScenarioParser.Parse(text);

@@ -1,7 +1,8 @@
 namespace PsDoctor.Core.Scenarios;
 
 /// <summary>
-/// Шаг сценария. Набор закрыт: действия и ожидания знают только ProShow, универсальных шагов нет.
+/// Шаг сценария. Набор закрыт: действия и ожидания знают только ProShow, универсальных шагов нет. Шаги
+/// оператора — <c>say</c>, пауза и <c>wait confirm</c> — программу не трогают: руками работает человек.
 /// </summary>
 /// <param name="Line">Строка сценария, с единицы, — ею шаг называется в фактах.</param>
 /// <param name="Text">Строка сценария как написана, без краевых пробелов.</param>
@@ -22,6 +23,9 @@ public sealed record PressStep(int Line, string Text, string Button) : ActionSte
 /// <summary><c>render</c> — запуск рендера. Объявлен, способ не выяснен.</summary>
 public sealed record RenderStep(int Line, string Text) : ActionStep(Line, Text);
 
+/// <summary><c>say "&lt;текст&gt;"</c> — инструкция оператору. Выполняется сразу: сказать — не значит дождаться.</summary>
+public sealed record SayStep(int Line, string Text, string Message) : ScenarioStep(Line, Text);
+
 /// <summary>Ожидание на потоке фактов. Таймаут у каждого свой и обязателен.</summary>
 public abstract record WaitStep(int Line, string Text, TimeSpan Timeout) : ScenarioStep(Line, Text);
 
@@ -40,5 +44,22 @@ public sealed record WaitIdleStep(int Line, string Text, TimeSpan Quiet, TimeSpa
 /// <summary><c>wait render-done &lt;таймаут&gt;</c> — объявлен вместе с <c>render</c>.</summary>
 public sealed record WaitRenderDoneStep(int Line, string Text, TimeSpan Timeout) : WaitStep(Line, Text, Timeout);
 
+/// <summary><c>wait &lt;секунды&gt;</c> — пауза по часам, без условия: шаг выполнен, когда истёк таймаут.</summary>
+public sealed record WaitPauseStep(int Line, string Text, TimeSpan Duration) : WaitStep(Line, Text, Duration);
+
+/// <summary>
+/// <c>wait confirm [&lt;таймаут&gt;]</c> — оператор подтвердил, что сделал сказанное. Без таймаута ждёт, пока
+/// подтвердят, отменят сценарий или выйдет программа: сколько человеку делать сказанное, сценарий не знает.
+/// </summary>
+public sealed record WaitConfirmStep(int Line, string Text, TimeSpan Timeout) : WaitStep(Line, Text, Timeout)
+{
+    /// <summary>Таймаут шага без таймаута в тексте.</summary>
+    public static readonly TimeSpan Unlimited = TimeSpan.MaxValue;
+}
+
 /// <summary>Сценарий — шаги по порядку, без переменных, ветвлений и циклов.</summary>
-public sealed record Scenario(IReadOnlyList<ScenarioStep> Steps);
+public sealed record Scenario(IReadOnlyList<ScenarioStep> Steps)
+{
+    /// <summary>Есть шаг, который трогает программу. Пассивный сеанс такой сценарий не принимает.</summary>
+    public bool DrivesProgram => Steps.Any(step => step is ActionStep);
+}

@@ -58,8 +58,17 @@ public sealed class StepRow(int line, string text) : ObservableObject
     public StepState State
     {
         get => state;
-        set => SetProperty(ref state, value);
+        set
+        {
+            if (SetProperty(ref state, value))
+            {
+                OnPropertyChanged(nameof(IsCurrent));
+            }
+        }
     }
+
+    /// <summary>Шаг, на котором стоит сценарий: окно выделяет его строку.</summary>
+    public bool IsCurrent => State == StepState.Running;
 
     /// <summary>Что пришло с фактом шага: секунды у выполненного, устойчивое имя причины у сорвавшегося.</summary>
     public string Note
@@ -95,3 +104,6 @@ public sealed class DialogRow(DialogInfo dialog)
 
     public IReadOnlyList<string> Buttons { get; } = dialog.Buttons;
 }
+
+/// <summary>Сценарий опыта — файл рядом с пультом.</summary>
+public sealed record ExperimentRow(string Name, string Path);

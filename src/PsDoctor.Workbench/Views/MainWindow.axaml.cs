@@ -60,6 +60,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ПодключитьсяКПрограмме(object? sender, RoutedEventArgs e) => await model.AttachAsync();
+
+    private async void Сделано(object? sender, RoutedEventArgs e) => await model.ConfirmAsync();
+
+    private async void ОпытВыбран(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: ExperimentRow experiment })
+        {
+            await model.OpenExperimentAsync(experiment);
+        }
+    }
+
+    private void ОбновитьОпыты(object? sender, RoutedEventArgs e) => model.LoadExperiments();
+
     private async void ОбновитьСеансы(object? sender, RoutedEventArgs e) => await model.RefreshSessionsAsync();
 
     private async void ОбновитьДиалоги(object? sender, RoutedEventArgs e) => await model.RefreshDialogsAsync();

@@ -1,0 +1,12 @@
+# Опыт e42-slide-001: мигает ли кадр слайда «loading…» при открытом проекте.
+# Повтор e42-slide-001a одним сценарием. Проект 3; путь — в гостевой системе стенда.
+# Над ProShow, запущенным вручную, — e42-slide-001-attach.
+launch "C:\lab\p3\FP.psh"
+wait dialog 120
+press "ОК"
+wait title "FP.psh" 600
+say "Дважды щёлкните по третьему слайду"
+wait confirm
+wait 120
+say "Закрывайте ProShow"
+wait exit 600

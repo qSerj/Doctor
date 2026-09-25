@@ -68,6 +68,14 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<CancelAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>Кнопка «Сделано»: оператор выполнил сказанное. Засчитывается начатому <c>wait confirm</c>.</summary>
+    public async Task<ConfirmAccepted> ConfirmAsync(CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.PostAsync(ObserverRoutes.ConfirmScenario, null, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<ConfirmAccepted>(response, timeout.Token).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> SessionsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);

@@ -93,6 +93,37 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Confirm_засчитывается_начатому_ожиданию_подтверждения()
+    {
+        var (безСценария, _, _) = await Observe("confirm");
+        var прогон = Observe("run", "--step", "launch \"C:\\lab\\p\\1.psh\"", "--step", "wait confirm 20");
+        using var время = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            var (_, сеансы, _) = await Observe("sessions");
+            var живой = сеансы.Select(line => JsonSerializer.Deserialize<SessionSummary>(line, ObservationJson.Options)!).FirstOrDefault(s => s.Active);
+            if (живой is not null)
+            {
+                var (_, начатые, _) = await Observe("facts", живой.Id, "--kind", ScenarioFactKinds.StepStarted);
+                if (начатые.Any(line => line.Contains("wait confirm", StringComparison.Ordinal)))
+                {
+                    break;
+                }
+            }
+            await Task.Delay(50, время.Token);
+        }
+
+        var (code, stdout, _) = await Observe("confirm");
+        var (кодСценария, факты, _) = await прогон;
+
+        Assert.Equal(ObserveExitCodes.Refused, безСценария);
+        Assert.Equal(ObserveExitCodes.Done, code);
+        Assert.NotNull(JsonSerializer.Deserialize<ConfirmAccepted>(Assert.Single(stdout), ObservationJson.Options)!.Session);
+        Assert.Equal(ObserveExitCodes.Done, кодСценария);
+        Assert.Contains(факты, line => line.Contains(ScenarioFactKinds.OperatorConfirmed, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Отказ_наблюдателя_даёт_двойку_и_тело_в_stdout()
     {
         var (code, stdout, _) = await Observe("run", "--step", "прыжок");

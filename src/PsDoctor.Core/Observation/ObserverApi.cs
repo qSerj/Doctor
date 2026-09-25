@@ -15,6 +15,12 @@ public static class ObserverRoutes
     /// <summary>POST: отменить выполняемый сценарий. Программу не трогает.</summary>
     public const string CancelScenario = "/scenarios/cancel";
 
+    /// <summary>
+    /// POST: оператор сделал сказанное — кнопка «Сделано». Засчитывается начатому шагу <c>wait confirm</c>;
+    /// в другое время принимается и пропадает, фактом не пишется.
+    /// </summary>
+    public const string ConfirmScenario = "/scenarios/confirm";
+
     /// <summary>GET: список сеансов, <see cref="SessionSummary"/>.</summary>
     public const string Sessions = "/sessions";
 
@@ -77,6 +83,7 @@ public static class ObserverErrors
     public const string ProgramNotRunning = "program-not-running";
     public const string AmbiguousProgram = "ambiguous-program";
     public const string AttachFailed = "attach-failed";
+    /// <summary>Сценарий трогает программу, а сеанс подключён пассивно: принимаются только <c>say</c> и <c>wait</c>.</summary>
     public const string PassiveSession = "passive-session";
     public const string EtwUnavailable = "etw-unavailable";
 
@@ -115,6 +122,9 @@ public sealed record ObserverError(string Error, IReadOnlyList<ScenarioError>? E
 public sealed record SessionSummary(string Id, bool Active, long? LastNumber, bool Finished = false);
 
 public sealed record CancelAccepted(string Session);
+
+/// <summary>Подтверждение передано выполняемому сценарию сеанса.</summary>
+public sealed record ConfirmAccepted(string Session);
 
 /// <summary>Ответ <c>/health</c>.</summary>
 public sealed record ObserverHealth(string Version, string? Commit);

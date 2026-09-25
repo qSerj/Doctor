@@ -98,7 +98,8 @@ public sealed class ObservationService : IAsyncDisposable
                 return Refuse(StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.NoSession));
             }
 
-            if (session.IsPassive)
+            // Пассивному сеансу — только шаги оператора и ожидания; отказ целиком, до первого шага.
+            if (session.IsPassive && parsed.Scenario.DrivesProgram)
                 return Refuse(StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.PassiveSession));
 
             var after = session.Log.LastNumber;
@@ -163,6 +164,20 @@ public sealed class ObservationService : IAsyncDisposable
                 return null;
             }
             scenario.Cancel();
+            return current.Id;
+        }
+    }
+
+    /// <summary>Передаёт подтверждение оператора выполняемому сценарию. Сеанс — <c>null</c>, если сценария нет.</summary>
+    public string? Confirm()
+    {
+        lock (gate)
+        {
+            if (scenario is null || current is null)
+            {
+                return null;
+            }
+            current.Confirm();
             return current.Id;
         }
     }
