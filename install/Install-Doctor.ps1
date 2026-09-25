@@ -1,4 +1,5 @@
-﻿# Установщик Doctor. Windows PowerShell 5.1: на машине монтажёра pwsh 7 может не быть.
+#Requires -Version 7.6
+# Установщик Doctor. Требует pwsh 7.6+: он стоит и на стенде, и у монтажёра (владелец, 25.09.2026).
 # Ставит, обновляет поверх и удаляет. Права администратора берутся один раз, здесь; дальше всё работает без них.
 #   Install-Doctor.ps1               установить из папки рядом со скриптом или обновить поверх
 #   Install-Doctor.ps1 -Uninstall    удалить задачи и программу; журналы — по вопросу
@@ -12,6 +13,8 @@ param(
     [switch] $NoPause
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$PSStyle.OutputRendering = 'PlainText'
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -20,7 +23,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     if ($User) { $arguments += @('-User', "`"$User`"") }
     if ($RemoveData) { $arguments += @('-RemoveData', $RemoveData) }
     if ($NoPause) { $arguments += '-NoPause' }
-    Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -Wait
+    Start-Process (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $arguments -Wait
     exit
 }
 
@@ -111,7 +114,7 @@ try {
         $answer = $RemoveData
         if (-not $answer) {
             $reply = Read-Host "Удалить журналы наблюдения, ключ и настройки ($userData, $MachineData)? [д/Н]"
-            $answer = if ($reply -match '^(д|y)') { 'yes' } else { 'no' }
+            $answer = $reply -match '^(д|y)' ? 'yes' : 'no'
         }
         if ($answer -eq 'yes') {
             Remove-Item -LiteralPath $userData -Recurse -Force -ErrorAction SilentlyContinue
@@ -127,7 +130,7 @@ try {
     $source = $PSScriptRoot
     $manifestFile = Join-Path $source 'manifest.json'
     if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) { throw "рядом с установщиком нет manifest.json: $source" }
-    $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
     if ($manifest.schema -ne 1 -or $manifest.product -ne 'PsDoctor' -or $manifest.runtime -ne 'win-x64') {
         throw 'неподдерживаемый пакет'
     }
@@ -136,7 +139,7 @@ try {
     $installed = Join-Path $Root 'manifest.json'
     $previous = $null
     if (Test-Path -LiteralPath $installed) {
-        $previous = (Get-Content -LiteralPath $installed -Raw -Encoding UTF8 | ConvertFrom-Json).revision
+        $previous = (Get-Content -LiteralPath $installed -Raw | ConvertFrom-Json).revision
     }
     if ($previous) { Write-Output "Обновление Doctor $previous -> $($manifest.revision) для $account" }
     else { Write-Output "Установка Doctor $($manifest.revision) для $account" }
