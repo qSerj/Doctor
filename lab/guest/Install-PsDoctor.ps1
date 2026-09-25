@@ -31,16 +31,8 @@ function Stop-DoctorProcess($process) {
 }
 
 $stopped = @{}
-foreach ($name in @('PsDoctor.Observer', 'PsDoctor.Workbench', 'PsDoctor.App')) {
-    Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
-        if (-not $stopped.ContainsKey($_.Id)) {
-            Stop-DoctorProcess $_
-            $stopped[$_.Id] = $true
-        }
-    }
-}
-# Имя процесса может отличаться от имени сборки. Проверяем путь, чтобы обновление
-# не упиралось в работающий Doctor, запущенный не через ярлык.
+# Останавливаются только процессы из каталога установки, по пути, а не по имени: на стенде под тем же
+# именем PsDoctor.Observer работают наблюдатель конвейера и его ETW-помощник из C:\lab\observer.
 $rootPrefix = ([IO.Path]::GetFullPath($Root)).TrimEnd('\') + '\'
 Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
     try { $path = $_.Path } catch { $path = $null }

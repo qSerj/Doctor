@@ -388,7 +388,10 @@ sessions)
   # Проверок нет: пакеты «до» и «после» сравнивает агент. Факты каждого сеанса ложатся в results/.
   say "ProShow в госте: pid $(proshow_pids)"
   say "сеансы наблюдателя"
-  "${psdoctor[@]}" observe sessions > "$out/sessions.jsonl" 2>&1
+  "${psdoctor[@]}" observe sessions > "$out/sessions.jsonl" 2>"$out/sessions.err"
+  code=$?
+  check "observe sessions ответил (код 0)" "$(is "$code" 0)"
+  [ "$code" = 0 ] || { cat "$out/sessions.err"; say "итог шага $step: расхождений $mismatches"; exit 1; }
   while IFS= read -r id; do
     "${psdoctor[@]}" observe facts "$id" > "$out/facts-$id.jsonl" 2>/dev/null
   done < <("$PYTHON" -c "
