@@ -186,6 +186,26 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Кто_начал_сеанс_пишется_в_его_первый_факт()
+    {
+        _запуск.Foreign = true;
+        var мастер = await _клиент.AttachAsync(origin: SessionOrigins.Wizard);
+        await _клиент.StopAsync(мастер.Session);
+        await ДоКонцаСеанса(мастер.Session);
+        _запуск.Foreign = false;
+        var пульт = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"");
+        await ДоКонцаСценария(пульт);
+        await _клиент.StopAsync(пульт.Session);
+
+        var первыйМастера = (await ДоКонцаСеанса(мастер.Session))[0];
+        var первыйПульта = (await ДоКонцаСеанса(пульт.Session))[0];
+
+        Assert.Equal(ProgramFactKinds.SessionStarted, первыйМастера.Kind);
+        Assert.Equal(SessionOrigins.Wizard, первыйМастера.Data.GetProperty("origin").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, первыйПульта.Data.GetProperty("origin").ValueKind);
+    }
+
+    [Fact]
     public async Task Сырьё_ETW_выдаётся_только_за_запрошенный_интервал()
     {
         _запуск.Foreign = true;

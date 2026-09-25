@@ -84,7 +84,21 @@ public static class ObserverErrors
     public const string BadRequest = "bad-request";
 }
 
-public sealed record RunScenarioRequest(string Text);
+/// <param name="Origin">Кто начал сеанс, <see cref="SessionOrigins"/>; действует, только если сценарий открывает сеанс.</param>
+public sealed record RunScenarioRequest(string Text, string? Origin = null);
+
+/// <summary>Тело POST <see cref="ObserverRoutes.Attach"/>; тела может не быть вовсе.</summary>
+public sealed record AttachRequest(string? Origin = null);
+
+/// <summary>
+/// Кто начал сеанс. Пишется в факт <c>session-started</c> полем <c>origin</c>; сеанс мастера хранится дольше
+/// обычного. Незнакомое значение наблюдатель не отвергает, а пишет как есть: это метка, а не команда.
+/// </summary>
+public static class SessionOrigins
+{
+    /// <summary>Мастер App «Решить проблему».</summary>
+    public const string Wizard = "wizard";
+}
 
 /// <param name="After">Номер последнего факта сеанса до начала сценария: факты сценария идут после него.</param>
 public sealed record RunScenarioAccepted(string Session, long After);

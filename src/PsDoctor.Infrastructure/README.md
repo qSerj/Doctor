@@ -13,6 +13,7 @@
 | Хочу понять | Начинать с |
 | --- | --- |
 | откуда берутся разрешения картинок | `MediaHeaderReader.cs` — свои читалки PNG, JPEG, PSD |
+| где установленный Doctor держит настройки, ключ и журналы | `Installation/InstalledLayout.cs` |
 | как запускается или находится чужая программа | `Observation/ProShowLauncher.cs`, затем `Observation/ProgramRun.cs` или `Observation/AttachedRun.cs` |
 | как видно куст процессов | `Observation/Win32Job.cs` |
 | как читаются окна и диалоги | `Observation/WindowWatcher.cs`, нажатие — `Observation/UiAutomation.cs` |

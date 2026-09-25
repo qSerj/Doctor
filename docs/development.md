@@ -13,6 +13,7 @@ dotnet run --project src/PsDoctor.Cli -- "проект.psh" --anonymize      # �
 dotnet run --project src/PsDoctor.App                                  # Avalonia, только Windows
 dotnet run --project src/PsDoctor.Workbench                            # пульт наблюдателя, где угодно
 lab/observer.sh                                                        # собрать наблюдатель, доставить на стенд, прогнать тесты
+install/package.sh [каталог]                                           # пакет установки Doctor для машины монтажёра
 dotnet run --project src/PsDoctor.Cli -- observe health                # версия и коммит наблюдателя на стенде
 dotnet run --project src/PsDoctor.Cli -- observe run сценарий.txt --follow  # прогон сценария, факты в stdout
 ```

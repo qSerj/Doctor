@@ -76,7 +76,8 @@ public sealed class ObservationSession : IProgramEvents
         ObserverHealth build,
         Action<ObservationSession> onFinished,
         TextWriter? journal = null,
-        string? showPath = null)
+        string? showPath = null,
+        string? origin = null)
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, id + SessionIds.JournalExtension);
@@ -85,7 +86,7 @@ public sealed class ObservationSession : IProgramEvents
             new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var session = new ObservationSession(id, path, writer, onFinished, showPath);
-        session.Log.Record(ProgramFactKinds.SessionStarted, new { startedAt = DateTimeOffset.Now, observer = build });
+        session.Log.Record(ProgramFactKinds.SessionStarted, new { startedAt = DateTimeOffset.Now, observer = build, origin });
         return session;
     }
 

@@ -30,6 +30,13 @@ public static partial class SessionIds
 
     public static bool IsValid(string? id) => id is not null && Pattern().IsMatch(id);
 
+    /// <summary>Время открытия сеанса из его имени; <c>null</c> — имя не сеанса.</summary>
+    public static DateTime? StartedUtc(string id) =>
+        IsValid(id) && DateTime.TryParseExact(id[..19], "yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var started)
+            ? started
+            : null;
+
     [GeneratedRegex(@"^\d{8}-\d{6}-\d{3}(-\d+)?$")]
     private static partial Regex Pattern();
 }

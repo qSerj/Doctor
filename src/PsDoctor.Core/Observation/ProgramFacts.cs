@@ -69,6 +69,12 @@ public static class ProgramFactKinds
     /// <summary>События журнала Windows о программе за время сеанса; данные — <see cref="WindowsEventsRead"/>.</summary>
     public const string WindowsEvents = "windows-events";
 
+    /// <summary>
+    /// Детектор узнал известное повторение. Детекторов пока нет (Э4.4), но имя закреплено уже сейчас:
+    /// сеанс с таким фактом хранится дольше обычного, см. <see cref="Retention"/>.
+    /// </summary>
+    public const string Episode = "episode";
+
     public const string SessionFinished = "session-finished";
 }
 

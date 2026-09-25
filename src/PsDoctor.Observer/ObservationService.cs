@@ -23,8 +23,14 @@ public sealed class ObservationService : IAsyncDisposable
     // Сеансы, открытые под запуск или подключение, которые отвергнуты до начала наблюдения. В списке их нет,
     // журнал удаляется, как только сеанс закрыт: пустой сеанс нельзя выдавать за наблюдение.
     private readonly HashSet<string> discarded = [];
+    private readonly RetentionLimits? retention;
+    // Пометка закрытого сеанса не меняется: журнал читается ради неё один раз за жизнь наблюдателя.
+    private readonly Dictionary<string, bool> marks = [];
+    private readonly Lock sweeping = new();
 
-    public ObservationService(string directory, IProgramLauncher launcher, ObserverHealth build, TimeSpan? actionTimeout = null, Func<DateTime>? utcNow = null)
+    /// <param name="retention">Пределы хранения; <c>null</c> — ничего не удаляется, как на стенде без установщика.</param>
+    public ObservationService(string directory, IProgramLauncher launcher, ObserverHealth build, TimeSpan? actionTimeout = null,
+        Func<DateTime>? utcNow = null, RetentionLimits? retention = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
         ArgumentNullException.ThrowIfNull(launcher);
@@ -34,6 +40,7 @@ public sealed class ObservationService : IAsyncDisposable
         this.build = build;
         this.actionTimeout = actionTimeout;
         this.utcNow = utcNow ?? (() => DateTime.UtcNow);
+        this.retention = retention;
     }
 
     public string DataDirectory => directory;
@@ -41,7 +48,8 @@ public sealed class ObservationService : IAsyncDisposable
     /// <summary>Итог приёма сценария: принят — сеанс и номер, после которого пойдут его факты; иначе отказ.</summary>
     public sealed record RunResult(RunScenarioAccepted? Accepted, int Status, ObserverError? Error);
 
-    public RunResult Run(string text)
+    /// <param name="origin">Кто начал сеанс, <see cref="SessionOrigins"/>; действует, только если сценарий открывает сеанс.</param>
+    public RunResult Run(string text, string? origin = null)
     {
         var parsed = ScenarioParser.Parse(text ?? "");
         if (parsed.Scenario is null)
@@ -70,7 +78,8 @@ public sealed class ObservationService : IAsyncDisposable
                     SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
                     build,
                     OnFinished,
-                    showPath: ((LaunchStep)parsed.Scenario.Steps[0]).ShowPath);
+                    showPath: ((LaunchStep)parsed.Scenario.Steps[0]).ShowPath,
+                    origin: origin);
                 current = session;
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
@@ -102,7 +111,7 @@ public sealed class ObservationService : IAsyncDisposable
     }
 
     /// <summary>Начинает сеанс чтения уже работающего ProShow; запуск и команды ему запрещены.</summary>
-    public (AttachAccepted? Accepted, int Status, ObserverError? Error) Attach()
+    public (AttachAccepted? Accepted, int Status, ObserverError? Error) Attach(string? origin = null)
     {
         lock (gate)
         {
@@ -120,7 +129,7 @@ public sealed class ObservationService : IAsyncDisposable
 
             var session = ObservationSession.Open(directory,
                 SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
-                build, OnFinished);
+                build, OnFinished, origin: origin);
             current = session;
             try
             {
@@ -399,6 +408,102 @@ public sealed class ObservationService : IAsyncDisposable
             {
                 current = null;
             }
+        }
+        if (retention is not null)
+        {
+            _ = Task.Run(Sweep);
+        }
+    }
+
+    /// <summary>
+    /// Удаляет сеансы сверх пределов хранения: журнал и файлы ETW. Живой и отвергнутый сеансы не трогает.
+    /// Зовётся при старте наблюдателя и после каждого закрытого сеанса; два прохода сразу не идут.
+    /// Файл, который не удалился, останется до следующего прохода.
+    /// </summary>
+    public void Sweep()
+    {
+        if (retention is null || !Directory.Exists(directory))
+        {
+            return;
+        }
+        lock (sweeping)
+        {
+            HashSet<string> skip;
+            lock (gate)
+            {
+                skip = [.. discarded];
+                if (current is not null)
+                {
+                    skip.Add(current.Id);
+                }
+            }
+
+            var etwDirectory = EtwFiles.Directory(directory);
+            var etw = Directory.Exists(etwDirectory)
+                ? Directory.EnumerateFiles(etwDirectory)
+                    .Select(path => (Path: path, Id: Path.GetFileName(path).Split('.')[0]))
+                    .Where(file => SessionIds.IsValid(file.Id))
+                    .ToLookup(file => file.Id, file => file.Path)
+                : Enumerable.Empty<string>().ToLookup(_ => "", _ => "");
+
+            var stored = new List<StoredSession>();
+            foreach (var journal in Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension))
+            {
+                var id = Path.GetFileNameWithoutExtension(journal);
+                if (!SessionIds.IsValid(id) || skip.Contains(id) || SessionIds.StartedUtc(id) is not { } started)
+                {
+                    continue;
+                }
+                var bytes = Size(journal) + etw[id].Sum(Size);
+                stored.Add(new StoredSession(id, started, bytes, IsMarked(id, journal)));
+            }
+
+            foreach (var id in Retention.Expired(stored, retention, utcNow()))
+            {
+                foreach (var path in etw[id].Append(Path.Combine(directory, id + SessionIds.JournalExtension)))
+                {
+                    try
+                    {
+                        File.Delete(path);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+                marks.Remove(id);
+            }
+        }
+    }
+
+    private bool IsMarked(string id, string journal)
+    {
+        if (marks.TryGetValue(id, out var marked))
+        {
+            return marked;
+        }
+        try
+        {
+            using var reader = new StreamReader(new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), Encoding.UTF8);
+            marked = Retention.IsMarked(FactJournalReader.ReadAfter(reader, 0));
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            // Испорченный журнал не помечен: он уйдёт по обычному сроку, а не будет жить полгода.
+            marked = false;
+        }
+        marks[id] = marked;
+        return marked;
+    }
+
+    private static long Size(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return 0;
         }
     }
 }

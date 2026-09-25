@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using PsDoctor.Core.Rules;
 using PsDoctor.Core.Observation;
+using PsDoctor.Infrastructure.Installation;
 using PsDoctor.Infrastructure.Observation;
 using PsDoctor.Observer.Client;
 
@@ -404,7 +405,7 @@ public sealed partial class MainWindow : Window
         }
         if (!HasObserverConfiguration())
         {
-            await ShowInfoAsync("Наблюдение за ProShow", "Наблюдение не настроено. Укажите адрес Observer и путь к ключу в PSDOCTOR_OBSERVER_URL и PSDOCTOR_OBSERVER_KEY_FILE.");
+            await ShowInfoAsync("Наблюдение за ProShow", "Наблюдение не настроено. Позовите администратора: Doctor установлен не полностью.");
             return;
         }
         if (!cleaner.IsProgramRunning())
@@ -415,7 +416,7 @@ public sealed partial class MainWindow : Window
         try
         {
             using var observer = CreateObserver();
-            var accepted = await observer.AttachAsync();
+            var accepted = await observer.AttachAsync(origin: SessionOrigins.Wizard);
             diagnosticSession = accepted.Session;
             StartDiagnosticWatch();
             SetResult(render
@@ -512,15 +513,31 @@ public sealed partial class MainWindow : Window
     }
     private async void РазобратьсяСПроблемой(object? sender, RoutedEventArgs args) => await ShowProblemAsync();
 
-    private static bool HasObserverConfiguration() =>
-        Uri.TryCreate(Environment.GetEnvironmentVariable(ObserverConnection.UrlVariable), UriKind.Absolute, out _)
-        && File.Exists(Environment.GetEnvironmentVariable(ObserverConnection.KeyFileVariable));
+    private static bool HasObserverConfiguration() => ObserverAddress() is not null;
 
     private static ObserverClient CreateObserver()
     {
-        var url = Environment.GetEnvironmentVariable(ObserverConnection.UrlVariable)!;
-        var keyFile = Environment.GetEnvironmentVariable(ObserverConnection.KeyFileVariable)!;
-        return new ObserverClient(new Uri(url), File.ReadAllText(keyFile).Trim());
+        var (url, key) = ObserverAddress() ?? throw new InvalidOperationException("наблюдение не настроено");
+        return new ObserverClient(url, key);
+    }
+
+    /// <summary>
+    /// Адрес и ключ наблюдателя. Переменные окружения — для инженера и стенда, они главнее; без них — то, что
+    /// оставили установщик и сторож: адрес из настроек машины, ключ из профиля. Ключа нет, пока сторож
+    /// ни разу не запускался, — тогда наблюдение не настроено.
+    /// </summary>
+    private static (Uri Url, string Key)? ObserverAddress()
+    {
+        var url = Environment.GetEnvironmentVariable(ObserverConnection.UrlVariable);
+        var keyFile = Environment.GetEnvironmentVariable(ObserverConnection.KeyFileVariable);
+        if (Uri.TryCreate(url, UriKind.Absolute, out var variableUrl) && File.Exists(keyFile))
+        {
+            var variableKey = File.ReadAllText(keyFile).Trim();
+            return variableKey.Length > 0 ? (variableUrl, variableKey) : null;
+        }
+        var layout = InstalledLayout.Current;
+        var (settings, _) = layout.LoadSettings();
+        return settings is not null && layout.ReadKey() is { } key ? (settings.LocalUrl, key) : null;
     }
 
     /// <summary>Заканчивает наблюдение: Observer перестаёт собирать факты, ProShow продолжает работать.</summary>
@@ -568,7 +585,7 @@ public sealed partial class MainWindow : Window
         if (!HasObserverConfiguration())
         {
             await ShowInfoAsync("Диагностический запуск",
-                "Проект выбран. Наблюдение пока не настроено: задайте адрес Observer и путь к его ключу в PSDOCTOR_OBSERVER_URL и PSDOCTOR_OBSERVER_KEY_FILE.");
+                "Проект выбран, но наблюдение не настроено. Позовите администратора: Doctor установлен не полностью.");
             return;
         }
 
@@ -592,7 +609,7 @@ public sealed partial class MainWindow : Window
         {
             using var observer = CreateObserver();
             await observer.HealthAsync();
-            var accepted = await observer.RunAsync($"launch \"{path}\"");
+            var accepted = await observer.RunAsync($"launch \"{path}\"", origin: SessionOrigins.Wizard);
             diagnosticSession = accepted.Session;
             StartDiagnosticWatch();
             SetResult("Наблюдаем за ProShow. Работайте как обычно. Факты сохраняются локально.");

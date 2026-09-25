@@ -44,7 +44,10 @@ public static class ObserverHost
             options.DataDirectory ?? ObserverOptions.DefaultDataDirectory,
             launcher ?? DefaultLauncher(options),
             health,
-            actionTimeout);
+            actionTimeout,
+            retention: options.Retention);
+        // Проход хранения при старте — в фоне: сотни журналов не должны задерживать первый ответ /health сторожу.
+        app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(service.Sweep));
         var stopping = app.Lifetime.ApplicationStopping;
         // Остановка наблюдателя закрывает сеанс, но не программу.
         app.Lifetime.ApplicationStopped.Register(() => service.DisposeAsync().AsTask().GetAwaiter().GetResult());
@@ -66,15 +69,28 @@ public static class ObserverHost
             {
                 return Results.Json(new ObserverError(ObserverErrors.BadRequest), ObservationJson.Options, statusCode: StatusCodes.Status400BadRequest);
             }
-            var result = service.Run(request.Text);
+            var result = service.Run(request.Text, request.Origin);
             return result.Accepted is not null
                 ? Results.Json(result.Accepted, ObservationJson.Options, statusCode: result.Status)
                 : Results.Json(result.Error, ObservationJson.Options, statusCode: result.Status);
         });
 
-        app.MapPost(ObserverRoutes.Attach, () =>
+        app.MapPost(ObserverRoutes.Attach, async (HttpContext context) =>
         {
-            var result = service.Attach();
+            // Тело необязательно: прежние клиенты подключаются пустым POST.
+            AttachRequest? request = null;
+            if (context.Request.ContentLength is > 0 || context.Request.Headers.TransferEncoding.Count > 0)
+            {
+                try
+                {
+                    request = await context.Request.ReadFromJsonAsync<AttachRequest>(ObservationJson.Options, context.RequestAborted);
+                }
+                catch (Exception e) when (e is JsonException or InvalidOperationException)
+                {
+                    return Results.Json(new ObserverError(ObserverErrors.BadRequest), ObservationJson.Options, statusCode: StatusCodes.Status400BadRequest);
+                }
+            }
+            var result = service.Attach(request?.Origin);
             return result.Accepted is not null
                 ? Results.Json(result.Accepted, ObservationJson.Options, statusCode: result.Status)
                 : Results.Json(result.Error, ObservationJson.Options, statusCode: result.Status);

@@ -9,6 +9,14 @@ if (args.Length > 0 && args[0] == "--etw-helper")
     return await EtwHelper.RunAsync(data);
 }
 
+if (args is ["--watchdog"])
+{
+    using var stopping = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; stopping.Cancel(); };
+    return await new Watchdog(PsDoctor.Infrastructure.Installation.InstalledLayout.Current, Environment.ProcessPath!)
+        .RunAsync(stopping.Token);
+}
+
 var (options, error) = ObserverOptions.Parse(args);
 if (options is null)
 {

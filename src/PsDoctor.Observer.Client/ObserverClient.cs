@@ -43,19 +43,22 @@ public sealed class ObserverClient : IDisposable
     }
 
     /// <summary>Отдаёт сценарий на выполнение. Итог сценария — в фактах сеанса после <see cref="RunScenarioAccepted.After"/>.</summary>
-    public async Task<RunScenarioAccepted> RunAsync(string scenario, CancellationToken cancellationToken = default)
+    /// <param name="origin">Кто начинает сеанс, <see cref="SessionOrigins"/>; наблюдатель пишет его в журнал.</param>
+    public async Task<RunScenarioAccepted> RunAsync(string scenario, CancellationToken cancellationToken = default, string? origin = null)
     {
         using var timeout = Limit(cancellationToken);
-        using var response = await http.PostAsJsonAsync(ObserverRoutes.Scenarios, new RunScenarioRequest(scenario), ObservationJson.Options, timeout.Token)
+        using var response = await http.PostAsJsonAsync(ObserverRoutes.Scenarios, new RunScenarioRequest(scenario, origin), ObservationJson.Options, timeout.Token)
             .ConfigureAwait(false);
         return await ReadAsync<RunScenarioAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
 
     /// <summary>Подключается к уже работающему ProShow для пассивной диагностики.</summary>
-    public async Task<AttachAccepted> AttachAsync(CancellationToken cancellationToken = default)
+    /// <param name="origin">Кто начинает сеанс, <see cref="SessionOrigins"/>; наблюдатель пишет его в журнал.</param>
+    public async Task<AttachAccepted> AttachAsync(CancellationToken cancellationToken = default, string? origin = null)
     {
         using var timeout = Limit(cancellationToken);
-        using var response = await http.PostAsync(ObserverRoutes.Attach, null, timeout.Token).ConfigureAwait(false);
+        using var response = await http.PostAsJsonAsync(ObserverRoutes.Attach, new AttachRequest(origin), ObservationJson.Options, timeout.Token)
+            .ConfigureAwait(false);
         return await ReadAsync<AttachAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
     public async Task<CancelAccepted> CancelAsync(CancellationToken cancellationToken = default)

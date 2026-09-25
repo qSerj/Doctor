@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Net;
+using PsDoctor.Core.Observation;
 
 namespace PsDoctor.Observer;
 
@@ -10,7 +12,12 @@ namespace PsDoctor.Observer;
 /// </summary>
 /// <param name="DataDirectory">Каталог журналов сеансов; <c>null</c> — <see cref="DefaultDataDirectory"/>.</param>
 /// <param name="ProgramPath">Программа, которую запускает <c>launch</c>; <c>null</c> — ProShow на обычном месте.</param>
-public sealed record ObserverOptions(IPAddress Address, int Port, string Key, string? DataDirectory = null, string? ProgramPath = null)
+/// <param name="Retention">
+/// Пределы хранения из <c>--keep-days</c>, <c>--keep-mb</c>, <c>--keep-marked-days</c>; незаданный ключ берёт значение
+/// установщика по умолчанию. Ни одного ключа — <c>null</c>: наблюдатель стенда ничего не удаляет.
+/// </param>
+public sealed record ObserverOptions(IPAddress Address, int Port, string Key, string? DataDirectory = null, string? ProgramPath = null,
+    RetentionLimits? Retention = null)
 {
     public const int DefaultPort = 8100;
 
@@ -27,6 +34,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
         string? data = null;
         string? program = null;
         var allowRemote = false;
+        double? keepDays = null, keepMegabytes = null, keepMarkedDays = null;
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -50,6 +58,17 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                     program = value;
                     i++;
                     break;
+                case "--keep-days" or "--keep-mb" or "--keep-marked-days" when value is not null:
+                    if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) || number <= 0)
+                        return (null, $"{args[i]}: ожидается положительное число, получено «{value}»");
+                    switch (args[i])
+                    {
+                        case "--keep-days": keepDays = number; break;
+                        case "--keep-mb": keepMegabytes = number; break;
+                        default: keepMarkedDays = number; break;
+                    }
+                    i++;
+                    break;
                 case "--allow-remote":
                     allowRemote = true;
                     break;
@@ -69,7 +88,17 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
         if (key.Length == 0)
             return (null, $"файл ключа пуст: {keyFile}");
 
-        return (new ObserverOptions(address, port, key, data, program), null);
+        RetentionLimits? retention = null;
+        if (keepDays is not null || keepMegabytes is not null || keepMarkedDays is not null)
+        {
+            var d = InstalledSettings.Default.Retention;
+            retention = new RetentionLimits(
+                keepDays is { } days ? TimeSpan.FromDays(days) : d.Age,
+                keepMegabytes is { } megabytes ? (long)(megabytes * 1024 * 1024) : d.Bytes,
+                keepMarkedDays is { } markedDays ? TimeSpan.FromDays(markedDays) : d.MarkedAge);
+        }
+
+        return (new ObserverOptions(address, port, key, data, program, retention), null);
     }
 
     private static bool TryParseEndpoint(string text, out IPAddress address, out int port)
