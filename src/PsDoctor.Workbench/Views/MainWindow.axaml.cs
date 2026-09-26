@@ -74,6 +74,30 @@ public sealed partial class MainWindow : Window
 
     private void ОбновитьОпыты(object? sender, RoutedEventArgs e) => model.LoadExperiments();
 
+    private async void ПресетВыбран(object? sender, SelectionChangedEventArgs e)
+    {
+        // Выбор, поставленный самой моделью (при старте или после сохранения), не переподключает.
+        if (sender is ComboBox { SelectedItem: PresetRow preset } && preset != model.SelectedPreset)
+        {
+            await model.ApplyPresetAsync(preset);
+        }
+    }
+
+    private void СохранитьПресет(object? sender, RoutedEventArgs e) =>
+        model.SavePreset(this.FindControl<TextBox>("ИмяПресета")!.Text ?? "");
+
+    private void ОбновитьПресеты(object? sender, RoutedEventArgs e) => model.LoadPresets();
+
+    private async void ОткрытьПапкуПресетов(object? sender, RoutedEventArgs e)
+    {
+        if (model.PresetsDirectory is not { } folder)
+        {
+            return;
+        }
+        Directory.CreateDirectory(folder);
+        await Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(folder));
+    }
+
     private async void СеансВыбран(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is ListBox { SelectedItem: SessionRow row } && row.Id != model.SelectedSession?.Id)

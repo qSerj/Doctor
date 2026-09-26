@@ -16,7 +16,8 @@ public sealed record WorkbenchSettings(
     string? ExchangeDirectory = null,
     string? ShowPath = null,
     IReadOnlyList<string>? RecentShows = null,
-    string? Experiment = null)
+    string? Experiment = null,
+    string? Preset = null)
 {
     /// <summary>Сколько последних файлов шоу помнить.</summary>
     public const int RecentLimit = 10;

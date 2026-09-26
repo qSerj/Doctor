@@ -201,3 +201,6 @@ public sealed class DialogRow(DialogInfo dialog)
 
 /// <summary>Сценарий опыта — файл рядом с пультом.</summary>
 public sealed record ExperimentRow(string Name, string Path);
+
+/// <summary>Пресет машины — файл в каталоге пресетов, по имени файла.</summary>
+public sealed record PresetRow(string Name, string Path);

@@ -94,12 +94,22 @@
   <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="8">
 
     <!-- Полоса состояния: четыре лампы и настройки. Видна всегда, на любой вкладке. -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,*,*,*,Auto" Margin="0,0,0,4">
+    <Grid Grid.Row="0" ColumnDefinitions="*,*,*,*,Auto,Auto" Margin="0,0,0,4">
       <ContentControl Grid.Column="0" Content="{Binding LinkLamp}" />
       <ContentControl Grid.Column="1" Content="{Binding ProgramLamp}" />
       <ContentControl Grid.Column="2" Content="{Binding RunLamp}" />
       <ContentControl Grid.Column="3" Content="{Binding OperatorLamp}" />
-      <ToggleButton Grid.Column="4" Name="КнопкаНастроек" Content="Настройки" VerticalAlignment="Stretch" />
+      <!-- Пресет — машина: выбор загружает файл и переподключает пульт. -->
+      <ComboBox Grid.Column="4" Width="150" Margin="0,0,6,0" VerticalAlignment="Stretch" VerticalContentAlignment="Center"
+                ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset, Mode=OneWay}"
+                SelectionChanged="ПресетВыбран" PlaceholderText="машина…" ToolTip.Tip="пресет: адрес, ключ, обмен, файл шоу">
+        <ComboBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Name}" FontSize="13" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <ToggleButton Grid.Column="5" Name="КнопкаНастроек" Content="Настройки" VerticalAlignment="Stretch" />
     </Grid>
 
     <!-- Последнее, что случилось: отказ, обрыв, принятый сценарий. Сверху, чтобы не теряться. -->
@@ -107,7 +117,7 @@
 
     <!-- Связь и пути: задаются один раз и запоминаются. -->
     <Border Grid.Row="2" Classes="group" IsVisible="{Binding #КнопкаНастроек.IsChecked}">
-      <Grid ColumnDefinitions="Auto,*,Auto,2*,Auto" RowDefinitions="Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,2*,Auto" RowDefinitions="Auto,Auto,Auto">
         <TextBlock Grid.Row="0" Grid.Column="0" Classes="caption" Text="адрес" VerticalAlignment="Center" Margin="0,0,6,0" />
         <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Address, Mode=TwoWay}" PlaceholderText="http://192.168.56.5:8100" />
         <TextBlock Grid.Row="0" Grid.Column="2" Classes="caption" Text="файл ключа" VerticalAlignment="Center" Margin="8,0,6,0" />
@@ -119,6 +129,13 @@
           <Button Grid.Column="1" Content="..." Margin="4,0,0,0" Click="ВыбратьКаталогОбмена" />
           <CheckBox Grid.Column="2" Content="сырой ETW в пакет" Margin="8,0,0,0" IsChecked="{Binding IncludeRaw, Mode=TwoWay}" />
         </Grid>
+        <TextBlock Grid.Row="2" Grid.Column="0" Classes="caption" Text="пресет" VerticalAlignment="Center" Margin="0,4,6,0" />
+        <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
+          <TextBox Name="ИмяПресета" Width="200" PlaceholderText="стенд, дом…" />
+          <Button Content="Сохранить как пресет" ToolTip.Tip="адрес, файл ключа, каталог обмена и файл шоу — в файл пресета" Click="СохранитьПресет" />
+          <Button Content="Папка пресетов" Click="ОткрытьПапкуПресетов" />
+          <Button Content="↻" ToolTip.Tip="перечитать папку пресетов" Click="ОбновитьПресеты" />
+        </StackPanel>
       </Grid>
     </Border>
 

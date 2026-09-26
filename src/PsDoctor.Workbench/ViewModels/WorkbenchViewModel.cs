@@ -46,6 +46,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private readonly Func<string, string?> environment;
     private readonly string experimentsDirectory;
     private readonly string? settingsPath;
+    private readonly string? presetsDirectory;
     private readonly TimeSpan pollInterval;
     private readonly TimeSpan streamRetryPause;
 
@@ -81,6 +82,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private bool showAllFacts;
     private FactRow? selectedFact;
     private ExperimentRow? selectedExperiment;
+    private PresetRow? selectedPreset;
     private Lamp linkLamp = new("Связь", "", LampTone.Off);
     private Lamp programLamp = new("ProShow", "", LampTone.Off);
     private Lamp runLamp = new("Прогон", "", LampTone.Off);
@@ -92,14 +94,16 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// <param name="settingsPath">Файл настроек пульта; <c>null</c> — пульт ничего не помнит, как в тестах.</param>
     /// <param name="pollInterval">Как часто спрашивать <c>/health</c>.</param>
     /// <param name="streamRetryPause">Пауза перед переподключением оборванного потока фактов.</param>
+    /// <param name="presetsDirectory">Каталог пресетов; по умолчанию — рядом с файлом настроек, без него пресетов нет.</param>
     public WorkbenchViewModel(Func<Uri, string, ObserverClient>? connect = null, Func<string, string?>? environment = null,
         string? experimentsDirectory = null, string? settingsPath = null, TimeSpan? pollInterval = null,
-        TimeSpan? streamRetryPause = null)
+        TimeSpan? streamRetryPause = null, string? presetsDirectory = null)
     {
         this.connect = connect ?? ((uri, key) => new ObserverClient(uri, key));
         this.environment = environment ?? Environment.GetEnvironmentVariable;
         this.experimentsDirectory = experimentsDirectory ?? Path.Combine(AppContext.BaseDirectory, ExperimentsFolder);
         this.settingsPath = settingsPath;
+        this.presetsDirectory = presetsDirectory ?? (settingsPath is null ? null : WorkbenchPreset.DirectoryFor(settingsPath));
         this.pollInterval = pollInterval ?? DefaultPollInterval;
         this.streamRetryPause = streamRetryPause ?? DefaultStreamRetryPause;
 
@@ -112,6 +116,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             RecentShows.Add(show);
         }
+        LoadPresets();
+        selectedPreset = Presets.FirstOrDefault(p => p.Name == saved.Preset);
         LoadExperiments();
         if (Experiments.FirstOrDefault(e => e.Name == saved.Experiment) is { } last)
         {
@@ -129,19 +135,27 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         Refresh();
     }
 
+    /// <remarks>Правка адреса или ключа снимает пресет: машина уже не та, что в его имени.</remarks>
     public string Address
     {
         get => address;
         set
         {
-            if (SetProperty(ref address, value)) Refresh();
+            if (SetProperty(ref address, value))
+            {
+                SelectedPreset = null;
+                Refresh();
+            }
         }
     }
 
     public string KeyFile
     {
         get => keyFile;
-        set => SetProperty(ref keyFile, value);
+        set
+        {
+            if (SetProperty(ref keyFile, value)) SelectedPreset = null;
+        }
     }
 
     public string ExchangeDirectory
@@ -299,6 +313,100 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     /// <summary>Сценарии опытов из каталога рядом с пультом, по имени файла.</summary>
     public ObservableCollection<ExperimentRow> Experiments { get; } = [];
+
+    /// <summary>Пресеты машин из каталога пресетов, по имени файла.</summary>
+    public ObservableCollection<PresetRow> Presets { get; } = [];
+
+    /// <summary>Пресет, загруженный последним; запоминается между запусками и виден в лампе «Связь».</summary>
+    public PresetRow? SelectedPreset
+    {
+        get => selectedPreset;
+        private set
+        {
+            if (SetProperty(ref selectedPreset, value)) Refresh();
+        }
+    }
+
+    /// <summary>Перечитывает каталог пресетов. Нет каталога — пустой список.</summary>
+    public void LoadPresets()
+    {
+        Presets.Clear();
+        if (presetsDirectory is null || !Directory.Exists(presetsDirectory))
+        {
+            return;
+        }
+        foreach (var path in Directory.EnumerateFiles(presetsDirectory, "*" + WorkbenchPreset.Extension).Order(StringComparer.Ordinal))
+        {
+            Presets.Add(new PresetRow(Path.GetFileNameWithoutExtension(path), path));
+        }
+        SelectedPreset = Presets.FirstOrDefault(p => p.Name == SelectedPreset?.Name);
+    }
+
+    /// <summary>
+    /// Загружает пресет и переподключается: адрес, ключ, каталог обмена и файл шоу берутся из файла, пустые поля
+    /// оставляют текущее. Выбор пользователя главнее переменных окружения — они задают только начальное значение.
+    /// </summary>
+    public async Task ApplyPresetAsync(PresetRow? preset)
+    {
+        if (preset is null)
+        {
+            return;
+        }
+        WorkbenchPreset loaded;
+        try
+        {
+            loaded = WorkbenchPreset.Load(preset.Path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            Status = $"пресет {preset.Name} не прочитан: {e.Message}";
+            return;
+        }
+        Address = loaded.Address ?? Address;
+        KeyFile = loaded.KeyFile ?? KeyFile;
+        ExchangeDirectory = loaded.ExchangeDirectory ?? ExchangeDirectory;
+        ShowPath = loaded.ShowPath ?? ShowPath;
+        SelectedPreset = preset;
+        SaveSettings();
+        await ConnectAsync();
+        if (!Connected && Status.Length > 0)
+        {
+            Status = $"пресет {preset.Name}: {Status}";
+        }
+    }
+
+    /// <summary>Записывает текущие адрес, ключ, каталог обмена и файл шоу пресетом с этим именем.</summary>
+    public void SavePreset(string name)
+    {
+        name = name.Trim();
+        if (presetsDirectory is null)
+        {
+            Status = "пресеты не хранятся: у пульта нет файла настроек";
+            return;
+        }
+        if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.StartsWith('.'))
+        {
+            Status = $"имя пресета не годится для файла: «{name}»";
+            return;
+        }
+        var path = Path.Combine(presetsDirectory, name + WorkbenchPreset.Extension);
+        try
+        {
+            new WorkbenchPreset(Address, KeyFile, ExchangeDirectory, ShowPath).Save(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Status = $"пресет {name} не сохранён: {e.Message}";
+            return;
+        }
+        LoadPresets();
+        SelectedPreset = Presets.FirstOrDefault(p => p.Name == name);
+        SaveSettings();
+        Status = $"пресет {name} сохранён: {path}";
+    }
+
+    /// <summary>Где лежат пресеты — окно открывает этот каталог.</summary>
+    public string? PresetsDirectory => presetsDirectory;
 
     /// <summary>Опыт, чей сценарий лежит в поле; запоминается между запусками.</summary>
     public ExperimentRow? SelectedExperiment
@@ -1003,11 +1111,13 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// </summary>
     private void Refresh()
     {
+        // С какой машиной разговариваем — первым словом: стенд и компьютер монтажёра путать нельзя.
+        var machine = SelectedPreset is { } preset ? $"{preset.Name} · " : "";
         LinkLamp = client is null
-            ? new Lamp("Связь", Address.Length == 0 ? "адрес не задан" : "не подключён", LampTone.Off)
-            : KeyRejected ? new Lamp("Связь", "ключ не принят (401)", LampTone.Alarm)
-            : Connected ? new Lamp("Связь", "на связи" + (Version.Length > 0 ? $" · {Version}" : ""), LampTone.On)
-            : new Lamp("Связь", "нет связи", LampTone.Alarm);
+            ? new Lamp("Связь", machine + (Address.Length == 0 ? "адрес не задан" : "не подключён"), LampTone.Off)
+            : KeyRejected ? new Lamp("Связь", machine + "ключ не принят (401)", LampTone.Alarm)
+            : Connected ? new Lamp("Связь", machine + "на связи" + (Version.Length > 0 ? $" · {Version}" : ""), LampTone.On)
+            : new Lamp("Связь", machine + "нет связи", LampTone.Alarm);
 
         ProgramLamp = !Connected ? new Lamp("ProShow", "неизвестно", LampTone.Off)
             : Activity is not { } now ? new Lamp("ProShow", "наблюдатель не сообщает", LampTone.Off)
@@ -1075,7 +1185,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
         try
         {
-            new WorkbenchSettings(Address, KeyFile, ExchangeDirectory, ShowPath, [.. RecentShows], SelectedExperiment?.Name)
+            new WorkbenchSettings(Address, KeyFile, ExchangeDirectory, ShowPath, [.. RecentShows], SelectedExperiment?.Name,
+                    SelectedPreset?.Name)
                 .Save(settingsPath);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

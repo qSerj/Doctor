@@ -292,6 +292,63 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
+    public void Пресет_переключает_машину_и_переподключает() => ОдинПоток.Выполнить(async () =>
+    {
+        var настройки = Path.Combine(каталог, "workbench.json");
+        var пресеты = WorkbenchPreset.DirectoryFor(настройки);
+        new WorkbenchPreset("http://127.0.0.1:1", файлКлюча, @"C:\обмен-дом", @"D:\дом\1.psh").Save(Path.Combine(пресеты, "дом.json"));
+        new WorkbenchPreset(наблюдатель.Urls.Single(), файлКлюча, null, Проект).Save(Path.Combine(пресеты, "стенд.json"));
+        using var пульт = new WorkbenchViewModel(environment: _ => null, settingsPath: настройки);
+        Assert.Equal(["дом", "стенд"], пульт.Presets.Select(п => п.Name));
+
+        await пульт.ApplyPresetAsync(пульт.Presets[0]);
+        Assert.False(пульт.Connected);
+        Assert.Equal(@"D:\дом\1.psh", пульт.ShowPath);
+        Assert.StartsWith("пресет дом:", пульт.Status, StringComparison.Ordinal);
+        Assert.StartsWith("дом · ", пульт.LinkLamp.Text, StringComparison.Ordinal);
+
+        await пульт.ApplyPresetAsync(пульт.Presets[1]);
+        Assert.True(пульт.Connected, пульт.Status);
+        Assert.Equal(Проект, пульт.ShowPath);
+        // Пустое поле пресета текущее значение не трогает.
+        Assert.Equal(@"C:\обмен-дом", пульт.ExchangeDirectory);
+        Assert.StartsWith("стенд · на связи", пульт.LinkLamp.Text, StringComparison.Ordinal);
+        Assert.Equal("стенд", WorkbenchSettings.Load(настройки).Preset);
+
+        // Ручная правка адреса — уже не та машина.
+        пульт.Address = "http://127.0.0.1:2";
+        Assert.Null(пульт.SelectedPreset);
+    });
+
+    [Fact]
+    public void Пресет_сохраняется_из_текущих_настроек() => ОдинПоток.Выполнить(async () =>
+    {
+        var настройки = Path.Combine(каталог, "workbench.json");
+        using (var пульт = new WorkbenchViewModel(environment: _ => null, settingsPath: настройки)
+        {
+            Address = наблюдатель.Urls.Single(),
+            KeyFile = файлКлюча,
+            ShowPath = Проект,
+        })
+        {
+            пульт.SavePreset("стенд/");
+            Assert.Contains("не годится", пульт.Status, StringComparison.Ordinal);
+            Assert.Empty(пульт.Presets);
+
+            пульт.SavePreset(" стенд ");
+            Assert.Equal("стенд", пульт.SelectedPreset!.Name);
+        }
+
+        // Следующий запуск помнит пресет и показывает его имя, пока не подключился.
+        using var снова = new WorkbenchViewModel(environment: _ => null, settingsPath: настройки);
+        Assert.Equal("стенд", снова.SelectedPreset!.Name);
+        Assert.Equal(new WorkbenchPreset(наблюдатель.Urls.Single(), файлКлюча, "", Проект),
+            WorkbenchPreset.Load(снова.SelectedPreset.Path));
+        await снова.StartAsync();
+        Assert.StartsWith("стенд · на связи", снова.LinkLamp.Text, StringComparison.Ordinal);
+    });
+
+    [Fact]
     public void Файл_настроек_прежнего_пульта_читается() => ОдинПоток.Выполнить(async () =>
     {
         var настройки = Path.Combine(каталог, "old.json");

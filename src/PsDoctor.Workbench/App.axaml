@@ -12,6 +12,11 @@
       <Setter Property="FontSize" Value="11" />
       <Setter Property="CornerRadius" Value="2" />
     </Style>
+    <!-- Текст в кнопке — по центру в обе стороны; :is — чтобы и ToggleButton, и прочие наследники Button. -->
+    <Style Selector=":is(Button)">
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
     <Style Selector="TextBlock">
       <Setter Property="FontSize" Value="11" />
     </Style>
