@@ -89,6 +89,20 @@ public sealed class RunnerTests : IDisposable
     }
 
     [Fact]
+    public void Назначенный_и_отсутствующий_ffprobe_даёт_три()
+    {
+        // Человек просил именно этот опросчик; молча взять другой или обойтись без него нельзя.
+        var (code, stdout, stderr) = Run(
+            ФайлШоу("шоу.psh", "cells=1", "cell[0].time=5000"),
+            "--ffprobe",
+            Path.Combine(_двор, "нет-такого-ffprobe"));
+
+        Assert.Equal(ExitCodes.Environment, code);
+        Assert.Empty(stdout);
+        Assert.Contains("ffprobe", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Неизвестный_ключ_даёт_три()
     {
         var (code, _, stderr) = Run("--чего-то-такого");

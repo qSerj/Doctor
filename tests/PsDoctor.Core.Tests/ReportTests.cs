@@ -69,9 +69,9 @@ public sealed class ReportTests
         var json = Json(Build(PassThroughMasker.Instance));
 
         Assert.Equal("psdoctor.report", json.GetProperty("schema").GetString());
-        Assert.Equal(1, json.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(2, json.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("1.2.3", json.GetProperty("doctorVersion").GetString());
-        Assert.Equal(6, json.GetProperty("units").EnumerateObject().Count());
+        Assert.Equal(7, json.GetProperty("units").EnumerateObject().Count());
     }
 
     [Fact]
@@ -130,7 +130,88 @@ public sealed class ReportTests
 
         var media = json.GetProperty("inventory").GetProperty("media");
         Assert.Equal(JsonValueKind.Null, media.GetProperty("videoUnpackedBytes").ValueKind);
-        Assert.Equal("notProbed", media.GetProperty("videoProbeStatus").GetString());
+
+        // Видео в образце нет вовсе — это не «не опрашивали».
+        Assert.Equal("none", media.GetProperty("videoProbeStatus").GetString());
+
+        var item = media.GetProperty("items")[0];
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("video").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("notProbedReason").ValueKind);
+    }
+
+    [Fact]
+    public void Видео_в_отчёте_параметрами_а_неопрошенное_с_причиной()
+    {
+        string[] lines =
+        [
+            "cells=1",
+            "cell[0].nrOfImages=2",
+            "cell[0].images[0].objectId=1",
+            "cell[0].images[0].image=video/a.mp4",
+            "cell[0].images[1].objectId=2",
+            "cell[0].images[1].image=video/b.avi",
+        ];
+
+        var text = ShowFile.Magic + "\r\n" + string.Join("\r\n", lines) + "\r\n";
+        using var reader = new StringReader(text);
+        var parse = ShowFileParser.Parse(reader);
+        var show = Show.From(parse.Document!);
+
+        var catalog = new MediaCatalog(new Dictionary<MediaReference, MediaProbe>
+        {
+            [new MediaReference("video/a.mp4")] = new(
+                MediaProbeStatus.Ok,
+                null,
+                5_000_000,
+                "mp4",
+                true,
+                "direct",
+                new VideoParameters("h264", "High", "mov,mp4,m4a,3gp,3g2,mj2", 1920, 1080, 29_970, 29_970, false, 12_000, 8_000_000)),
+            [new MediaReference("video/b.avi")] = new(
+                MediaProbeStatus.NotProbed,
+                null,
+                1_000,
+                "avi",
+                true,
+                "direct",
+                NotProbedReason: NotProbedReasons.FfprobeFailed),
+        });
+
+        var inventory = Учёт.Build(show, catalog);
+        var report = ReportBuilder.Build(
+            "шоу.psh",
+            1,
+            parse,
+            inventory,
+            FormatDictionary.From(parse.Document!),
+            AcceptanceRules.Run(inventory, RuleContext.Bare),
+            "1.2.3",
+            Момент,
+            new AliasMasker("соль"));
+
+        var media = Json(report).GetProperty("inventory").GetProperty("media");
+        Assert.Equal("partial", media.GetProperty("videoProbeStatus").GetString());
+        Assert.Equal(1, media.GetProperty("videoMeasuredCount").GetInt32());
+
+        // Сумма пикселей видео не касается.
+        Assert.Equal(0, media.GetProperty("unpackedBytes").GetInt64());
+
+        var items = media.GetProperty("items").EnumerateArray().ToArray();
+        var measured = items.Single(i => i.GetProperty("format").GetString() == "mp4");
+        var failed = items.Single(i => i.GetProperty("format").GetString() == "avi");
+
+        // Кадр видео — в параметрах видео, а не в размере картинки.
+        Assert.Equal(JsonValueKind.Null, measured.GetProperty("widthPx").ValueKind);
+
+        var video = measured.GetProperty("video");
+        Assert.Equal("h264", video.GetProperty("codec").GetString());
+        Assert.Equal(1920, video.GetProperty("widthPx").GetInt32());
+        Assert.Equal(29_970, video.GetProperty("frameRateMilliFps").GetInt32());
+        Assert.Equal(8_000_000, video.GetProperty("bitRateBitsPerSecond").GetInt64());
+        Assert.False(video.GetProperty("heavyCodec").GetBoolean());
+
+        Assert.Equal(JsonValueKind.Null, failed.GetProperty("video").ValueKind);
+        Assert.Equal("ffprobeFailed", failed.GetProperty("notProbedReason").GetString());
     }
 
     [Fact]

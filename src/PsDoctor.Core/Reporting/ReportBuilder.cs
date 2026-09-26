@@ -222,7 +222,8 @@ public static class ReportBuilder
 
             // Видео в сумму не входит, и это сказано полем, а не умолчанием.
             VideoUnpackedBytes: null,
-            VideoProbeStatus: "notProbed",
+            VideoProbeStatus(media),
+            media.VideoMeasuredCount,
             media.Items
                 .Select(i => new ReportMediaItem(
                     masker.Mask(MaskKind.Media, i.Reference.Raw)!,
@@ -236,9 +237,44 @@ public static class ReportBuilder
                     i.FileBytes,
                     i.UnpackedBytes,
                     i.ReferenceCount,
-                    i.Addresses.Select(a => BuildAddress(a, masker)).ToArray()))
+                    i.Addresses.Select(a => BuildAddress(a, masker)).ToArray(),
+                    masker.Keep(i.NotProbedReason),
+                    i.Video is { } video ? BuildVideo(video, i.HeavyCodec == true, masker) : null))
                 .ToArray());
     }
+
+    /// <summary>
+    /// Состояние опроса видео одним словом: <c>none</c> — видео в проекте нет, <c>probed</c> —
+    /// измерены все, <c>notProbed</c> — ни одного, <c>partial</c> — часть.
+    /// </summary>
+    private static string VideoProbeStatus(PsDoctor.Core.Inventory.MediaCounts media)
+    {
+        var measured = media.VideoMeasuredCount;
+        var notProbed = media.NotProbedCount;
+
+        return (measured, notProbed) switch
+        {
+            (0, 0) => "none",
+            (_, 0) => "probed",
+            (0, _) => "notProbed",
+            _ => "partial",
+        };
+    }
+
+    private static ReportVideo BuildVideo(VideoParameters video, bool heavy, IValueMasker masker) =>
+        new(
+            // Имена кодеков и контейнеров — факты о чужих форматах, а не о клиентской работе.
+            masker.Keep(video.Codec),
+            masker.Keep(video.Profile),
+            masker.Keep(video.Container),
+            video.WidthPx,
+            video.HeightPx,
+            video.FrameRateMilliFps,
+            video.AverageFrameRateMilliFps,
+            video.VariableFrameRate,
+            video.DurationMs,
+            video.BitRateBitsPerSecond,
+            heavy);
 
     private static ReportAddress BuildAddress(ObjectAddress address, IValueMasker masker)
     {

@@ -4,12 +4,17 @@ using PsDoctor.Core.Model;
 namespace PsDoctor.Infrastructure;
 
 /// <summary>
-/// Опрос медиафайлов рядом с проектом: найти по ссылке, прочитать заголовок, вернуть размер.
+/// Опрос медиафайлов рядом с проектом: найти по ссылке, прочитать заголовок, вернуть размер,
+/// а для видео — спросить внешний опросчик.
 /// </summary>
 /// <remarks>
 /// Ни одна неудача не бросает исключения: не нашли, не опознали, не дали прочитать —
 /// всё это состояния, которые ложатся в отчёт числом. Сумма при этом считается по опрошенным,
 /// а число неопрошенных стоит рядом: сумма без этого числа соврёт.
+/// <para>
+/// Видео измеряется, только если опросчик передан. Без него видео остаётся «не опрашивали»
+/// с причиной — так же, как было до Э1.1.
+/// </para>
 /// </remarks>
 public sealed class FileMediaProbe : IMediaProbe
 {
@@ -31,12 +36,26 @@ public sealed class FileMediaProbe : IMediaProbe
         ["avi"] = ["avi"],
     };
 
+    /// <summary>
+    /// Расширения видео, которых читалки заголовков не опознают, а опросчик возьмёт:
+    /// съёмка камер, DVD, Windows Media. Файл с таким расширением и неопознанной сигнатурой
+    /// отдаётся опросчику; всё прочее неопознанное так и остаётся неопознанным.
+    /// </summary>
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.Ordinal)
+    {
+        "mp4", "m4v", "mov", "qt", "avi", "mts", "m2ts", "ts", "mpg", "mpeg", "vob",
+        "wmv", "asf", "mkv", "webm", "flv", "3gp", "mod", "tod", "dv",
+    };
+
     private readonly string _projectDirectory;
 
-    public FileMediaProbe(string projectDirectory)
+    private readonly FfprobeVideoReader? _video;
+
+    public FileMediaProbe(string projectDirectory, FfprobeVideoReader? video = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectDirectory);
         _projectDirectory = projectDirectory;
+        _video = video;
     }
 
     public MediaProbe Probe(MediaReference reference)
@@ -64,6 +83,13 @@ public sealed class FileMediaProbe : IMediaProbe
 
             var reading = MediaHeaderReader.Read(stream);
 
+            if (reading.Status == MediaProbeStatus.NotProbed
+                || (reading.Status == MediaProbeStatus.UnknownFormat && VideoExtensions.Contains(reference.Extension)))
+            {
+                stream.Dispose();
+                return ProbeVideo(path, reading, bytes, reference, resolvedBy);
+            }
+
             return new MediaProbe(
                 reading.Status,
                 reading.Size,
@@ -76,6 +102,34 @@ public sealed class FileMediaProbe : IMediaProbe
         {
             return new MediaProbe(MediaProbeStatus.Unreadable, ResolvedBy: resolvedBy);
         }
+    }
+
+    /// <summary>
+    /// Видео: опознанное по сигнатуре или с видеорасширением. Измеренное получает статус «снято»
+    /// без размера картинки — кадр лежит в параметрах видео. Неизмеренное опознанное остаётся
+    /// «не опрашивали» с причиной, неопознанное — неопознанным.
+    /// </summary>
+    private MediaProbe ProbeVideo(string path, HeaderReading reading, long bytes, MediaReference reference, string resolvedBy)
+    {
+        var matches = Matches(reading.FormatId, reference.Extension);
+
+        var video = _video is null
+            ? VideoReading.Failed(NotProbedReasons.NoFfprobe)
+            : _video.Read(path);
+
+        if (video.Video is { } parameters)
+        {
+            return new MediaProbe(MediaProbeStatus.Ok, null, bytes, reading.FormatId, matches, resolvedBy, parameters);
+        }
+
+        return new MediaProbe(
+            reading.Status,
+            null,
+            bytes,
+            reading.FormatId,
+            matches,
+            resolvedBy,
+            NotProbedReason: reading.Status == MediaProbeStatus.NotProbed ? video.NotProbedReason : null);
     }
 
     /// <summary>Опрашивает все ссылки разом и складывает готовый каталог для инвентаря.</summary>

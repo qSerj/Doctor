@@ -18,8 +18,9 @@ public interface IAcceptanceRule
 }
 
 /// <summary>
-/// Шесть правил, которые считаются по готовому инвентарю. Граница этапа проведена по
-/// зависимостям: сюда входит то, для чего все числа уже сняты, и ни одной новой не заводится.
+/// Правила, которые считаются по готовому инвентарю. Граница проведена по зависимостям:
+/// сюда входит то, для чего все числа уже сняты. Шесть пришли с Э2, седьмое —
+/// <c>mixed-framerate</c> — с измерением видео на Э1.1.
 /// </summary>
 public static class AcceptanceRules
 {
@@ -38,6 +39,7 @@ public static class AcceptanceRules
         new UnresolvedPaths(),
         new ForeignRoot(),
         new AudioLongerThanShow(),
+        new MixedFramerate(),
     ];
 
     /// <summary>
@@ -457,5 +459,59 @@ public sealed class AudioLongerThanShow : IAcceptanceRule
 
             yield return new Finding(Id, ObjectAddress.ForSound(file), Level, Confidence, PassedThreshold: false, numbers);
         }
+    }
+}
+
+/// <summary>
+/// Видео одного проекта идут в разных частотах кадров, и программе приходится их пересчитывать.
+/// </summary>
+/// <remarks>
+/// Частоты вывода в файле шоу нет, поэтому сравниваются только входные видео между собой —
+/// по заявленной частоте потока, а не по средней: у съёмки с телефона средняя гуляет от файла
+/// к файлу, и сравнение по ней находило бы разнобой там, где его нет.
+/// <para>
+/// Находка одна на проект: разнобой — свойство набора, а не отдельного ролика. Порога нет,
+/// это факт. Действия тоже нет: своего перекодировщика в доктор не будет.
+/// </para>
+/// </remarks>
+public sealed class MixedFramerate : IAcceptanceRule
+{
+    public string Id => "mixed-framerate";
+
+    public ExecutionLevel Level => ExecutionLevel.None;
+
+    public RuleConfidence Confidence => RuleConfidence.Medium;
+
+    public IEnumerable<Finding> Check(Учёт inventory, RuleContext context)
+    {
+        ArgumentNullException.ThrowIfNull(inventory);
+        ArgumentNullException.ThrowIfNull(context);
+
+        var videos = inventory.Media.Items
+            .Where(i => i.Video?.FrameRateMilliFps is > 0)
+            .Select(i => i.Video!)
+            .ToArray();
+
+        var rates = videos.Select(v => v.FrameRateMilliFps!.Value).Distinct().ToArray();
+
+        if (rates.Length < 2)
+        {
+            yield break;
+        }
+
+        yield return new Finding(
+            Id,
+            ObjectAddress.ForShow(),
+            Level,
+            Confidence,
+            PassedThreshold: false,
+            new Dictionary<string, long>
+            {
+                ["distinctFrameRateCount"] = rates.Length,
+                ["measuredVideoCount"] = videos.Length,
+                ["minFrameRateMilliFps"] = rates.Min(),
+                ["maxFrameRateMilliFps"] = rates.Max(),
+                ["variableFrameRateCount"] = videos.Count(v => v.VariableFrameRate == true),
+            });
     }
 }

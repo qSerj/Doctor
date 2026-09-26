@@ -401,6 +401,87 @@ public sealed class AcceptanceRulesTests
             Прогнать(каталог, строки).Select(f => f.RuleId + "|" + f.Address.StableKey));
     }
 
+    // --- mixed-framerate ---
+
+    private static MediaCatalog Видео(params (string Path, int? RateMilliFps, bool? Variable)[] файлы) =>
+        new(файлы.ToDictionary(
+            f => new MediaReference(f.Path),
+            f => new MediaProbe(
+                MediaProbeStatus.Ok,
+                null,
+                1_000_000,
+                "mp4",
+                true,
+                "direct",
+                new VideoParameters("h264", null, "mov,mp4", 1920, 1080, f.RateMilliFps, f.RateMilliFps, f.Variable, 10_000, null))));
+
+    private static string[] Слои(params string[] файлы) =>
+    [
+        "cells=1",
+        $"cell[0].nrOfImages={файлы.Length}",
+        .. файлы.SelectMany((файл, i) => new[] { $"cell[0].images[{i}].objectId={i + 1}", $"cell[0].images[{i}].image={файл}" }),
+    ];
+
+    [Fact]
+    public void Видео_разной_частоты_дают_одну_находку_на_проект()
+    {
+        var находка = Одна(
+            Прогнать(
+                Видео(("v/a.mp4", 25_000, false), ("v/b.mp4", 29_970, true), ("v/c.mp4", 25_000, false)),
+                Слои("v/a.mp4", "v/b.mp4", "v/c.mp4")),
+            "mixed-framerate");
+
+        Assert.Equal(AddressKind.Show, находка.Address.Kind);
+        Assert.Equal(ExecutionLevel.None, находка.Level);
+        Assert.Equal(2, находка.Numbers["distinctFrameRateCount"]);
+        Assert.Equal(3, находка.Numbers["measuredVideoCount"]);
+        Assert.Equal(25_000, находка.Numbers["minFrameRateMilliFps"]);
+        Assert.Equal(29_970, находка.Numbers["maxFrameRateMilliFps"]);
+        Assert.Equal(1, находка.Numbers["variableFrameRateCount"]);
+    }
+
+    [Fact]
+    public void Видео_одной_частоты_разнобоем_не_считаются()
+    {
+        var находки = Прогнать(
+            Видео(("v/a.mp4", 25_000, false), ("v/b.mp4", 25_000, false)),
+            Слои("v/a.mp4", "v/b.mp4"));
+
+        Assert.DoesNotContain(находки, f => f.RuleId == "mixed-framerate");
+    }
+
+    [Fact]
+    public void Видео_с_неизвестной_частотой_в_сравнении_не_участвует()
+    {
+        // Незнание — не повод для разнобоя: сравнивать не с чем.
+        var находки = Прогнать(
+            Видео(("v/a.mp4", 25_000, false), ("v/b.mp4", null, null)),
+            Слои("v/a.mp4", "v/b.mp4"));
+
+        Assert.DoesNotContain(находки, f => f.RuleId == "mixed-framerate");
+    }
+
+    [Fact]
+    public void Неизмеренные_видео_правило_не_будят()
+    {
+        var каталог = new MediaCatalog(new Dictionary<MediaReference, MediaProbe>
+        {
+            [new MediaReference("v/a.mp4")] = new(MediaProbeStatus.NotProbed, FormatId: "mp4", NotProbedReason: NotProbedReasons.NoFfprobe),
+            [new MediaReference("v/b.avi")] = new(MediaProbeStatus.NotProbed, FormatId: "avi", NotProbedReason: NotProbedReasons.NoFfprobe),
+        });
+
+        Assert.DoesNotContain(Прогнать(каталог, Слои("v/a.mp4", "v/b.avi")), f => f.RuleId == "mixed-framerate");
+    }
+
+    [Fact]
+    public void Кадр_видео_правила_о_картинках_не_будит()
+    {
+        // Кадр 1920 при выводе 1024: будь он размером картинки, сработало бы правило о негабаритных картинках.
+        var находки = Прогнать(Видео(("v/a.mp4", 25_000, false)), Слои("v/a.mp4"));
+
+        Assert.DoesNotContain(находки, f => f.RuleId is "oversized-stills" or "zoom-exceeds-pixels");
+    }
+
     [Fact]
     public void Все_правила_этапа_на_месте_и_идентификаторы_не_повторяются()
     {
@@ -412,6 +493,7 @@ public sealed class AcceptanceRulesTests
             "cp1251-paths",
             "foreign-root",
             "audio-longer-than-show",
+            "mixed-framerate",
         };
 
         Assert.Equal(ожидаемые.Order(StringComparer.Ordinal), AcceptanceRules.All.Select(r => r.Id).Order(StringComparer.Ordinal));

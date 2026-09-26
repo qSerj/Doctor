@@ -12,6 +12,11 @@
 # Соль делает псевдонимы одинаковыми между прогонами; без неё второй прогон
 # несравним с первым. Соль в открытых документах не хранится — она в закрытой памяти.
 #
+# Опросчик видео назначается переменной FFPROBE (путь к ffprobe); без неё доктор ищет
+# его рядом с собой и в PATH, а не найдя — оставляет видео неизмеренными с причиной.
+#
+# Идёт и на Linux, и в Git Bash на Windows.
+#
 # Имена переменных латиницей не по вкусу: имена в оболочке обязаны быть ASCII.
 
 set -euo pipefail
@@ -45,9 +50,28 @@ esac
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 bin=$root/src/PsDoctor.Cli/bin/Release/net10.0/psdoctor
 
-if [[ ! -x $bin ]]; then
-    echo "Собираю CLI…" >&2
-    dotnet build "$root/src/PsDoctor.Cli" -c Release -v q --nologo >&2
+# Собирается всегда: сборка инкрементальная, а прогон пачки старым бинарником
+# молча дал бы числа прошлой версии доктора.
+echo "Собираю CLI…" >&2
+dotnet build "$root/src/PsDoctor.Cli" -c Release -v q --nologo >&2
+
+if [[ -f $bin.exe ]]; then
+    bin=$bin.exe
+fi
+
+probe_args=()
+if [[ -n ${FFPROBE:-} ]]; then
+    probe_args=(--ffprobe "$FFPROBE")
+fi
+
+to_windows=
+if [[ $bin == *.exe ]] && command -v cygpath > /dev/null 2>&1; then
+    to_windows=1
+fi
+
+python=python3
+if ! command -v "$python" > /dev/null 2>&1; then
+    python=python
 fi
 
 mkdir -p "$out_dir"
@@ -71,14 +95,20 @@ n=0
 for f in "${files[@]}"; do
     n=$((n + 1))
     rel=${f#"$source_dir"/}
+    # В Git Bash путь для программы Windows переводится явно: сама оболочка
+    # не переводит аргумент с апострофом, и файл объявляется ненайденным.
+    arg=$f
+    if [[ -n $to_windows ]]; then
+        arg=$(cygpath -w -- "$f")
+    fi
     t0=$(date +%s%N)
-    line=$("$bin" "$f" 2>>"$errors") && code=0 || code=$?
+    line=$("$bin" "$arg" "${probe_args[@]}" 2>>"$errors") && code=0 || code=$?
     t1=$(date +%s%N)
     printf '%s\n' "$line" >> "$reports"
     printf '%d\t%d\t%d\t%d\t%s\n' "$n" "$code" "$(( (t1 - t0) / 1000000 ))" "$(stat -c %s -- "$f")" "$rel" >> "$index"
 
     if [[ -n $salt ]]; then
-        "$bin" "$f" --anonymize --anonymize-salt "$salt" >> "$anon" 2>>"$errors" || true
+        "$bin" "$arg" "${probe_args[@]}" --anonymize --anonymize-salt "$salt" >> "$anon" 2>>"$errors" || true
     fi
 done
 finished=$(date +%s)
@@ -88,4 +118,4 @@ printf '{"files":%d,"wallSeconds":%d}\n' "${#files[@]}" "$wall_seconds" > "$out_
 
 echo "Прогон: ${#files[@]} файлов за $wall_seconds с" >&2
 
-python3 "$root/scripts/summarize.py" "$out_dir"
+"$python" "$root/scripts/summarize.py" "$out_dir"

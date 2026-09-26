@@ -80,11 +80,21 @@ public static class Runner
             ? new AliasMasker(options.Salt ?? Guid.NewGuid().ToString("n"))
             : (IValueMasker)PassThroughMasker.Instance;
 
+        // Назначенный и пропавший опросчик — сбой окружения: человек просил именно его.
+        // Не назначенный и не найденный — обычное состояние, о нём одна строка, когда видео встретится.
+        var video = FfprobeVideoReader.Locate(options.Ffprobe);
+        if (options.Ffprobe is not null && video is null)
+        {
+            stderr.WriteLine($"Назначенный ffprobe не найден: {options.Ffprobe}");
+            return ExitCodes.Environment;
+        }
+
+        var state = new RunState(video);
         var worst = ExitCodes.Clean;
 
         foreach (var path in options.Paths)
         {
-            var code = RunOne(path, options, masker, stdout, stderr, now);
+            var code = RunOne(path, options, state, masker, stdout, stderr, now);
             worst = Math.Max(worst, code);
         }
 
@@ -94,6 +104,7 @@ public static class Runner
     private static int RunOne(
         string path,
         Options options,
+        RunState state,
         IValueMasker masker,
         TextWriter stdout,
         TextWriter stderr,
@@ -125,8 +136,16 @@ public static class Runner
             }
 
             var show = Show.From(parse.Document);
-            var catalog = Probe(path, show);
+            var catalog = Probe(path, show, state.Video);
             var inventory = Учёт.Build(show, catalog);
+
+            if (!state.NoFfprobeReported
+                && inventory.Media.Items.Any(i => i.NotProbedReason == NotProbedReasons.NoFfprobe))
+            {
+                stderr.WriteLine("ffprobe не найден ни рядом с доктором, ни в PATH: видео не измеряются. Путь можно назначить ключом --ffprobe.");
+                state.NoFfprobeReported = true;
+            }
+
             var dictionary = FormatDictionary.From(parse.Document);
 
             var context = new RuleContext(RuleSettings.Default, Path.GetDirectoryName(Path.GetFullPath(path)));
@@ -147,7 +166,7 @@ public static class Runner
         }
     }
 
-    private static MediaCatalog Probe(string showFilePath, Show show)
+    private static MediaCatalog Probe(string showFilePath, Show show, FfprobeVideoReader? video)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(showFilePath));
         if (directory is null)
@@ -155,7 +174,7 @@ public static class Runner
             return MediaCatalog.Empty;
         }
 
-        var probe = new FileMediaProbe(directory);
+        var probe = new FileMediaProbe(directory, video);
         return probe.ProbeAll(show.AllLayers.Select(l => l.Image).OfType<MediaReference>());
     }
 
@@ -171,6 +190,7 @@ public static class Runner
         writer.WriteLine("  --pretty               отчёт с отступами, для чтения глазами при отладке");
         writer.WriteLine("  --anonymize            обезличенный срез: пути и имена заменяются псевдонимами");
         writer.WriteLine("  --anonymize-salt <с>   соль псевдонимов, чтобы они совпадали между прогонами");
+        writer.WriteLine("  --ffprobe <путь>       опросчик видео; без ключа ищется рядом с доктором и в PATH");
         writer.WriteLine("  --version              версия доктора");
         writer.WriteLine("  --help                 эта справка");
         writer.WriteLine();
@@ -179,6 +199,14 @@ public static class Runner
         writer.WriteLine("Отчёт машинный и идёт в stdout, по строке на файл. Доктор ничего не лечит и никуда не пишет.");
         writer.WriteLine($"Коды возврата: {ExitCodes.Clean} — разобран, находок нет; {ExitCodes.Findings} — есть находки; "
             + $"{ExitCodes.NotAShowFile} — не файл шоу; {ExitCodes.Environment} — сбой окружения.");
+    }
+
+    /// <summary>Что прогон пачки помнит между файлами.</summary>
+    private sealed class RunState(FfprobeVideoReader? video)
+    {
+        public FfprobeVideoReader? Video { get; } = video;
+
+        public bool NoFfprobeReported { get; set; }
     }
 
     private sealed class Options
@@ -190,6 +218,8 @@ public static class Runner
         public bool Anonymize { get; private set; }
 
         public string? Salt { get; private set; }
+
+        public string? Ffprobe { get; private set; }
 
         public bool WantsHelp { get; private set; }
 
@@ -219,6 +249,15 @@ public static class Runner
 
                         options.Salt = args[i];
                         options.Anonymize = true;
+                        break;
+
+                    case "--ffprobe":
+                        if (++i >= args.Length)
+                        {
+                            throw new ArgumentException("У ключа --ffprobe не указан путь.");
+                        }
+
+                        options.Ffprobe = args[i];
                         break;
 
                     case "--help" or "-h" or "-?":

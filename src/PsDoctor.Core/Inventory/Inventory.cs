@@ -47,6 +47,10 @@ public sealed record KeyframeCounts(
 }
 
 /// <summary>Один медиафайл: то, что о нём сказал файл шоу, и то, что сказал он сам.</summary>
+/// <remarks>
+/// Ширина и высота — только у картинок. Кадр видео лежит в <see cref="Video"/>: иначе правила
+/// о негабаритных картинках и сумма распакованных пикселей начали бы считать и видео.
+/// </remarks>
 public sealed record MediaLine(
     MediaReference Reference,
     string Extension,
@@ -59,7 +63,13 @@ public sealed record MediaLine(
     long? FileBytes,
     long? UnpackedBytes,
     int ReferenceCount,
-    IReadOnlyList<ObjectAddress> Addresses);
+    IReadOnlyList<ObjectAddress> Addresses,
+    VideoParameters? Video = null,
+    string? NotProbedReason = null)
+{
+    /// <summary>Кодек в списке тяжёлых. Список пуст до опытов Э3.1, так что пока всегда ложь.</summary>
+    public bool? HeavyCodec => Video is null ? null : HeavyVideoCodecs.Contains(Video.Codec);
+}
 
 public sealed record MediaCounts(
     int UniqueCount,
@@ -73,7 +83,11 @@ public sealed record MediaCounts(
     int NotProbedCount,
     long UnpackedBytes,
     long UnpackedBytesCapped,
-    IReadOnlyList<MediaLine> Items);
+    IReadOnlyList<MediaLine> Items)
+{
+    /// <summary>Видео, у которых параметры сняты.</summary>
+    public int VideoMeasuredCount => Items.Count(i => i.Video is not null);
+}
 
 public sealed record AudioLine(int Ordinal, MediaReference? File, int? LengthMs, int? StartTimeMs, int? EndTimeMs);
 
@@ -278,7 +292,9 @@ public sealed class Inventory
                 probe.FileBytes,
                 itemUnpacked,
                 list.Count,
-                list));
+                list,
+                probe.Video,
+                probe.NotProbedReason));
         }
 
         return new MediaCounts(

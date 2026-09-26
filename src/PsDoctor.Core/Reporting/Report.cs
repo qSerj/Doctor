@@ -35,7 +35,8 @@ public sealed record Report(
     /// Версия схемы. Меняется, когда меняется смысл или состав полей, — иначе сравнение
     /// прогонов между версиями доктора однажды соврёт молча.
     /// </summary>
-    public const int CurrentSchemaVersion = 1;
+    /// <remarks>2 — Э1.1: параметры видео у файла, причина неопроса, число измеренных видео.</remarks>
+    public const int CurrentSchemaVersion = 2;
 
     /// <summary>Что значат суффиксы имён. Названо один раз, а не при каждом числе.</summary>
     public static readonly IReadOnlyDictionary<string, string> UnitNames = new Dictionary<string, string>
@@ -45,6 +46,7 @@ public sealed record Report(
         ["Bytes"] = "байты",
         ["Bp"] = "базисные пункты: 10000 — сто процентов",
         ["MilliFps"] = "тысячные кадра в секунду: 29970 — это 29.97",
+        ["BitsPerSecond"] = "биты в секунду",
         ["Count"] = "штуки",
     };
 }
@@ -149,6 +151,7 @@ public sealed record ReportMedia(
     long UnpackedBytesCappedTo1920x1080,
     long? VideoUnpackedBytes,
     string VideoProbeStatus,
+    int VideoMeasuredCount,
     IReadOnlyList<ReportMediaItem> Items);
 
 public sealed record ReportMediaItem(
@@ -163,7 +166,23 @@ public sealed record ReportMediaItem(
     long? FileBytes,
     long? UnpackedBytes,
     int ReferenceCount,
-    IReadOnlyList<ReportAddress> Addresses);
+    IReadOnlyList<ReportAddress> Addresses,
+    string? NotProbedReason,
+    ReportVideo? Video);
+
+/// <summary>Параметры видео. Размер кадра здесь, а не в полях картинки у файла.</summary>
+public sealed record ReportVideo(
+    string? Codec,
+    string? Profile,
+    string? Container,
+    int? WidthPx,
+    int? HeightPx,
+    int? FrameRateMilliFps,
+    int? AverageFrameRateMilliFps,
+    bool? VariableFrameRate,
+    int? DurationMs,
+    long? BitRateBitsPerSecond,
+    bool HeavyCodec);
 
 public sealed record ReportAddress(
     string StableKey,

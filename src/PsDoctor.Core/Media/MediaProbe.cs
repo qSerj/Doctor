@@ -36,10 +36,10 @@ public readonly record struct PixelSize(int WidthPx, int HeightPx)
 /// </summary>
 public enum MediaProbeStatus
 {
-    /// <summary>Не опрашивали. Для видео это честный ответ, а не «неизвестно».</summary>
+    /// <summary>Не опрашивали. Для видео это честный ответ, а не «неизвестно»; причина — рядом.</summary>
     NotProbed,
 
-    /// <summary>Размер снят.</summary>
+    /// <summary>Размер картинки или параметры видео сняты.</summary>
     Ok,
 
     /// <summary>Файла по ссылке нет.</summary>
@@ -55,6 +55,61 @@ public enum MediaProbeStatus
     Unreadable,
 }
 
+/// <summary>
+/// Параметры видео, снятые внешним опросом. Размер кадра здесь, а не в <see cref="MediaProbe.Size"/>:
+/// правила о картинках и сумма распакованных пикселей считаются по неподвижным кадрам, и видео
+/// в них попадать не должно.
+/// </summary>
+/// <param name="Codec">Кодек, как его называет опрос: <c>h264</c>, <c>mpeg4</c>, <c>mjpeg</c>.</param>
+/// <param name="Profile">Профиль кодека, если он есть.</param>
+/// <param name="Container">Контейнер, как его называет опрос; бывает списком через запятую.</param>
+/// <param name="FrameRateMilliFps">Заявленная частота кадров потока. По ней сравниваются видео проекта.</param>
+/// <param name="AverageFrameRateMilliFps">Средняя частота: число кадров, делённое на длительность.</param>
+/// <param name="VariableFrameRate">
+/// Признак переменной частоты: средняя расходится с заявленной больше чем на процент.
+/// Это оценка по двум числам, а не разбор меток времени каждого кадра.
+/// </param>
+/// <param name="DurationMs">Длительность потока, а без неё — контейнера.</param>
+/// <param name="BitRateBitsPerSecond">Битрейт потока, а без него — контейнера.</param>
+public sealed record VideoParameters(
+    string? Codec,
+    string? Profile,
+    string? Container,
+    int? WidthPx,
+    int? HeightPx,
+    int? FrameRateMilliFps,
+    int? AverageFrameRateMilliFps,
+    bool? VariableFrameRate,
+    int? DurationMs,
+    long? BitRateBitsPerSecond);
+
+/// <summary>Почему видео не опрошено. Строки устойчивы: по ним считается сводка пачки.</summary>
+public static class NotProbedReasons
+{
+    /// <summary>Опросчика нет: ffprobe не найден и не назначен.</summary>
+    public const string NoFfprobe = "noFfprobe";
+
+    /// <summary>Опросчик запустился и ответил ошибкой или ответом, который не разобрать.</summary>
+    public const string FfprobeFailed = "ffprobeFailed";
+
+    /// <summary>Опросчик не уложился в отведённое время и снят.</summary>
+    public const string FfprobeTimeout = "ffprobeTimeout";
+
+    /// <summary>Контейнер видео, а видеопотока в нём нет: звук или одна обложка.</summary>
+    public const string NoVideoStream = "noVideoStream";
+}
+
+/// <summary>
+/// Кодеки, которые программа ест тяжело. Список — данные, и он пуст: какой кодек тяжёлый,
+/// решают опыты Э3.1, а не догадка. Пока он пуст, признак в отчёте всегда ложен.
+/// </summary>
+public static class HeavyVideoCodecs
+{
+    public static IReadOnlySet<string> Names { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public static bool Contains(string? codec) => codec is not null && Names.Contains(codec);
+}
+
 /// <summary>Итог опроса одного медиафайла.</summary>
 /// <param name="Status">Чем кончилось.</param>
 /// <param name="Size">Размер, если он снят.</param>
@@ -62,13 +117,17 @@ public enum MediaProbeStatus
 /// <param name="FormatId">Формат по сигнатуре, а не по расширению.</param>
 /// <param name="ExtensionMatchesFormat">Совпало ли расширение с настоящим форматом. Расширение врёт регулярно.</param>
 /// <param name="ResolvedBy">Как нашли файл: по ссылке как есть или перебором без учёта регистра.</param>
+/// <param name="Video">Параметры видео, если оно измерено.</param>
+/// <param name="NotProbedReason">Почему видео не опрошено; одна из <see cref="NotProbedReasons"/>.</param>
 public sealed record MediaProbe(
     MediaProbeStatus Status,
     PixelSize? Size = null,
     long? FileBytes = null,
     string? FormatId = null,
     bool? ExtensionMatchesFormat = null,
-    string? ResolvedBy = null)
+    string? ResolvedBy = null,
+    VideoParameters? Video = null,
+    string? NotProbedReason = null)
 {
     public static readonly MediaProbe NotProbed = new(MediaProbeStatus.NotProbed);
 
