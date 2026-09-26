@@ -2,21 +2,259 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="PsDoctor.App.App"
              RequestedThemeVariant="Light">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://PsDoctor.App/Assets/Icons.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <!--
+    Набор стилей Doctor. Цвета тонов: ok — зелёный, warn — жёлтый, error — красный, watch и info — синий, idle — серый.
+    Правило окна: синей (primary) бывает одна кнопка — следующий шаг.
+  -->
   <Application.Styles>
     <FluentTheme />
 
-    <Style Selector="Button">
-      <Setter Property="Padding" Value="12,8" />
-      <Setter Property="MinHeight" Value="36" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="CornerRadius" Value="6" />
+    <Style Selector="Window">
+      <Setter Property="Background" Value="#F4F6FA" />
+      <Setter Property="Foreground" Value="#1B2430" />
     </Style>
     <Style Selector="TextBlock">
       <Setter Property="FontSize" Value="14" />
     </Style>
     <Style Selector="TextBlock.caption">
-      <Setter Property="Foreground" Value="#596579" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="#5B6778" />
+      <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="TextBlock.heading">
+      <Setter Property="FontSize" Value="19" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.heading.ok">
+      <Setter Property="Foreground" Value="#1E8E3E" />
+    </Style>
+    <Style Selector="TextBlock.heading.warn">
+      <Setter Property="Foreground" Value="#9A5B00" />
+    </Style>
+    <Style Selector="TextBlock.heading.error">
+      <Setter Property="Foreground" Value="#C42B1C" />
+    </Style>
+    <Style Selector="TextBlock.heading.watch">
+      <Setter Property="Foreground" Value="#0F6CBD" />
+    </Style>
+    <Style Selector="TextBlock.body">
+      <Setter Property="Foreground" Value="#3B4655" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="LineHeight" Value="20" />
+    </Style>
+
+    <!-- Белая карточка. -->
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#E1E6EE" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="14" />
+    </Style>
+
+    <!-- Круглый значок состояния. -->
+    <Style Selector="Border.badge">
+      <Setter Property="Width" Value="52" />
+      <Setter Property="Height" Value="52" />
+      <Setter Property="CornerRadius" Value="26" />
+      <Setter Property="Background" Value="#EEF1F5" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Border.badge PathIcon">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Foreground" Value="#6B7785" />
+    </Style>
+    <Style Selector="Border.badge.ok">
+      <Setter Property="Background" Value="#E3F4E8" />
+    </Style>
+    <Style Selector="Border.badge.ok PathIcon">
+      <Setter Property="Foreground" Value="#1E8E3E" />
+    </Style>
+    <Style Selector="Border.badge.warn">
+      <Setter Property="Background" Value="#FFF1CC" />
+    </Style>
+    <Style Selector="Border.badge.warn PathIcon">
+      <Setter Property="Foreground" Value="#E09A00" />
+    </Style>
+    <Style Selector="Border.badge.error">
+      <Setter Property="Background" Value="#FDE7E9" />
+    </Style>
+    <Style Selector="Border.badge.error PathIcon">
+      <Setter Property="Foreground" Value="#C42B1C" />
+    </Style>
+    <Style Selector="Border.badge.watch, Border.badge.info">
+      <Setter Property="Background" Value="#E5F0FB" />
+    </Style>
+    <Style Selector="Border.badge.watch PathIcon, Border.badge.info PathIcon">
+      <Setter Property="Foreground" Value="#0F6CBD" />
+    </Style>
+
+    <!-- Квадратный значок в карточке действия. -->
+    <Style Selector="Border.tile">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Background" Value="#E5F0FB" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.tile PathIcon">
+      <Setter Property="Width" Value="22" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="Foreground" Value="#0F6CBD" />
+    </Style>
+    <Style Selector="Border.tile.warn">
+      <Setter Property="Background" Value="#FFF1CC" />
+    </Style>
+    <Style Selector="Border.tile.warn PathIcon">
+      <Setter Property="Foreground" Value="#B26A00" />
+    </Style>
+
+    <!-- Плашка совета или результата. -->
+    <Style Selector="Border.banner">
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Background" Value="#E9F2FC" />
+      <Setter Property="BorderBrush" Value="#CFE2F7" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.banner PathIcon">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Foreground" Value="#0F6CBD" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Border.banner.ok">
+      <Setter Property="Background" Value="#E8F5EC" />
+      <Setter Property="BorderBrush" Value="#C4E6CF" />
+    </Style>
+    <Style Selector="Border.banner.ok PathIcon">
+      <Setter Property="Foreground" Value="#1E8E3E" />
+    </Style>
+    <Style Selector="Border.banner.warn">
+      <Setter Property="Background" Value="#FFF6DB" />
+      <Setter Property="BorderBrush" Value="#F5DB94" />
+    </Style>
+    <Style Selector="Border.banner.warn PathIcon">
+      <Setter Property="Foreground" Value="#D08C00" />
+    </Style>
+    <Style Selector="Border.banner.error">
+      <Setter Property="Background" Value="#FDECEE" />
+      <Setter Property="BorderBrush" Value="#F4C3C8" />
+    </Style>
+    <Style Selector="Border.banner.error PathIcon">
+      <Setter Property="Foreground" Value="#C42B1C" />
+    </Style>
+
+    <!-- Кнопки. -->
+    <Style Selector="Button">
+      <Setter Property="Padding" Value="16,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- Карточка действия: значок, заголовок, пояснение. -->
+    <Style Selector="Button.action">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#E1E6EE" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#F2F7FD" />
+      <Setter Property="BorderBrush" Value="#A9CBEF" />
+    </Style>
+    <Style Selector="Button.action:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#E5F0FB" />
+    </Style>
+    <Style Selector="Button.action TextBlock.actionTitle">
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.action PathIcon.chevron">
+      <Setter Property="Width" Value="16" />
+      <Setter Property="Height" Value="16" />
+      <Setter Property="Foreground" Value="#9AA6B5" />
+    </Style>
+
+    <!-- Главная кнопка — следующий шаг. Годится и для карточки действия, и для кнопки диалога. -->
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#0F6CBD" />
+      <Setter Property="BorderBrush" Value="#0F6CBD" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#115EA3" />
+      <Setter Property="BorderBrush" Value="#115EA3" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#0F548C" />
+      <Setter Property="BorderBrush" Value="#0F548C" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.primary TextBlock.caption">
+      <Setter Property="Foreground" Value="#DCEBFA" />
+    </Style>
+    <Style Selector="Button.primary Border.tile">
+      <Setter Property="Background" Value="#2A80CC" />
+    </Style>
+    <Style Selector="Button.primary Border.tile PathIcon, Button.primary PathIcon.chevron">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <!-- Выбор в мастере: крупные карточки вместо строк списка. -->
+    <Style Selector="ListBox.choices">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="ListBox.choices ListBoxItem">
+      <Setter Property="Margin" Value="0,0,0,8" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#E1E6EE" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="ListBox.choices ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#F2F7FD" />
+      <Setter Property="BorderBrush" Value="#A9CBEF" />
+    </Style>
+    <Style Selector="ListBox.choices ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#E5F0FB" />
+      <Setter Property="BorderBrush" Value="#0F6CBD" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+
+    <!-- Строка состояния внизу окна. -->
+    <Style Selector="Ellipse.dot">
+      <Setter Property="Width" Value="9" />
+      <Setter Property="Height" Value="9" />
+      <Setter Property="Fill" Value="#A3ADBA" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Ellipse.dot.on">
+      <Setter Property="Fill" Value="#2DA44E" />
+    </Style>
+    <Style Selector="Ellipse.dot.watch">
+      <Setter Property="Fill" Value="#0F6CBD" />
     </Style>
   </Application.Styles>
 </Application>
