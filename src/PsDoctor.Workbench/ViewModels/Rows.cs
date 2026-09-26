@@ -30,6 +30,100 @@ public sealed class FactRow
     public int? ProcessId { get; }
 
     public string Data { get; }
+
+    /// <summary>Данные целиком, с отступами — для панели выбранного факта; строке ленты хватает одной строки.</summary>
+    public string Details
+    {
+        get
+        {
+            if (Data.Length == 0) return "";
+            using var document = JsonDocument.Parse(Data);
+            return JsonSerializer.Serialize(document.RootElement, IndentedJson);
+        }
+    }
+
+    /// <summary>Веха — факт о ходе опыта, а не отсчёт телеметрии: её видно во вкладке «Журнал» по умолчанию.</summary>
+    public bool IsMilestone => Milestones.Contains(Kind);
+
+    /// <summary>
+    /// Сценарий, оператор, диалоги, главное окно, программа и сеанс. Процессы, отсчёты и файловый ввод-вывод сюда не
+    /// входят: за рендер их тысячи, и в ленте из вех они вытеснили бы то, ради чего её смотрят.
+    /// </summary>
+    public static IReadOnlySet<string> Milestones { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        ProgramFactKinds.SessionStarted,
+        ProgramFactKinds.SessionFinished,
+        ProgramFactKinds.ProgramLaunched,
+        ProgramFactKinds.ProgramAttached,
+        ProgramFactKinds.LaunchFailed,
+        ProgramFactKinds.EtwState,
+        ProgramFactKinds.MainWindow,
+        ProgramFactKinds.DialogOpened,
+        ProgramFactKinds.DialogClosed,
+        ProgramFactKinds.DialogPressed,
+        ProgramFactKinds.CloseRequested,
+        ProgramFactKinds.RenderRequested,
+        ProgramFactKinds.RenderArtifacts,
+        ProgramFactKinds.Episode,
+        ScenarioFactKinds.ScenarioStarted,
+        ScenarioFactKinds.StepStarted,
+        ScenarioFactKinds.StepDone,
+        ScenarioFactKinds.StepFailed,
+        ScenarioFactKinds.UnexpectedDialog,
+        ScenarioFactKinds.OperatorInstruction,
+        ScenarioFactKinds.OperatorConfirmed,
+        ScenarioFactKinds.ScenarioFinished,
+    };
+
+    private static readonly JsonSerializerOptions IndentedJson = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+}
+
+/// <summary>Цвет лампы: смысл, а не оттенок — оттенок назначает окно.</summary>
+public enum LampTone
+{
+    /// <summary>Выключено: не запущено, не идёт, ничего не ждём.</summary>
+    Off,
+
+    /// <summary>Работает как надо: на связи, под наблюдением, прогон идёт.</summary>
+    On,
+
+    /// <summary>Требует внимания человека: ждём «Сделано», открыт диалог, ProShow мимо наблюдателя, прогон сорвался.</summary>
+    Attention,
+
+    /// <summary>Беда: нет связи с наблюдателем.</summary>
+    Alarm,
+}
+
+/// <summary>Лампа в полосе состояния: подпись, что горит словами, и цвет.</summary>
+public sealed record Lamp(string Label, string Text, LampTone Tone)
+{
+    // Окну нужны признаки, а не перечисление: стиль вешается на класс по булеву признаку без конвертера.
+    public bool IsOn => Tone == LampTone.On;
+
+    public bool IsAttention => Tone == LampTone.Attention;
+
+    public bool IsAlarm => Tone == LampTone.Alarm;
+}
+
+/// <summary>Главная кнопка панели «Сейчас»: одно действие, которого обстановка ждёт первым.</summary>
+public enum PrimaryAction
+{
+    /// <summary>Делать нечего: опыт не выбран.</summary>
+    None,
+
+    Connect,
+
+    Confirm,
+
+    Cancel,
+
+    Export,
+
+    Run,
 }
 
 /// <summary>Состояние шага сценария в пульте: его назначают факты исполнителя, а не пульт.</summary>

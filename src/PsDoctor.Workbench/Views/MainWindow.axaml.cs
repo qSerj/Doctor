@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -12,28 +13,28 @@ namespace PsDoctor.Workbench.Views;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    private readonly WorkbenchViewModel model = new();
+    private readonly WorkbenchViewModel model = new(settingsPath: WorkbenchSettings.DefaultPath);
 
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
         DataContext = model;
-        // Адрес и ключ уже заданы переменными окружения — подключаемся сами: пульт открывают, чтобы
-        // смотреть на стенд, а не чтобы каждый раз нажимать одну и ту же кнопку.
+        // Пути уже заданы — подключаемся сами: пульт открывают, чтобы смотреть на стенд, а не чтобы каждый раз
+        // нажимать одну и ту же кнопку. Не заданы — настройки открыты сразу, чтобы было ясно, куда их вписать.
         Opened += async (_, _) =>
         {
-            if (model.Address.Length > 0 && model.KeyFile.Length > 0)
+            if (model.Address.Length == 0 || model.KeyFile.Length == 0)
             {
-                await model.ConnectAsync();
+                this.FindControl<ToggleButton>("КнопкаНастроек")!.IsChecked = true;
             }
+            await model.StartAsync();
         };
+        Closed += (_, _) => model.Dispose();
     }
 
+    private async void Главное(object? sender, RoutedEventArgs e) => await model.ExecutePrimaryAsync();
+
     private async void Подключиться(object? sender, RoutedEventArgs e) => await model.ConnectAsync();
-
-    private async void Выполнить(object? sender, RoutedEventArgs e) => await model.RunAsync();
-
-    private async void Отменить(object? sender, RoutedEventArgs e) => await model.CancelAsync();
 
     private async void Прекратить(object? sender, RoutedEventArgs e) => await model.StopAsync();
 
@@ -62,23 +63,16 @@ public sealed partial class MainWindow : Window
 
     private async void ПодключитьсяКПрограмме(object? sender, RoutedEventArgs e) => await model.AttachAsync();
 
-    private async void Сделано(object? sender, RoutedEventArgs e) => await model.ConfirmAsync();
-
     private async void ОпытВыбран(object? sender, SelectionChangedEventArgs e)
     {
-        if (sender is ComboBox { SelectedItem: ExperimentRow experiment })
+        // Выбор, поставленный самой моделью, сценарий не перечитывает: в поле может быть правка владельца.
+        if (sender is ComboBox { SelectedItem: ExperimentRow experiment } && experiment != model.SelectedExperiment)
         {
             await model.OpenExperimentAsync(experiment);
         }
     }
 
     private void ОбновитьОпыты(object? sender, RoutedEventArgs e) => model.LoadExperiments();
-
-    private async void ОбновитьСеансы(object? sender, RoutedEventArgs e) => await model.RefreshSessionsAsync();
-
-    private async void ОбновитьДиалоги(object? sender, RoutedEventArgs e) => await model.RefreshDialogsAsync();
-
-    private async void ПрименитьФильтр(object? sender, RoutedEventArgs e) => await model.SelectAsync(model.SelectedSession);
 
     private async void СеансВыбран(object? sender, SelectionChangedEventArgs e)
     {

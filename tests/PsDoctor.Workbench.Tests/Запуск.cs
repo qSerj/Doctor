@@ -106,6 +106,15 @@ internal sealed class Запуск : IProgramLauncher
         public Task<ActionResult> RenderAsync(CancellationToken cancellationToken) =>
             Task.FromResult(ActionResult.Failed(WindowActionFailures.NoWindow));
 
+        /// <summary>Отсчёты процесса, как за рендер: телеметрия, которой вехи не должны уступать место в ленте.</summary>
+        public void Отсчёты(int сколько)
+        {
+            for (var i = 0; i < сколько; i++)
+            {
+                факты.Record(ProgramFactKinds.ProcessSample, new ProcessSample(i, 0, 0, 1000 + i, 1000 + i, 2000, 2000, 500, 10), ProcessId);
+            }
+        }
+
         public void Выйти()
         {
             if (!Жив)

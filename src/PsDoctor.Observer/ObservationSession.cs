@@ -86,7 +86,13 @@ public sealed class ObservationSession : IProgramEvents
             new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var session = new ObservationSession(id, path, writer, onFinished, showPath);
-        session.Log.Record(ProgramFactKinds.SessionStarted, new { startedAt = DateTimeOffset.Now, observer = build, origin });
+        session.Log.Record(ProgramFactKinds.SessionStarted, new
+        {
+            startedAt = DateTimeOffset.Now,
+            // Только сборка: состояние из /health в журнал не идёт, у факта прежний вид.
+            observer = new { version = build.Version, commit = build.Commit },
+            origin,
+        });
         return session;
     }
 
@@ -386,6 +392,9 @@ public sealed class ObservationSession : IProgramEvents
             }
         }
     }
+
+    /// <summary>Процесс программы, пока сеанс её наблюдает; до запуска и после закрытия — <c>null</c>.</summary>
+    public int? ProcessId => Program()?.ProcessId;
 
     private IProgramRun? Program()
     {

@@ -52,7 +52,7 @@ public static class ObserverHost
         // Остановка наблюдателя закрывает сеанс, но не программу.
         app.Lifetime.ApplicationStopped.Register(() => service.DisposeAsync().AsTask().GetAwaiter().GetResult());
 
-        app.MapGet(ObserverRoutes.Health, () => Results.Json(health, ObservationJson.Options));
+        app.MapGet(ObserverRoutes.Health, () => Results.Json(health with { Activity = service.Activity() }, ObservationJson.Options));
 
         app.MapPost(ObserverRoutes.Scenarios, async (HttpContext context) =>
         {

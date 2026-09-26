@@ -154,6 +154,26 @@ public sealed class ObservationService : IAsyncDisposable
             }
         }
     }
+    /// <summary>Что наблюдатель делает сейчас — для <c>/health</c>. Дёшево: без журнала, один перечень процессов.</summary>
+    /// <remarks>
+    /// Без замка <c>gate</c> нарочно: под ним запускается ETW и идёт подключение, это секунды, а <c>/health</c> спрашивает
+    /// сторож — ждущий ответ он счёл бы зависанием. Ссылки читаются целиком; состояние на миг старше — не беда для лампы.
+    /// </remarks>
+    public ObserverActivity Activity()
+    {
+        var session = Volatile.Read(ref current);
+        var live = session is { Log.IsCompleted: false } ? session : null;
+        var running = Volatile.Read(ref scenario) is not null;
+        if (live is not null)
+        {
+            return new ObserverActivity(live.IsPassive ? ProgramStates.Attached : ProgramStates.Launched,
+                live.ProcessId, live.Id, running);
+        }
+        // Та же проверка, что отказывает launch с program-running: лампа и отказ не разойдутся.
+        return new ObserverActivity(launcher.IsProgramRunning() ? ProgramStates.Unobserved : ProgramStates.None,
+            null, null, running);
+    }
+
     /// <summary>Отменяет выполняемый сценарий. Сеанс — <c>null</c>, если отменять нечего.</summary>
     public string? Cancel()
     {

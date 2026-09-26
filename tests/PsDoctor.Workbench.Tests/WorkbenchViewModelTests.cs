@@ -169,18 +169,139 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
-    public void Фильтр_по_виду_оставляет_в_ленте_только_его() => ОдинПоток.Выполнить(async () =>
+    public void Вехи_не_вытесняются_телеметрией() => ОдинПоток.Выполнить(async () =>
     {
         using var пульт = await ПодключённыйAsync();
         пульт.ScenarioText = $"launch {Проект}";
         await пульт.RunAsync();
         await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
 
-        пульт.KindFilter = ProgramFactKinds.DialogOpened;
-        await пульт.SelectAsync(пульт.SelectedSession);
-        await ОдинПоток.ЖдатьAsync(() => пульт.Facts.Count > 0, "фактов после фильтра");
+        запуск.Последний!.Отсчёты(WorkbenchViewModel.TapeLimit + 100);
+        await ОдинПоток.ЖдатьAsync(
+            () => пульт.Facts.Count == WorkbenchViewModel.TapeLimit && пульт.Facts[^1].Data.Contains("3099", StringComparison.Ordinal),
+            "последнего отсчёта");
 
-        Assert.All(пульт.Facts, факт => Assert.Equal(ProgramFactKinds.DialogOpened, факт.Kind));
+        // Весь поток держит только последние отсчёты, начало сеанса из него ушло; вехи его хранят.
+        Assert.DoesNotContain(пульт.Facts, факт => факт.Kind == ProgramFactKinds.SessionStarted);
+        Assert.Equal(ProgramFactKinds.SessionStarted, пульт.Milestones[0].Kind);
+        Assert.Contains(пульт.Milestones, факт => факт.Kind == ProgramFactKinds.DialogOpened);
+        Assert.DoesNotContain(пульт.Milestones, факт => факт.Kind == ProgramFactKinds.ProcessSample);
+        Assert.Same(пульт.Milestones, пульт.Tape);
+        пульт.ShowAllFacts = true;
+        Assert.Same(пульт.Facts, пульт.Tape);
+    });
+
+    [Fact]
+    public void Лампы_идут_за_программой_прогоном_и_оператором() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync(частоОпрашивать: true);
+        Assert.Equal(new Lamp("ProShow", "не запущен", LampTone.Off), пульт.ProgramLamp);
+        Assert.Equal(new Lamp("Прогон", "нет", LampTone.Off), пульт.RunLamp);
+        Assert.Equal(LampTone.On, пульт.LinkLamp.Tone);
+
+        пульт.ScenarioText = $"launch {Проект}\nwait dialog 10\npress \"Ok\"\nwait confirm 20";
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.AwaitingConfirm, "ожидания подтверждения");
+        await ОдинПоток.ЖдатьAsync(() => пульт.ProgramLamp.IsOn, "лампы программы");
+
+        Assert.Equal("под наблюдением · запуск · pid 1000", пульт.ProgramLamp.Text);
+        Assert.Equal(new Lamp("Прогон", "идёт · шаг 4 из 4", LampTone.On), пульт.RunLamp);
+        Assert.Equal(new Lamp("Оператор", "ждём «Сделано»", LampTone.Attention), пульт.OperatorLamp);
+        Assert.Equal(PrimaryAction.Confirm, пульт.Primary);
+        Assert.Equal("wait confirm 20", пульт.CurrentStep);
+
+        await пульт.ExecutePrimaryAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+        Assert.Equal(new Lamp("Прогон", "кончился · completed", LampTone.Off), пульт.RunLamp);
+        Assert.Equal(new Lamp("Оператор", "ничего не ждём", LampTone.Off), пульт.OperatorLamp);
+        Assert.Equal(PrimaryAction.Run, пульт.Primary);
+
+        запуск.Последний!.Выйти();
+        await ОдинПоток.ЖдатьAsync(() => пульт.ProgramLamp.Text == "не запущен", "выхода программы на лампе");
+    });
+
+    [Fact]
+    public void Открытый_диалог_зажигает_лампу_оператора() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync();
+        пульт.ScenarioText = $"launch {Проект}";
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.Dialogs.Count == 1, "диалога в пульте");
+
+        Assert.Equal(new Lamp("Оператор", "открыт диалог «ProShow Producer»", LampTone.Attention), пульт.OperatorLamp);
+    });
+
+    [Fact]
+    public void Связь_гаснет_без_наблюдателя_и_возвращается_сама() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync(частоОпрашивать: true);
+
+        var порт = await ОстановитьНаблюдательAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.Connected, "потери связи");
+        Assert.Equal(LampTone.Alarm, пульт.LinkLamp.Tone);
+        Assert.Equal(new Lamp("ProShow", "неизвестно", LampTone.Off), пульт.ProgramLamp);
+        Assert.Equal(PrimaryAction.Connect, пульт.Primary);
+
+        await ПоднятьНаблюдательAsync(порт);
+        await ОдинПоток.ЖдатьAsync(() => пульт.Connected, "возвращения связи");
+        Assert.Equal(LampTone.On, пульт.LinkLamp.Tone);
+    });
+
+    [Fact]
+    public void Поток_фактов_переживает_больше_пяти_обрывов() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync(частоОпрашивать: true);
+        пульт.ScenarioText = $"launch {Проект}";
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+
+        // Наблюдатель лежит секунду — при паузе 50 мс это два десятка неудачных переподключений.
+        var порт = await ОстановитьНаблюдательAsync();
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ПоднятьНаблюдательAsync(порт);
+
+        // Остановка закрыла сеанс; его конец пульт дочитывает из журнала, продолжив с номера.
+        await ОдинПоток.ЖдатьAsync(() => пульт.Facts.Any(факт => факт.Kind == ProgramFactKinds.SessionFinished), "конца сеанса");
+        Assert.Contains(SessionEndReasons.ObserverShutdown, пульт.Facts[^1].Data, StringComparison.Ordinal);
+        Assert.Equal(Enumerable.Range(1, пульт.Facts.Count).Select(n => (long)n), пульт.Facts.Select(факт => факт.Number));
+    });
+
+    [Fact]
+    public void Сохранённые_настройки_подставляются_и_пульт_подключается_сам() => ОдинПоток.Выполнить(async () =>
+    {
+        var настройки = Path.Combine(каталог, "workbench.json");
+        new WorkbenchSettings(наблюдатель.Urls.Single(), файлКлюча, @"C:\обмен", Проект, [Проект]).Save(настройки);
+        using (var пульт = new WorkbenchViewModel(environment: _ => null, settingsPath: настройки))
+        {
+            Assert.Equal(Проект, пульт.ShowPath);
+            Assert.Equal(@"C:\обмен", пульт.ExchangeDirectory);
+
+            await пульт.StartAsync();
+
+            Assert.True(пульт.Connected, пульт.Status);
+            пульт.ShowPath = @"C:\lab\p2\2.psh";
+            await пульт.LaunchAsync();
+            await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+        }
+
+        var сохранено = WorkbenchSettings.Load(настройки);
+        Assert.Equal(наблюдатель.Urls.Single(), сохранено.Address);
+        Assert.Equal(файлКлюча, сохранено.KeyFile);
+        Assert.Equal(@"C:\lab\p2\2.psh", сохранено.ShowPath);
+        Assert.Equal([@"C:\lab\p2\2.psh", Проект], сохранено.RecentShows);
+    });
+
+    [Fact]
+    public void Файл_настроек_прежнего_пульта_читается() => ОдинПоток.Выполнить(async () =>
+    {
+        var настройки = Path.Combine(каталог, "old.json");
+        await File.WriteAllTextAsync(настройки, "{\"ExchangeDirectory\":\"C:\\\\обмен\"}");
+
+        using var пульт = new WorkbenchViewModel(environment: _ => null, settingsPath: настройки);
+
+        Assert.Equal(@"C:\обмен", пульт.ExchangeDirectory);
+        Assert.Equal("", пульт.Address);
+        Assert.Equal(new Lamp("Связь", "адрес не задан", LampTone.Off), пульт.LinkLamp);
     });
 
     [Fact]
@@ -266,9 +387,27 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
         return Task.CompletedTask;
     });
 
-    private async Task<WorkbenchViewModel> ПодключённыйAsync()
+    /// <summary>Останавливает наблюдатель и отдаёт его порт — поднять снова на том же адресе.</summary>
+    private async Task<int> ОстановитьНаблюдательAsync()
     {
-        var пульт = new WorkbenchViewModel(environment: _ => null)
+        var порт = new Uri(наблюдатель.Urls.Single()).Port;
+        await наблюдатель.StopAsync();
+        await наблюдатель.DisposeAsync();
+        return порт;
+    }
+
+    private async Task ПоднятьНаблюдательAsync(int порт)
+    {
+        наблюдатель = ObserverHost.Build(new ObserverOptions(IPAddress.Loopback, порт, Ключ, Path.Combine(каталог, "sessions")), запуск);
+        await наблюдатель.StartAsync();
+    }
+
+    /// <param name="частоОпрашивать">Опрос и переподключение потока — десятки миллисекунд вместо секунд.</param>
+    private async Task<WorkbenchViewModel> ПодключённыйAsync(bool частоОпрашивать = false)
+    {
+        var пульт = new WorkbenchViewModel(environment: _ => null,
+            pollInterval: частоОпрашивать ? TimeSpan.FromMilliseconds(100) : null,
+            streamRetryPause: частоОпрашивать ? TimeSpan.FromMilliseconds(50) : null)
         {
             Address = наблюдатель.Urls.Single(),
             KeyFile = файлКлюча,

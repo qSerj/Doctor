@@ -618,6 +618,47 @@ public sealed class ObservationApiTests : IAsyncLifetime
         }
     }
 
+    private async Task<ObserverActivity> Состояние() => (await _клиент.HealthAsync()).Activity!;
+
+    [Fact]
+    public async Task Health_называет_программу_сеанс_и_сценарий_запуска()
+    {
+        Assert.Equal(new ObserverActivity(ProgramStates.None, null, null, false), await Состояние());
+        _запуск.Foreign = true;
+        Assert.Equal(new ObserverActivity(ProgramStates.Unobserved, null, null, false), await Состояние());
+        _запуск.Foreign = false;
+
+        var принят = await _клиент.RunAsync("launch \"C:\\p\\1.psh\"\nwait confirm 30");
+        await Ждать(async () => (await Состояние()).ProcessId is not null);
+        Assert.Equal(new ObserverActivity(ProgramStates.Launched, 1000, принят.Session, true), await Состояние());
+
+        await Ждать(async () => (await Факты(принят.Session)).Any(f => f.Kind == ScenarioFactKinds.StepStarted && Строка(f) == 2));
+        await _клиент.ConfirmAsync();
+        await Ждать(async () => !(await Состояние()).Scenario);
+        Assert.Equal(new ObserverActivity(ProgramStates.Launched, 1000, принят.Session, false), await Состояние());
+
+        _запуск.Runs[0].Exit(0);
+        await ДоКонцаСеанса(принят.Session);
+        Assert.Equal(new ObserverActivity(ProgramStates.None, null, null, false), await Состояние());
+
+        // Состояние из /health в журнал не идёт: у факта начала сеанса прежние версия и коммит.
+        var начало = (await Факты(принят.Session)).First(f => f.Kind == ProgramFactKinds.SessionStarted);
+        Assert.Equal(["version", "commit"], начало.Data.GetProperty("observer").EnumerateObject().Select(p => p.Name));
+    }
+
+    [Fact]
+    public async Task Health_после_подключения_attached_после_стопа_unobserved()
+    {
+        _запуск.Foreign = true;
+        var принят = await _клиент.AttachAsync();
+
+        Assert.Equal(new ObserverActivity(ProgramStates.Attached, 1000, принят.Session, false), await Состояние());
+
+        await _клиент.StopAsync(принят.Session);
+        await ДоКонцаСеанса(принят.Session);
+        Assert.Equal(new ObserverActivity(ProgramStates.Unobserved, null, null, false), await Состояние());
+    }
+
     private static async Task Ждать(Func<bool> условие) => await Ждать(() => Task.FromResult(условие()));
 
     private static async Task Ждать(Func<Task<bool>> условие)

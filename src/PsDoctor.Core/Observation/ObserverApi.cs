@@ -127,7 +127,33 @@ public sealed record CancelAccepted(string Session);
 public sealed record ConfirmAccepted(string Session);
 
 /// <summary>Ответ <c>/health</c>.</summary>
-public sealed record ObserverHealth(string Version, string? Commit);
+/// <param name="Activity">Что наблюдатель делает сейчас; у наблюдателя до Э4.6 — <c>null</c>.</param>
+public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null);
+
+/// <summary>
+/// Состояние наблюдателя в ответе <c>/health</c>: по нему пульт зажигает лампы, не читая журнал.
+/// </summary>
+/// <param name="Program">Программа, <see cref="ProgramStates"/>.</param>
+/// <param name="ProcessId">Процесс программы под наблюдением; у запущенной мимо наблюдателя — <c>null</c>.</param>
+/// <param name="Session">Живой сеанс, если есть.</param>
+/// <param name="Scenario">Выполняется сценарий.</param>
+public sealed record ObserverActivity(string Program, int? ProcessId, string? Session, bool Scenario);
+
+/// <summary>Устойчивые имена состояния программы в <see cref="ObserverActivity"/>.</summary>
+public static class ProgramStates
+{
+    /// <summary>Программа не запущена.</summary>
+    public const string None = "none";
+
+    /// <summary>Под наблюдением сеанса, начатого запуском.</summary>
+    public const string Launched = "launched";
+
+    /// <summary>Под наблюдением сеанса, начатого подключением к уже работающей программе.</summary>
+    public const string Attached = "attached";
+
+    /// <summary>Запущена мимо наблюдателя: живого сеанса нет, а программа есть — <c>launch</c> получит <c>program-running</c>.</summary>
+    public const string Unobserved = "unobserved";
+}
 
 /// <summary>Результат рендера, зарегистрированный наблюдателем после закрытия программы.</summary>
 public sealed record SessionArtifact(string Id, string Name, long Bytes, DateTime LastWriteUtc, string Sha256);

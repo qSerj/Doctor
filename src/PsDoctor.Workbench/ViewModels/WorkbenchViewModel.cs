@@ -11,15 +11,18 @@ using PsDoctor.Workbench;
 namespace PsDoctor.Workbench.ViewModels;
 
 /// <summary>
-/// Пульт целиком: связь с наблюдателем, сеансы, лента фактов, шаги сценария и диалоги. Avalonia сюда не
-/// заходит — окно только показывает это и зовёт методы, поэтому пульт проверяется тестами без интерфейса.
+/// Пульт целиком: связь с наблюдателем, лампы состояния, сеансы, лента фактов, шаги сценария и диалоги. Avalonia
+/// сюда не заходит — окно только показывает это и зовёт методы, поэтому пульт проверяется тестами без интерфейса.
 /// </summary>
 /// <remarks>
 /// <para><b>Один поток.</b> Все методы вызываются с потока интерфейса и <c>ConfigureAwait(false)</c> не
 /// делают нарочно: продолжения возвращаются туда же, и списки меняются только там. Иначе пришлось бы
 /// заводить диспетчер, а с ним — вторую истину о том, где живёт состояние.</para>
 /// <para><b>Пульт ничего не толкует.</b> Вид факта, имя отказа, причина срыва показываются как пришли:
-/// вердикты — не его дело, а слова для Ольги живут в окне оператора, а не здесь.</para>
+/// вердикты — не его дело, а слова для Ольги живут в окне оператора, а не здесь. Лампы называют состояние,
+/// которое сообщил наблюдатель, а не выводят его.</para>
+/// <para><b>Связь живая.</b> Пульт опрашивает <c>/health</c> раз в <see cref="DefaultPollInterval"/>; два пропуска
+/// подряд — «нет связи», первый ответ после них — связь восстановлена, без кнопки.</para>
 /// </remarks>
 public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 {
@@ -29,18 +32,33 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// <summary>Каталог сценариев опытов рядом с пультом: файл <c>*.txt</c> на опыт.</summary>
     public const string ExperimentsFolder = "Experiments";
 
-    /// <summary>Сколько раз пульт переподключается к оборванному потоку, прежде чем бросить.</summary>
-    public const int StreamRetries = 5;
+    /// <summary>Сколько неотвеченных опросов подряд гасят лампу связи: один пропуск — ещё не обрыв.</summary>
+    public const int MissesToLose = 2;
 
-    private static readonly TimeSpan StreamRetryPause = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(3);
+
+    /// <summary>Сколько ждать ответа на опрос: дольше — пропуск. Общий предел клиента в 30 с для лампы велик.</summary>
+    public static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(3);
+
+    private static readonly TimeSpan DefaultStreamRetryPause = TimeSpan.FromSeconds(2);
 
     private readonly Func<Uri, string, ObserverClient> connect;
     private readonly Func<string, string?> environment;
     private readonly string experimentsDirectory;
+    private readonly string? settingsPath;
+    private readonly TimeSpan pollInterval;
+    private readonly TimeSpan streamRetryPause;
 
     private ObserverClient? client;
     private CancellationTokenSource? pumpCancel;
     private Task pump = Task.CompletedTask;
+    private CancellationTokenSource? beatCancel;
+    private Task beat = Task.CompletedTask;
+    private int misses;
+    // Живой сеанс, о котором наблюдатель сообщил последним: новый сеанс пульт выбирает сам, старый — не трогает.
+    private string? seenSession;
+    private string? exportedSession;
+    private string? lastScenarioStatus;
 
     private string address;
     private string keyFile;
@@ -48,10 +66,11 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private string outcome = "";
     private string version = "";
     private string scenarioText = "";
-    private string showPath = "";
-    private string kindFilter = "";
+    private string showPath;
     private SessionRow? selectedSession;
     private bool connected;
+    private bool keyRejected;
+    private ObserverActivity? activity;
     private bool scenarioRunning;
     private bool busy;
     private string exchangeDirectory;
@@ -59,26 +78,64 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private SessionArtifact? selectedArtifact;
     private string instruction = "";
     private bool awaitingConfirm;
+    private bool showAllFacts;
+    private FactRow? selectedFact;
+    private ExperimentRow? selectedExperiment;
+    private Lamp linkLamp = new("Связь", "", LampTone.Off);
+    private Lamp programLamp = new("ProShow", "", LampTone.Off);
+    private Lamp runLamp = new("Прогон", "", LampTone.Off);
+    private Lamp operatorLamp = new("Оператор", "", LampTone.Off);
 
     /// <param name="connect">Как создаётся клиент; тест подставляет свой.</param>
-    /// <param name="environment">Откуда берутся значения по умолчанию для адреса и ключа.</param>
+    /// <param name="environment">Откуда берутся значения по умолчанию для адреса и ключа; они главнее сохранённых.</param>
     /// <param name="experimentsDirectory">Каталог сценариев опытов; по умолчанию — <see cref="ExperimentsFolder"/> рядом с пультом.</param>
+    /// <param name="settingsPath">Файл настроек пульта; <c>null</c> — пульт ничего не помнит, как в тестах.</param>
+    /// <param name="pollInterval">Как часто спрашивать <c>/health</c>.</param>
+    /// <param name="streamRetryPause">Пауза перед переподключением оборванного потока фактов.</param>
     public WorkbenchViewModel(Func<Uri, string, ObserverClient>? connect = null, Func<string, string?>? environment = null,
-        string? experimentsDirectory = null)
+        string? experimentsDirectory = null, string? settingsPath = null, TimeSpan? pollInterval = null,
+        TimeSpan? streamRetryPause = null)
     {
         this.connect = connect ?? ((uri, key) => new ObserverClient(uri, key));
         this.environment = environment ?? Environment.GetEnvironmentVariable;
         this.experimentsDirectory = experimentsDirectory ?? Path.Combine(AppContext.BaseDirectory, ExperimentsFolder);
+        this.settingsPath = settingsPath;
+        this.pollInterval = pollInterval ?? DefaultPollInterval;
+        this.streamRetryPause = streamRetryPause ?? DefaultStreamRetryPause;
+
+        var saved = settingsPath is null ? new WorkbenchSettings() : WorkbenchSettings.Load(settingsPath);
+        address = this.environment(ObserverConnection.UrlVariable) ?? saved.Address ?? "";
+        keyFile = this.environment(ObserverConnection.KeyFileVariable) ?? saved.KeyFile ?? "";
+        exchangeDirectory = this.environment("PSDOCTOR_EXCHANGE_DIR") ?? saved.ExchangeDirectory ?? "";
+        showPath = saved.ShowPath ?? "";
+        foreach (var show in saved.RecentShows ?? [])
+        {
+            RecentShows.Add(show);
+        }
         LoadExperiments();
-        address = this.environment(ObserverConnection.UrlVariable) ?? "";
-        keyFile = this.environment(ObserverConnection.KeyFileVariable) ?? "";
-        exchangeDirectory = this.environment("PSDOCTOR_EXCHANGE_DIR") ?? WorkbenchSettings.LoadExchangeDirectory() ?? "";
+        if (Experiments.FirstOrDefault(e => e.Name == saved.Experiment) is { } last)
+        {
+            selectedExperiment = last;
+            try
+            {
+                scenarioText = File.ReadAllText(last.Path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                status = $"опыт {last.Name} не прочитан: {e.Message}";
+            }
+        }
+        Dialogs.CollectionChanged += (_, _) => Refresh();
+        Refresh();
     }
 
     public string Address
     {
         get => address;
-        set => SetProperty(ref address, value);
+        set
+        {
+            if (SetProperty(ref address, value)) Refresh();
+        }
     }
 
     public string KeyFile
@@ -92,7 +149,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         get => exchangeDirectory;
         set
         {
-            if (SetProperty(ref exchangeDirectory, value)) OnPropertyChanged(nameof(CanExport));
+            if (SetProperty(ref exchangeDirectory, value)) Refresh();
         }
     }
 
@@ -126,17 +183,23 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref version, value);
     }
 
+    /// <summary>Наблюдатель ответил на последний опрос или пропустил меньше <see cref="MissesToLose"/> подряд.</summary>
     public bool Connected
     {
         get => connected;
         private set
         {
-            if (SetProperty(ref connected, value))
-            {
-                OnPropertyChanged(nameof(CanRun));
-                OnPropertyChanged(nameof(CanExport));
-                OnPropertyChanged(nameof(CanConfirm));
-            }
+            if (SetProperty(ref connected, value)) Refresh();
+        }
+    }
+
+    /// <summary>Что наблюдатель сообщил о себе последним опросом; у наблюдателя до Э4.6 — <c>null</c>.</summary>
+    public ObserverActivity? Activity
+    {
+        get => activity;
+        private set
+        {
+            if (SetProperty(ref activity, value)) Refresh();
         }
     }
 
@@ -153,10 +216,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         get => awaitingConfirm;
         private set
         {
-            if (SetProperty(ref awaitingConfirm, value))
-            {
-                OnPropertyChanged(nameof(CanConfirm));
-            }
+            if (SetProperty(ref awaitingConfirm, value)) Refresh();
         }
     }
 
@@ -172,10 +232,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         get => scenarioRunning;
         private set
         {
-            if (SetProperty(ref scenarioRunning, value))
-            {
-                OnPropertyChanged(nameof(CanRun));
-            }
+            if (SetProperty(ref scenarioRunning, value)) Refresh();
         }
     }
 
@@ -187,26 +244,52 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     public string ScenarioText
     {
         get => scenarioText;
-        set => SetProperty(ref scenarioText, value);
+        set
+        {
+            if (SetProperty(ref scenarioText, value)) Refresh();
+        }
     }
 
-    /// <summary>Путь к файлу шоу <b>в гостевой системе стенда</b>: пульт его не проверяет и не открывает.</summary>
+    /// <summary>Путь к файлу шоу <b>на машине наблюдателя</b>: пульт его не проверяет и не открывает.</summary>
     public string ShowPath
     {
         get => showPath;
         set => SetProperty(ref showPath, value);
     }
 
-    /// <summary>Виды фактов через запятую; пусто — все. Фильтрует наблюдатель, пульт только передаёт.</summary>
-    public string KindFilter
+    /// <summary>Последние файлы шоу, которыми запускали, — свежий первым.</summary>
+    public ObservableCollection<string> RecentShows { get; } = [];
+
+    /// <summary>Лента показывает все факты, а не только вехи. Переключение не ходит к наблюдателю: оба списка уже здесь.</summary>
+    public bool ShowAllFacts
     {
-        get => kindFilter;
-        set => SetProperty(ref kindFilter, value);
+        get => showAllFacts;
+        set
+        {
+            if (SetProperty(ref showAllFacts, value)) OnPropertyChanged(nameof(Tape));
+        }
+    }
+
+    /// <summary>То, что показывает вкладка «Журнал»: вехи или весь поток.</summary>
+    public ObservableCollection<FactRow> Tape => ShowAllFacts ? Facts : Milestones;
+
+    /// <summary>Факт, выбранный в ленте: его данные целиком видны в панели рядом.</summary>
+    public FactRow? SelectedFact
+    {
+        get => selectedFact;
+        set => SetProperty(ref selectedFact, value);
     }
 
     public ObservableCollection<SessionRow> Sessions { get; } = [];
 
+    /// <summary>Весь поток фактов выбранного сеанса, последние <see cref="TapeLimit"/>.</summary>
     public ObservableCollection<FactRow> Facts { get; } = [];
+
+    /// <summary>
+    /// Вехи выбранного сеанса, <see cref="FactRow.IsMilestone"/>, со своим пределом: тысячи отсчётов за рендер не
+    /// вытесняют их, как вытеснили бы из общего списка.
+    /// </summary>
+    public ObservableCollection<FactRow> Milestones { get; } = [];
 
     public ObservableCollection<StepRow> Steps { get; } = [];
 
@@ -217,16 +300,20 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// <summary>Сценарии опытов из каталога рядом с пультом, по имени файла.</summary>
     public ObservableCollection<ExperimentRow> Experiments { get; } = [];
 
+    /// <summary>Опыт, чей сценарий лежит в поле; запоминается между запусками.</summary>
+    public ExperimentRow? SelectedExperiment
+    {
+        get => selectedExperiment;
+        private set => SetProperty(ref selectedExperiment, value);
+    }
+
     /// <summary>Выбранный сеанс. Выбор переключает ленту: для этого есть <see cref="SelectAsync"/>.</summary>
     public SessionRow? SelectedSession
     {
         get => selectedSession;
         private set
         {
-            if (SetProperty(ref selectedSession, value))
-            {
-                OnPropertyChanged(nameof(CanExport));
-            }
+            if (SetProperty(ref selectedSession, value)) Refresh();
         }
     }
 
@@ -242,20 +329,101 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         get => busy;
         private set
         {
-            if (SetProperty(ref busy, value)) OnPropertyChanged(nameof(CanExport));
+            if (SetProperty(ref busy, value)) Refresh();
         }
     }
 
-    /// <summary>Связывается с наблюдателем: читает ключ из файла, спрашивает <c>/health</c>, берёт сеансы.</summary>
+    /// <summary>Связь с наблюдателем.</summary>
+    public Lamp LinkLamp
+    {
+        get => linkLamp;
+        private set => SetProperty(ref linkLamp, value);
+    }
+
+    /// <summary>ProShow: не запущен, под наблюдением или запущен мимо наблюдателя.</summary>
+    public Lamp ProgramLamp
+    {
+        get => programLamp;
+        private set => SetProperty(ref programLamp, value);
+    }
+
+    /// <summary>Прогон сценария: нет, идёт с шагом, кончился с исходом.</summary>
+    public Lamp RunLamp
+    {
+        get => runLamp;
+        private set => SetProperty(ref runLamp, value);
+    }
+
+    /// <summary>Чего сценарий или программа ждут от человека.</summary>
+    public Lamp OperatorLamp
+    {
+        get => operatorLamp;
+        private set => SetProperty(ref operatorLamp, value);
+    }
+
+    /// <summary>Шаг, на котором стоит сценарий, — крупно в панели «Сейчас».</summary>
+    public string CurrentStep => Steps.FirstOrDefault(s => s.IsCurrent)?.Text ?? "";
+
+    /// <summary>Действие, которого обстановка ждёт первым: одна главная кнопка вместо поиска по окну.</summary>
+    public PrimaryAction Primary =>
+        !Connected ? PrimaryAction.Connect
+        : CanConfirm ? PrimaryAction.Confirm
+        : ScenarioRunning ? PrimaryAction.Cancel
+        : CanExport && exportedSession != SelectedSession?.Id ? PrimaryAction.Export
+        : ScenarioText.Trim().Length > 0 ? PrimaryAction.Run
+        : PrimaryAction.None;
+
+    public string PrimaryText => Primary switch
+    {
+        PrimaryAction.Connect => "Подключиться",
+        PrimaryAction.Confirm => "Сделано",
+        PrimaryAction.Cancel => "Отменить прогон",
+        PrimaryAction.Export => "Собрать пакет",
+        PrimaryAction.Run => SelectedExperiment is { } опыт ? $"Выполнить {опыт.Name}" : "Выполнить",
+        _ => "Выберите опыт",
+    };
+
+    public bool CanPrimary => !Busy && Primary != PrimaryAction.None;
+
+    /// <summary>Открывает окно: если адрес и ключ известны, подключается сам.</summary>
+    public async Task StartAsync()
+    {
+        if (Address.Length > 0 && KeyFile.Length > 0)
+        {
+            await ConnectAsync();
+        }
+    }
+
+    /// <summary>Главная кнопка панели «Сейчас».</summary>
+    public Task ExecutePrimaryAsync() => Primary switch
+    {
+        PrimaryAction.Connect => ConnectAsync(),
+        PrimaryAction.Confirm => ConfirmAsync(),
+        PrimaryAction.Cancel => CancelAsync(),
+        PrimaryAction.Export => ExportAsync(),
+        PrimaryAction.Run => RunAsync(),
+        _ => Task.CompletedTask,
+    };
+
+    /// <summary>
+    /// Связывается с наблюдателем: читает ключ из файла, спрашивает <c>/health</c>, берёт сеансы и начинает опрос.
+    /// Опрос идёт и тогда, когда наблюдатель пока не отвечает: поднимется — пульт увидит сам.
+    /// </summary>
     public async Task ConnectAsync()
     {
+        await StopBeatAsync();
         await StopPumpAsync();
         client?.Dispose();
         client = null;
         Connected = false;
+        KeyRejected = false;
+        Activity = null;
         Version = "";
+        misses = 0;
+        seenSession = null;
         Sessions.Clear();
         Facts.Clear();
+        Milestones.Clear();
         Dialogs.Clear();
         Artifacts.Clear();
         SelectedArtifact = null;
@@ -283,18 +451,10 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
 
         client = connect(uri, key);
-        await GuardAsync(async () =>
-        {
-            var health = await client.HealthAsync();
-            Version = health.Commit is null ? health.Version : $"{health.Version} ({health.Commit})";
-            Connected = true;
-            Status = "наблюдатель отвечает";
-            await LoadSessionsAsync();
-            if (Sessions.FirstOrDefault(s => s.Active) is { } живой)
-            {
-                await SelectAsync(живой);
-            }
-        });
+        Refresh();
+        beatCancel = new CancellationTokenSource();
+        await PollAsync(beatCancel.Token);
+        beat = BeatAsync(beatCancel.Token);
     }
 
     /// <summary>Перечитывает список сеансов, сохраняя выбор.</summary>
@@ -306,6 +466,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         await StopPumpAsync();
         SelectedSession = session;
         Facts.Clear();
+        Milestones.Clear();
+        SelectedFact = null;
         Dialogs.Clear();
         // Лента пойдёт с начала журнала и снова назначит инструкцию и ожидание подтверждения.
         Instruction = "";
@@ -325,7 +487,9 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     public Task RunDiagnosticAsync(bool withStartupDialog)
     {
+        RememberShow();
         ScenarioText = DiagnosticScenario(withStartupDialog);
+        SelectedExperiment = null;
         return RunAsync();
     }
 
@@ -344,9 +508,10 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         Busy = true;
         try
         {
-            WorkbenchSettings.SaveExchangeDirectory(ExchangeDirectory);
+            SaveSettings();
             var path = await new LabPackageExporter().ExportAsync(client, session.Id, ScenarioText, ShowPath,
                 ExchangeDirectory, SelectedArtifact, IncludeRaw);
+            exportedSession = session.Id;
             Status = $"пакет сохранён: {path}";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObserverException)
@@ -378,6 +543,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             Experiments.Add(new ExperimentRow(Path.GetFileNameWithoutExtension(path), path));
         }
+        // Список пересоздан: выбранный опыт — строка нового списка с тем же именем.
+        SelectedExperiment = Experiments.FirstOrDefault(e => e.Name == SelectedExperiment?.Name);
     }
 
     /// <summary>Кладёт сценарий опыта в поле сценария; выполняет его, как любой другой текст, кнопка «Выполнить».</summary>
@@ -390,7 +557,10 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         try
         {
             ScenarioText = await File.ReadAllTextAsync(experiment.Path);
+            SelectedExperiment = experiment;
             Status = $"опыт {experiment.Name} загружен";
+            SaveSettings();
+            Refresh();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -405,13 +575,18 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     public Task AttachAsync() => GuardAsync(async () =>
     {
         var accepted = await client!.AttachAsync();
+        seenSession = accepted.Session;
         Status = $"подключён к ProShow, pid {accepted.ProcessId.ToString(CultureInfo.InvariantCulture)}, сеанс {accepted.Session}";
         await LoadSessionsAsync();
         await SelectAsync(Sessions.FirstOrDefault(s => s.Id == accepted.Session));
     });
 
     /// <summary>Быстрая кнопка «Запустить»: сценарий из одной строки.</summary>
-    public Task LaunchAsync() => RunTextAsync($"launch {Quote(ShowPath)}");
+    public Task LaunchAsync()
+    {
+        RememberShow();
+        return RunTextAsync($"launch {Quote(ShowPath)}");
+    }
 
     /// <summary>Быстрая кнопка «Закрыть программу»: то же, что крестик главного окна.</summary>
     public Task CloseProgramAsync() => RunTextAsync("close");
@@ -465,11 +640,27 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        beatCancel?.Cancel();
+        beatCancel?.Dispose();
+        beatCancel = null;
         pumpCancel?.Cancel();
         pumpCancel?.Dispose();
         pumpCancel = null;
         client?.Dispose();
         client = null;
+    }
+
+    private bool KeyRejected
+    {
+        get => keyRejected;
+        set
+        {
+            if (keyRejected != value)
+            {
+                keyRejected = value;
+                Refresh();
+            }
+        }
     }
 
     /// <summary>Аргумент с пробелами сценарий берёт в кавычки — те же правила, что у разбора.</summary>
@@ -509,6 +700,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             Steps.Clear();
             Status = "сценарий не разобран: " + string.Join("; ", parsed.Errors.Select(Describe));
+            Refresh();
             return;
         }
 
@@ -517,12 +709,16 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             Steps.Add(new StepRow(step.Line, step.Text));
         }
+        Refresh();
 
         await GuardAsync(async () =>
         {
             var accepted = await client.RunAsync(text);
+            // Сеанс известен раньше опроса: опрос не станет выбирать его второй раз.
+            seenSession = accepted.Session;
             ScenarioRunning = true;
             Outcome = "";
+            lastScenarioStatus = null;
             Status = $"сценарий принят, сеанс {accepted.Session}, факты после {accepted.After.ToString(CultureInfo.InvariantCulture)}";
             if (SelectedSession?.Id != accepted.Session)
             {
@@ -548,65 +744,202 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         SelectedSession = Sessions.FirstOrDefault(s => s.Id == chosen);
     }
 
-    /// <summary>Поток фактов сеанса: журнал с начала, потом новые. Обрыв — не конец сеанса, продолжаем с номера.</summary>
-    private async Task PumpAsync(string session, CancellationToken cancellationToken)
+    /// <summary>Опрос <c>/health</c>, пока пульт подключён: лампы и возвращение связи без кнопки.</summary>
+    private async Task BeatAsync(CancellationToken cancellationToken)
     {
-        var after = 0L;
-        var attempts = 0;
-        IReadOnlyCollection<string>? kinds = KindFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } list
-            ? list
-            : null;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await foreach (var fact in client!.StreamAsync(session, after, kinds, cancellationToken))
-                {
-                    after = fact.Number;
-                    attempts = 0;
-                    Apply(fact);
-                }
-                Status = $"сеанс {session} закрыт";
-                ScenarioRunning = false;
-                await GuardAsync(LoadSessionsAsync);
-                await RefreshArtifactsAsync();
-                return;
+                await Task.Delay(pollInterval, cancellationToken);
             }
             catch (OperationCanceledException)
             {
                 return;
             }
-            catch (Exception e) when (e is IOException or HttpRequestException or JsonException)
+            await PollAsync(cancellationToken);
+        }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        if (client is not { } current)
+        {
+            return;
+        }
+        ObserverHealth health;
+        try
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(HealthTimeout);
+            health = await current.HealthAsync(limit.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (ObserverException e) when (e.Status == HttpStatusCode.Unauthorized)
+        {
+            KeyRejected = true;
+            Lose("наблюдатель не принял ключ (401)");
+            return;
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException or JsonException or OperationCanceledException or ObserverException)
+        {
+            // До первого ответа ждать второго пропуска незачем: связи ещё не было.
+            if (++misses >= MissesToLose || !Connected)
             {
-                if (++attempts > StreamRetries)
-                {
-                    Status = $"поток фактов оборван после {after.ToString(CultureInfo.InvariantCulture)} и не восстановлен: {e.Message}";
-                    return;
-                }
-                Status = $"поток оборван после {after.ToString(CultureInfo.InvariantCulture)}, "
-                    + $"попытка {attempts.ToString(CultureInfo.InvariantCulture)} из {StreamRetries.ToString(CultureInfo.InvariantCulture)}";
-                try
-                {
-                    await Task.Delay(StreamRetryPause, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
+                Lose(e is OperationCanceledException
+                    ? "нет связи с наблюдателем: не ответил за " + HealthTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " с"
+                    : $"нет связи с наблюдателем: {e.Message}");
             }
+            return;
+        }
+        if (client != current)
+        {
+            return;
+        }
+
+        misses = 0;
+        KeyRejected = false;
+        Version = health.Commit is null ? health.Version : $"{health.Version} ({health.Commit})";
+        Activity = health.Activity;
+        var returned = !Connected;
+        Connected = true;
+        var live = health.Activity?.Session;
+        if (returned)
+        {
+            Status = "наблюдатель отвечает";
+            SaveSettings();
+        }
+        if (returned || live != seenSession)
+        {
+            var appeared = live is not null && live != seenSession;
+            seenSession = live;
+            await GuardAsync(LoadSessionsAsync);
+            // Новый живой сеанс — то, что происходит сейчас: его и показываем. Первое подключение без сведений о
+            // сеансе (наблюдатель до Э4.6) берёт живой сеанс из списка, как раньше.
+            var target = appeared ? Sessions.FirstOrDefault(s => s.Id == live)
+                : SelectedSession is null ? Sessions.FirstOrDefault(s => s.Active)
+                : null;
+            if (target is not null && target.Id != SelectedSession?.Id)
+            {
+                await SelectAsync(target);
+            }
+        }
+    }
+
+    private void Lose(string reason)
+    {
+        Connected = false;
+        Activity = null;
+        Status = reason;
+    }
+
+    /// <summary>
+    /// Поток фактов сеанса: журнал с начала, потом новые. Обрыв — не конец сеанса: продолжаем с номера, сколько бы
+    /// обрывов ни было, — рендер идёт часами. Конец сеанса — только факт <c>session-finished</c>: поток, закрытый
+    /// остановкой наблюдателя, кончается без него.
+    /// </summary>
+    private async Task PumpAsync(string session, CancellationToken cancellationToken)
+    {
+        var after = 0L;
+        var attempts = 0;
+        var finished = false;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            string? reason;
+            try
+            {
+                await foreach (var fact in client!.StreamAsync(session, after, null, cancellationToken))
+                {
+                    after = fact.Number;
+                    attempts = 0;
+                    finished = fact.Kind == ProgramFactKinds.SessionFinished;
+                    Apply(fact);
+                }
+                // Оборванный сеанс — наблюдатель сняли посреди него — тоже кончается без session-finished, но он уже
+                // не живой, и ждать его продолжения нечего.
+                if (finished || await IsClosedAsync(session))
+                {
+                    Status = $"сеанс {session} закрыт";
+                    ScenarioRunning = false;
+                    await GuardAsync(LoadSessionsAsync);
+                    await RefreshArtifactsAsync();
+                    return;
+                }
+                reason = "поток кончился без конца сеанса";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                // Отмена не наша — предел ожидания заголовков у клиента: тот же обрыв.
+                reason = "наблюдатель не ответил";
+            }
+            catch (ObserverException e) when (e.Error?.Error == ObserverErrors.UnknownSession)
+            {
+                Status = $"сеанс {session} наблюдателю неизвестен";
+                return;
+            }
+            catch (Exception e) when (e is IOException or HttpRequestException or JsonException or ObserverException)
+            {
+                reason = e.Message;
+            }
+            attempts++;
+            Status = $"поток оборван после {after.ToString(CultureInfo.InvariantCulture)}, "
+                + $"переподключение {attempts.ToString(CultureInfo.InvariantCulture)}: {reason}";
+            try
+            {
+                await Task.Delay(streamRetryPause, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Сеанс не живой по списку наблюдателя. Нет ответа — неизвестно, и поток пробуют снова.</summary>
+    private async Task<bool> IsClosedAsync(string session)
+    {
+        try
+        {
+            var summary = (await client!.SessionsAsync()).FirstOrDefault(s => s.Id == session);
+            return summary is not { Active: true };
+        }
+        catch (Exception e) when (e is IOException or HttpRequestException or JsonException or ObserverException or OperationCanceledException)
+        {
+            return false;
         }
     }
 
     private void Apply(Fact fact)
     {
-        Facts.Add(new FactRow(fact));
+        var row = new FactRow(fact);
+        Facts.Add(row);
         while (Facts.Count > TapeLimit)
         {
             Facts.RemoveAt(0);
         }
+        if (row.IsMilestone)
+        {
+            Milestones.Add(row);
+            while (Milestones.Count > TapeLimit)
+            {
+                Milestones.RemoveAt(0);
+            }
+        }
 
         switch (fact.Kind)
         {
+            case ScenarioFactKinds.ScenarioStarted:
+                // Прогон идёт по журналу, а не по тому, кто его дал: сценарий агента пульт видит так же.
+                ScenarioRunning = true;
+                lastScenarioStatus = null;
+                break;
             case ScenarioFactKinds.StepStarted:
                 Mark(fact, StepState.Running, "");
                 // Шаг узнаётся по его тексту тем же разбором: сценарий мог дать и не пульт, а агент.
@@ -628,6 +961,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
                 ScenarioRunning = false;
                 AwaitingConfirm = false;
                 var status = Text(fact, "status") ?? "";
+                lastScenarioStatus = status;
                 Outcome = $"сценарий: {status}"
                     + (Text(fact, "reason") is { } reason ? $", {reason}" : "")
                     + (Number(fact, "line") is { } line ? $", строка {line.ToString(CultureInfo.InvariantCulture)}" : "");
@@ -639,6 +973,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
                     running.State = StepState.Failed;
                     running.Note = status;
                 }
+                Refresh();
                 break;
             case ProgramFactKinds.DialogOpened:
             case ProgramFactKinds.DialogClosed:
@@ -658,6 +993,94 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         {
             step.State = state;
             step.Note = note;
+            Refresh();
+        }
+    }
+
+    /// <summary>
+    /// Пересчитывает лампы и главную кнопку. Их входы — связь, состояние наблюдателя, шаги, диалоги — меняются в
+    /// разных местах, а вывод у них один; одна функция вместо уведомлений из каждого сеттера.
+    /// </summary>
+    private void Refresh()
+    {
+        LinkLamp = client is null
+            ? new Lamp("Связь", Address.Length == 0 ? "адрес не задан" : "не подключён", LampTone.Off)
+            : KeyRejected ? new Lamp("Связь", "ключ не принят (401)", LampTone.Alarm)
+            : Connected ? new Lamp("Связь", "на связи" + (Version.Length > 0 ? $" · {Version}" : ""), LampTone.On)
+            : new Lamp("Связь", "нет связи", LampTone.Alarm);
+
+        ProgramLamp = !Connected ? new Lamp("ProShow", "неизвестно", LampTone.Off)
+            : Activity is not { } now ? new Lamp("ProShow", "наблюдатель не сообщает", LampTone.Off)
+            : now.Program switch
+            {
+                ProgramStates.None => new Lamp("ProShow", "не запущен", LampTone.Off),
+                ProgramStates.Launched => new Lamp("ProShow", "под наблюдением · запуск" + Pid(now), LampTone.On),
+                ProgramStates.Attached => new Lamp("ProShow", "под наблюдением · подключение" + Pid(now), LampTone.On),
+                ProgramStates.Unobserved => new Lamp("ProShow", "запущен мимо наблюдателя", LampTone.Attention),
+                var other => new Lamp("ProShow", other, LampTone.Off),
+            };
+
+        var running = Steps.Select((s, i) => (s, i)).FirstOrDefault(p => p.s.IsCurrent);
+        RunLamp = ScenarioRunning
+            ? new Lamp("Прогон", running.s is null
+                ? "идёт"
+                : $"идёт · шаг {(running.i + 1).ToString(CultureInfo.InvariantCulture)} из {Steps.Count.ToString(CultureInfo.InvariantCulture)}",
+                LampTone.On)
+            // Сценарий в сеансе, которого лента не показывает: о нём знает только опрос.
+            : Activity is { Scenario: true } elsewhere && elsewhere.Session != SelectedSession?.Id
+                ? new Lamp("Прогон", "идёт · в другом сеансе", LampTone.On)
+            : lastScenarioStatus is { } done ? new Lamp("Прогон", $"кончился · {done}",
+                done == "completed" ? LampTone.Off : LampTone.Attention)
+            : new Lamp("Прогон", "нет", LampTone.Off);
+
+        OperatorLamp = CanConfirm ? new Lamp("Оператор", "ждём «Сделано»", LampTone.Attention)
+            : Dialogs.Count > 0 ? new Lamp("Оператор", $"открыт диалог «{Dialogs[^1].Title}»", LampTone.Attention)
+            : new Lamp("Оператор", "ничего не ждём", LampTone.Off);
+
+        OnPropertyChanged(nameof(CanConfirm));
+        OnPropertyChanged(nameof(CanRun));
+        OnPropertyChanged(nameof(CanExport));
+        OnPropertyChanged(nameof(CurrentStep));
+        OnPropertyChanged(nameof(Primary));
+        OnPropertyChanged(nameof(PrimaryText));
+        OnPropertyChanged(nameof(CanPrimary));
+    }
+
+    private static string Pid(ObserverActivity now) =>
+        now.ProcessId is { } pid ? $" · pid {pid.ToString(CultureInfo.InvariantCulture)}" : "";
+
+    private void RememberShow()
+    {
+        var path = ShowPath.Trim();
+        if (path.Length == 0)
+        {
+            return;
+        }
+        var index = RecentShows.IndexOf(path);
+        if (index != 0)
+        {
+            if (index > 0) RecentShows.RemoveAt(index);
+            RecentShows.Insert(0, path);
+            while (RecentShows.Count > WorkbenchSettings.RecentLimit) RecentShows.RemoveAt(RecentShows.Count - 1);
+        }
+        SaveSettings();
+    }
+
+    /// <summary>Записывает то, что пульт помнит. Не записалось — пульт работает дальше, сказав об этом.</summary>
+    private void SaveSettings()
+    {
+        if (settingsPath is null)
+        {
+            return;
+        }
+        try
+        {
+            new WorkbenchSettings(Address, KeyFile, ExchangeDirectory, ShowPath, [.. RecentShows], SelectedExperiment?.Name)
+                .Save(settingsPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Status = $"настройки пульта не сохранены: {e.Message}";
         }
     }
 
@@ -691,6 +1114,25 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         pump = Task.CompletedTask;
     }
 
+    private async Task StopBeatAsync()
+    {
+        if (beatCancel is null)
+        {
+            return;
+        }
+        await beatCancel.CancelAsync();
+        try
+        {
+            await beat;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        beatCancel.Dispose();
+        beatCancel = null;
+        beat = Task.CompletedTask;
+    }
+
     /// <summary>
     /// Один разговор с наблюдателем. Отказ показывается устойчивым именем, как пришёл: толковать его —
     /// не дело пульта, а угадывать фразу по имени — прямой путь к двум разным словарям.
@@ -710,8 +1152,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
         catch (ObserverException e) when (e.Status == HttpStatusCode.Unauthorized)
         {
-            Status = "наблюдатель не принял ключ (401)";
-            Connected = false;
+            KeyRejected = true;
+            Lose("наблюдатель не принял ключ (401)");
         }
         catch (ObserverException e)
         {
@@ -722,8 +1164,8 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
         catch (Exception e) when (e is HttpRequestException or IOException or JsonException)
         {
-            Status = $"нет связи с наблюдателем: {e.Message}";
-            Connected = false;
+            // Лампу гасит не упавший запрос, а опрос: один сорвавшийся ответ — ещё не обрыв связи.
+            Status = $"запрос не прошёл: {e.Message}";
         }
         finally
         {
