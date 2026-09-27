@@ -4,42 +4,42 @@
         Width="420" MinWidth="380" SizeToContent="Height" WindowStartupLocation="CenterScreen"
         Title="Doctor для ProShow"
         Icon="/Assets/doctor-tray.png">
-  <Grid RowDefinitions="*,Auto">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-      <StackPanel Margin="16,16,16,8" Spacing="10">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel>
 
-        <!-- Состояние: цвет и значок задаёт RefreshStatus классом тона. -->
-        <Border Classes="card" Padding="16">
+      <!-- Состояние: цвет и значок задаёт RefreshStatus классом тона. Всё, что сообщает, живёт здесь;
+           белые карточки ниже — только кнопки. -->
+      <Border x:Name="Hero" Classes="hero">
+        <StackPanel Spacing="14">
           <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
-            <Border x:Name="StatusBadge" Classes="badge">
+            <Border Classes="halo">
               <PathIcon x:Name="StatusIcon" Data="{DynamicResource IconIdle}" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock x:Name="ProgramStatus" Classes="heading" />
-              <TextBlock x:Name="ProgramHint" Classes="body" />
+              <TextBlock x:Name="ProgramStatus" FontSize="20" FontWeight="Bold" TextWrapping="Wrap" />
+              <TextBlock x:Name="ProgramHint" Classes="hint" TextWrapping="Wrap" />
             </StackPanel>
           </Grid>
-        </Border>
 
-        <!-- Проект. -->
-        <Border Classes="card" Padding="12">
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-            <Border Classes="tile" Width="44" Height="44">
+          <!-- Проект: строка шапки, появляется, когда выбран файл. -->
+          <Border x:Name="ProjectLine" Classes="heroLine" IsVisible="False">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
               <PathIcon Data="{DynamicResource IconProject}" />
-            </Border>
-            <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
-              <TextBlock x:Name="ProjectLabel" Text="Проект" Classes="caption" />
-              <TextBlock x:Name="ProjectName" Text="Проект не выбран" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
-              <TextBlock x:Name="ProjectPath" Text="Откройте или проверьте файл .psh" Classes="caption" TextTrimming="CharacterEllipsis" />
-              <TextBlock x:Name="ProjectResolution" Classes="caption" IsVisible="False" />
-            </StackPanel>
-          </Grid>
-        </Border>
+              <StackPanel Grid.Column="1" Spacing="1">
+                <TextBlock x:Name="ProjectName" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
+                <TextBlock x:Name="ProjectPath" Classes="hint" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="ProjectResolution" Classes="hint" FontSize="12.5" IsVisible="False" />
+              </StackPanel>
+            </Grid>
+          </Border>
+        </StackPanel>
+      </Border>
 
+      <StackPanel Margin="16" Spacing="10">
         <!-- Действия. Класс primary получает одна карточка — следующий шаг (UpdateNextStep). -->
         <Button x:Name="FinishButton" Classes="action primary" Click="ЗакончитьНаблюдение" IsVisible="False">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-            <Border Classes="tile"><PathIcon Data="{DynamicResource IconStop}" /></Border>
+            <Border Classes="tile violet"><PathIcon Data="{DynamicResource IconStop}" /></Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
               <TextBlock Classes="actionTitle" Text="Закончить наблюдение" />
               <TextBlock Classes="caption" Text="ProShow продолжит работать" TextWrapping="Wrap" />
@@ -49,7 +49,7 @@
         </Button>
         <Button x:Name="OpenButton" Classes="action" Click="ОткрытьПроект">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-            <Border Classes="tile"><PathIcon Data="{DynamicResource IconOpen}" /></Border>
+            <Border Classes="tile blue"><PathIcon Data="{DynamicResource IconOpen}" /></Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
               <TextBlock Classes="actionTitle" Text="Открыть проект…" />
               <TextBlock Classes="caption" Text="Выбрать файл и открыть его в ProShow" TextWrapping="Wrap" />
@@ -59,7 +59,7 @@
         </Button>
         <Button x:Name="CheckButton" Classes="action" Click="ПроверитьПроект">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-            <Border Classes="tile"><PathIcon Data="{DynamicResource IconCheck}" /></Border>
+            <Border Classes="tile teal"><PathIcon Data="{DynamicResource IconCheck}" /></Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
               <TextBlock Classes="actionTitle" Text="Проверить проект" />
               <TextBlock Classes="caption" Text="Найти тяжёлые файлы и другие помехи" TextWrapping="Wrap" />
@@ -69,7 +69,7 @@
         </Button>
         <Button x:Name="ProblemButton" Classes="action" Click="РазобратьсяСПроблемой">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-            <Border Classes="tile"><PathIcon Data="{DynamicResource IconProblem}" /></Border>
+            <Border Classes="tile orange"><PathIcon Data="{DynamicResource IconProblem}" /></Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
               <TextBlock Classes="actionTitle" Text="Решить проблему" />
               <TextBlock Classes="caption" Text="ProShow тормозит, зависает или закрывается" TextWrapping="Wrap" />
@@ -78,12 +78,11 @@
           </Grid>
         </Button>
 
-        <!-- Совет или рекомендации. -->
-        <Border x:Name="AdviceBorder" Classes="banner">
+        <!-- Итог проверки: появляется после неё. -->
+        <Border x:Name="AdviceBorder" Classes="banner" IsVisible="False">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
             <PathIcon x:Name="AdviceIcon" Data="{DynamicResource IconAdvice}" />
-            <TextBlock x:Name="AdviceText" Grid.Column="1" Classes="body" VerticalAlignment="Center"
-                       Text="Выберите проект и проверьте его — Doctor подскажет, что может мешать." />
+            <TextBlock x:Name="AdviceText" Grid.Column="1" Classes="body" VerticalAlignment="Center" />
             <Button x:Name="ShowFindingsButton" Grid.Column="2" Classes="primary" Content="Показать" Click="ПоказатьРекомендации"
                     IsVisible="False" VerticalAlignment="Center" />
           </Grid>
@@ -99,15 +98,6 @@
           </Grid>
         </Border>
       </StackPanel>
-    </ScrollViewer>
-
-    <!-- Строка состояния. -->
-    <Border Grid.Row="1" Background="White" BorderBrush="#E1E6EE" BorderThickness="0,1,0,0" Padding="16,8">
-      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-        <Ellipse x:Name="StatusDot" Classes="dot" />
-        <TextBlock x:Name="StatusLine" Grid.Column="1" Classes="caption" Text="Проверяем ProShow…" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="2" Classes="caption" Text="v 0.1" VerticalAlignment="Center" />
-      </Grid>
-    </Border>
-  </Grid>
+    </StackPanel>
+  </ScrollViewer>
 </Window>

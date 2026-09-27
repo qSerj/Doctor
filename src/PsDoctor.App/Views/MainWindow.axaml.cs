@@ -58,21 +58,11 @@ public sealed partial class MainWindow : Window
                 ? analysis is null
                     ? ("ok", "IconOk", "ProShow работает", "Можно работать. Проект ещё не проверен.")
                     : ("ok", "IconOk", "Всё хорошо!", "Известных помех в проекте нет. Можно работать.")
-                : ("idle", "IconIdle", "ProShow не запущен", "Откройте проект — Doctor передаст его ProShow.");
-        SetTone(Control<Border>("StatusBadge"), tone);
+                : ("idle", "IconIdle", "ProShow не запущен", "Doctor на месте и готов помочь.");
+        SetTone(Control<Border>("Hero"), tone);
         Control<PathIcon>("StatusIcon").Data = Glyph(icon);
-        var status = Control<TextBlock>("ProgramStatus");
-        status.Text = title;
-        SetTone(status, tone);
+        Control<TextBlock>("ProgramStatus").Text = title;
         Control<TextBlock>("ProgramHint").Text = hint;
-
-        var dot = Control<Avalonia.Controls.Shapes.Ellipse>("StatusDot");
-        dot.Classes.Set("on", running == true && !watching);
-        dot.Classes.Set("watch", watching);
-        Control<TextBlock>("StatusLine").Text = watching ? "Идёт наблюдение за ProShow"
-            : running is null ? "Состояние ProShow неизвестно"
-            : running.Value ? "ProShow запущен" : "ProShow не запущен";
-
         Control<Button>("FinishButton").IsVisible = watching;
         UpdateNextStep();
     }
@@ -117,6 +107,7 @@ public sealed partial class MainWindow : Window
     private void SetAdvice(string message, string tone, string icon, bool showFindings)
     {
         var border = Control<Border>("AdviceBorder");
+        border.IsVisible = true;
         SetTone(border, tone);
         Control<PathIcon>("AdviceIcon").Data = Glyph(icon);
         Control<TextBlock>("AdviceText").Text = message;
@@ -137,12 +128,12 @@ public sealed partial class MainWindow : Window
         showPath = path;
 
         analysis = null;
-        Control<TextBlock>("ProjectLabel").Text = "Выбранный проект";
+        Control<Border>("ProjectLine").IsVisible = true;
         Control<TextBlock>("ProjectName").Text = Path.GetFileNameWithoutExtension(path);
         Control<TextBlock>("ProjectPath").Text = path;
         ToolTip.SetTip(Control<TextBlock>("ProjectPath"), path);
         Control<TextBlock>("ProjectResolution").IsVisible = false;
-        SetAdvice("Проверьте проект — Doctor подскажет, что может мешать.", "info", "IconAdvice", false);
+        Control<Border>("AdviceBorder").IsVisible = false;
         RefreshStatus();
         return path;
     }

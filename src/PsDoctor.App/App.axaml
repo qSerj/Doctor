@@ -98,6 +98,78 @@
       <Setter Property="Foreground" Value="#0F6CBD" />
     </Style>
 
+    <!-- Шапка главного окна: полоса во всю ширину, цвет состояния, белый текст. Синий в ней не бывает —
+         синим отмечена только кнопка следующего шага. -->
+    <Style Selector="Border.hero">
+      <Setter Property="Padding" Value="20,18" />
+      <Setter Property="Background">
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Offset="0" Color="#4A5568" />
+          <GradientStop Offset="1" Color="#2D3748" />
+        </LinearGradientBrush>
+      </Setter>
+    </Style>
+    <Style Selector="Border.hero.ok">
+      <Setter Property="Background">
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Offset="0" Color="#2FB36A" />
+          <GradientStop Offset="1" Color="#178A4A" />
+        </LinearGradientBrush>
+      </Setter>
+    </Style>
+    <Style Selector="Border.hero.warn">
+      <Setter Property="Background">
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Offset="0" Color="#F7B32B" />
+          <GradientStop Offset="1" Color="#E07B0B" />
+        </LinearGradientBrush>
+      </Setter>
+    </Style>
+    <Style Selector="Border.hero.watch">
+      <Setter Property="Background">
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Offset="0" Color="#8B6CFF" />
+          <GradientStop Offset="1" Color="#5A3FD6" />
+        </LinearGradientBrush>
+      </Setter>
+    </Style>
+    <Style Selector="Border.hero.error">
+      <Setter Property="Background">
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Offset="0" Color="#EF5A4C" />
+          <GradientStop Offset="1" Color="#C42B1C" />
+        </LinearGradientBrush>
+      </Setter>
+    </Style>
+    <Style Selector="Border.hero TextBlock">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Border.hero TextBlock.hint">
+      <Setter Property="Opacity" Value="0.92" />
+    </Style>
+    <Style Selector="Border.hero Border.heroLine">
+      <Setter Property="BorderBrush" Value="#40FFFFFF" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+      <Setter Property="Padding" Value="0,12,0,0" />
+    </Style>
+    <Style Selector="Border.hero Border.heroLine PathIcon">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Border.hero Border.halo">
+      <Setter Property="Width" Value="56" />
+      <Setter Property="Height" Value="56" />
+      <Setter Property="CornerRadius" Value="28" />
+      <Setter Property="Background" Value="#33FFFFFF" />
+    </Style>
+    <Style Selector="Border.hero Border.halo PathIcon">
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+
     <!-- Квадратный значок в карточке действия. -->
     <Style Selector="Border.tile">
       <Setter Property="Width" Value="40" />
@@ -116,6 +188,22 @@
     </Style>
     <Style Selector="Border.tile.warn PathIcon">
       <Setter Property="Foreground" Value="#B26A00" />
+    </Style>
+    <!-- Насыщенные значки действий: у каждого действия свой цвет. -->
+    <Style Selector="Border.tile.blue">
+      <Setter Property="Background" Value="#2F80E4" />
+    </Style>
+    <Style Selector="Border.tile.teal">
+      <Setter Property="Background" Value="#12A3A0" />
+    </Style>
+    <Style Selector="Border.tile.orange">
+      <Setter Property="Background" Value="#F2792B" />
+    </Style>
+    <Style Selector="Border.tile.violet">
+      <Setter Property="Background" Value="#7357F2" />
+    </Style>
+    <Style Selector="Border.tile.blue PathIcon, Border.tile.teal PathIcon, Border.tile.orange PathIcon, Border.tile.violet PathIcon">
+      <Setter Property="Foreground" Value="White" />
     </Style>
 
     <!-- Плашка совета или результата. -->
@@ -210,9 +298,10 @@
     </Style>
     <Style Selector="Button.primary TextBlock.caption">
       <Setter Property="Foreground" Value="#DCEBFA" />
+      <Setter Property="FontWeight" Value="Normal" />
     </Style>
     <Style Selector="Button.primary Border.tile">
-      <Setter Property="Background" Value="#2A80CC" />
+      <Setter Property="Background" Value="#33FFFFFF" />
     </Style>
     <Style Selector="Button.primary Border.tile PathIcon, Button.primary PathIcon.chevron">
       <Setter Property="Foreground" Value="White" />
@@ -243,18 +332,5 @@
       <Setter Property="BorderThickness" Value="2" />
     </Style>
 
-    <!-- Строка состояния внизу окна. -->
-    <Style Selector="Ellipse.dot">
-      <Setter Property="Width" Value="9" />
-      <Setter Property="Height" Value="9" />
-      <Setter Property="Fill" Value="#A3ADBA" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style Selector="Ellipse.dot.on">
-      <Setter Property="Fill" Value="#2DA44E" />
-    </Style>
-    <Style Selector="Ellipse.dot.watch">
-      <Setter Property="Fill" Value="#0F6CBD" />
-    </Style>
   </Application.Styles>
 </Application>
