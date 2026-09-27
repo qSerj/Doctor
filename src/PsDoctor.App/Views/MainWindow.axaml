@@ -3,7 +3,7 @@
         x:Class="PsDoctor.App.Views.MainWindow"
         Width="420" MinWidth="380" SizeToContent="Height" WindowStartupLocation="CenterScreen"
         Title="Doctor для ProShow"
-        Icon="/Assets/doctor-tray.png">
+        Icon="/Assets/doctor-tray.ico">
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel>
 

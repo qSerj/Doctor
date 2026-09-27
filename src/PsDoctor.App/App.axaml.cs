@@ -30,7 +30,7 @@ public sealed partial class App : Application
                 }
             };
 
-            using var iconStream = AssetLoader.Open(new Uri("avares://PsDoctor.App/Assets/doctor-tray.png"));
+            using var iconStream = AssetLoader.Open(new Uri("avares://PsDoctor.App/Assets/doctor-tray.ico"));
             var menu = new NativeMenu();
             var status = new NativeMenuItem("Состояние ProShow");
             status.IsEnabled = false;
