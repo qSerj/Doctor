@@ -25,25 +25,35 @@ public sealed class ObserverOptionsTests : IDisposable
     [Fact]
     public void Сетевой_адрес_задаётся_явно()
     {
-        var (options, _) = ObserverOptions.Parse(["--listen", "192.168.56.5:8100", "--allow-remote", "--key-file", _ключ]);
+        var (options, _) = ObserverOptions.Parse(["--listen", "192.168.56.5:8100", "--allow-network", "192.168.56.0/24", "--key-file", _ключ]);
 
         Assert.Equal(IPAddress.Parse("192.168.56.5"), options!.Address);
         Assert.Equal(8100, options.Port);
+        Assert.Equal([IPNetwork.Parse("192.168.56.0/24")], options.AllowNetworks!);
     }
 
     [Fact]
-    public void Не_петлевой_адрес_без_allow_remote_отвергается()
+    public void Не_петлевой_адрес_без_allow_network_отвергается()
     {
         var (options, error) = ObserverOptions.Parse(["--listen", "0.0.0.0:8100", "--key-file", _ключ]);
-        var (сКлючом, _) = ObserverOptions.Parse(["--listen", "0.0.0.0:8100", "--allow-remote", "--key-file", _ключ]);
+        var (сСетью, _) = ObserverOptions.Parse(["--listen", "0.0.0.0:8100", "--allow-network", "192.168.0.0/24", "--key-file", _ключ]);
 
         Assert.Null(options);
-        Assert.Contains("--allow-remote", error!, StringComparison.Ordinal);
-        Assert.Equal(IPAddress.Any, сКлючом!.Address);
+        Assert.Contains("--allow-network", error!, StringComparison.Ordinal);
+        Assert.Equal(IPAddress.Any, сСетью!.Address);
     }
 
     [Fact]
-    public void Петля_allow_remote_не_требует()
+    public void Сетей_может_быть_несколько()
+    {
+        var (options, _) = ObserverOptions.Parse(["--listen", "0.0.0.0:8100", "--allow-network", "192.168.0.0/24",
+            "--allow-network", "10.1.0.0/16", "--key-file", _ключ]);
+
+        Assert.Equal([IPNetwork.Parse("192.168.0.0/24"), IPNetwork.Parse("10.1.0.0/16")], options!.AllowNetworks!);
+    }
+
+    [Fact]
+    public void Петля_сетей_не_требует()
     {
         var (options, _) = ObserverOptions.Parse(["--listen", "127.0.0.1:8101", "--key-file", _ключ]);
 
@@ -54,7 +64,7 @@ public sealed class ObserverOptionsTests : IDisposable
     [Fact]
     public void Без_файла_ключа_не_запускается()
     {
-        var (options, error) = ObserverOptions.Parse(["--listen", "192.168.56.5:8100", "--allow-remote"]);
+        var (options, error) = ObserverOptions.Parse(["--listen", "192.168.56.5:8100", "--allow-network", "192.168.56.0/24"]);
 
         Assert.Null(options);
         Assert.NotNull(error);

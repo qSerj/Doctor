@@ -44,7 +44,7 @@ New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Inbound -Protocol 
 Set-NetFirewallProfile -All -NotifyOnListen False
 
 # ETW держит отдельный повышенный процесс; HTTP и работа с окнами остаются неповышенными.
-$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$exe`" --listen $Listen --allow-remote --key-file `"$key`" --data `"$data`""
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$exe`" --listen $Listen --allow-network $HostAddress/32 --key-file `"$key`" --data `"$data`""
 $etwAction = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$exe`" --etw-helper --data `"$data`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User 'user'
 $principal = New-ScheduledTaskPrincipal -UserId 'user' -LogonType Interactive -RunLevel Limited

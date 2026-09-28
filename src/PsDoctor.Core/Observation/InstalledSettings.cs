@@ -13,16 +13,17 @@ public sealed record WatchdogTiming(TimeSpan Poll, TimeSpan Timeout, int Misses)
 /// Настройки установленного Doctor — файл <c>settings.json</c>, который пишет установщик и правит инженер.
 /// Отсутствующее поле берёт значение по умолчанию: старый файл переживает новую версию без правки.
 /// </summary>
-/// <param name="Listen">Где слушает наблюдатель. Петля по умолчанию; сеть открывает инженер вместе с <paramref name="AllowRemote"/>.</param>
-public sealed record InstalledSettings(string Listen, bool AllowRemote, WatchdogTiming Watchdog, RetentionLimits Retention)
+/// <param name="Listen">Где слушает наблюдатель. По умолчанию все адреса машины: инженер подключается из локальной сети.</param>
+/// <param name="AllowNetworks">Сети, из которых пускают кроме петли. Пусто — только петля, и тогда <paramref name="Listen"/> обязан быть петлёй.</param>
+public sealed record InstalledSettings(string Listen, IReadOnlyList<IPNetwork> AllowNetworks, WatchdogTiming Watchdog, RetentionLimits Retention)
 {
     /// <summary>
     /// Первые пределы хранения — из веса сеанса рендера в <c>e43-render-002</c>: 12,5 мин рендера — журнал 12,7 МБ
     /// и сырьё ETW около 1,3 МБ в минуту, всего около 30 МБ. 2 ГБ — десятки таких сеансов.
     /// </summary>
     public static InstalledSettings Default { get; } = new(
-        "127.0.0.1:8100",
-        false,
+        "0.0.0.0:8100",
+        [IPNetwork.Parse("192.168.0.0/24")],
         new WatchdogTiming(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5), 3),
         new RetentionLimits(TimeSpan.FromDays(30), 2048L * 1024 * 1024, TimeSpan.FromDays(180)));
 
@@ -67,10 +68,19 @@ public sealed record InstalledSettings(string Listen, bool AllowRemote, Watchdog
         {
             return (null, $"listen: ожидается адрес:порт, получено «{listen}»");
         }
-        var allowRemote = dto.AllowRemote ?? d.AllowRemote;
-        if (!IPAddress.IsLoopback(address) && !allowRemote)
+        var networks = new List<IPNetwork>();
+        foreach (var networkText in dto.AllowNetworks ?? [.. d.AllowNetworks.Select(n => n.ToString())])
         {
-            return (null, $"listen {listen}: не-петлевой адрес открывается только с allowRemote");
+            var (network, error) = RemoteAccess.ParseNetwork(networkText);
+            if (network is null)
+            {
+                return (null, $"allowNetworks: {error}");
+            }
+            networks.Add(network.Value);
+        }
+        if (!IPAddress.IsLoopback(address) && networks.Count == 0)
+        {
+            return (null, $"listen {listen}: не-петлевой адрес открывается только с непустым allowNetworks");
         }
 
         var poll = dto.Watchdog?.PollSeconds ?? d.Watchdog.Poll.TotalSeconds;
@@ -91,7 +101,7 @@ public sealed record InstalledSettings(string Listen, bool AllowRemote, Watchdog
 
         return (new InstalledSettings(
             listen,
-            allowRemote,
+            networks,
             new WatchdogTiming(TimeSpan.FromSeconds(poll), TimeSpan.FromSeconds(timeout), misses),
             new RetentionLimits(TimeSpan.FromDays(days), (long)(megabytes * 1024 * 1024), TimeSpan.FromDays(markedDays))), null);
     }
@@ -103,7 +113,7 @@ public sealed record InstalledSettings(string Listen, bool AllowRemote, Watchdog
         AllowTrailingCommas = true,
     };
 
-    private sealed record Dto(string? Listen, bool? AllowRemote, WatchdogDto? Watchdog, RetentionDto? Retention);
+    private sealed record Dto(string? Listen, string[]? AllowNetworks, WatchdogDto? Watchdog, RetentionDto? Retention);
 
     private sealed record WatchdogDto(double? PollSeconds, double? TimeoutSeconds, int? Misses);
 

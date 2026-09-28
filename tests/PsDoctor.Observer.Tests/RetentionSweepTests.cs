@@ -114,8 +114,9 @@ public sealed class RetentionSweepTests : IDisposable
         var (options, ошибка) = ObserverOptions.Parse(ключи);
 
         Assert.Null(ошибка);
-        Assert.Equal(IPAddress.Loopback, options!.Address);
+        Assert.Equal(IPAddress.Any, options!.Address);
         Assert.Equal(8100, options.Port);
+        Assert.Equal(InstalledSettings.Default.AllowNetworks, options.AllowNetworks!);
         Assert.Equal(раскладка.DataDirectory, options.DataDirectory);
         Assert.Equal(InstalledSettings.Default.Retention, options.Retention);
     }

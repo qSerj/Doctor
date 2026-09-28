@@ -134,9 +134,9 @@ public sealed class Watchdog
     public static IReadOnlyList<string> ObserverArguments(InstalledSettings settings, InstalledLayout layout)
     {
         var arguments = new List<string> { "--listen", settings.Listen };
-        if (settings.AllowRemote)
+        foreach (var network in settings.AllowNetworks)
         {
-            arguments.Add("--allow-remote");
+            arguments.AddRange(["--allow-network", network.ToString()]);
         }
         arguments.AddRange([
             "--key-file", layout.KeyFile,

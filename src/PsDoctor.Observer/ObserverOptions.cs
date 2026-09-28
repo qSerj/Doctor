@@ -7,9 +7,10 @@ namespace PsDoctor.Observer;
 /// <summary>
 /// Ключи запуска наблюдателя. Слушает 127.0.0.1, пока сетевой адрес не задан явно; ключ Bearer
 /// обязателен всегда, поэтому без ключа не открывается ни сетевой адрес, ни петля. Не-петлевой адрес
-/// вдобавок требует <c>--allow-remote</c>: за этим API стоит «запусти программу» и «отдай все журналы»,
+/// вдобавок требует хотя бы одного <c>--allow-network</c>: за этим API стоит «запусти программу» и «отдай все журналы»,
 /// а TLS у него нет и ключ едет по сети открытым текстом.
 /// </summary>
+/// <param name="AllowNetworks">Сети, из которых пускают кроме петли; <c>null</c> — только петля.</param>
 /// <param name="DataDirectory">Каталог журналов сеансов; <c>null</c> — <see cref="DefaultDataDirectory"/>.</param>
 /// <param name="ProgramPath">Программа, которую запускает <c>launch</c>; <c>null</c> — ProShow на обычном месте.</param>
 /// <param name="Retention">
@@ -17,7 +18,7 @@ namespace PsDoctor.Observer;
 /// установщика по умолчанию. Ни одного ключа — <c>null</c>: наблюдатель стенда ничего не удаляет.
 /// </param>
 public sealed record ObserverOptions(IPAddress Address, int Port, string Key, string? DataDirectory = null, string? ProgramPath = null,
-    RetentionLimits? Retention = null)
+    RetentionLimits? Retention = null, IReadOnlyList<IPNetwork>? AllowNetworks = null)
 {
     public const int DefaultPort = 8100;
 
@@ -33,7 +34,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
         string? keyFile = null;
         string? data = null;
         string? program = null;
-        var allowRemote = false;
+        var networks = new List<IPNetwork>();
         double? keepDays = null, keepMegabytes = null, keepMarkedDays = null;
 
         for (var i = 0; i < args.Count; i++)
@@ -69,16 +70,20 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                     }
                     i++;
                     break;
-                case "--allow-remote":
-                    allowRemote = true;
+                case "--allow-network" when value is not null:
+                    var (network, networkError) = RemoteAccess.ParseNetwork(value);
+                    if (network is null)
+                        return (null, $"--allow-network: {networkError}");
+                    networks.Add(network.Value);
+                    i++;
                     break;
                 default:
                     return (null, $"незнакомый ключ или нет значения: «{args[i]}»");
             }
         }
 
-        if (!IPAddress.IsLoopback(address) && !allowRemote)
-            return (null, $"--listen {address}: не-петлевой адрес открывается только с --allow-remote");
+        if (!IPAddress.IsLoopback(address) && networks.Count == 0)
+            return (null, $"--listen {address}: не-петлевой адрес открывается только с --allow-network");
         if (keyFile is null)
             return (null, "--key-file обязателен: без ключа наблюдатель не слушает");
         if (!File.Exists(keyFile))
@@ -98,7 +103,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                 keepMarkedDays is { } markedDays ? TimeSpan.FromDays(markedDays) : d.MarkedAge);
         }
 
-        return (new ObserverOptions(address, port, key, data, program, retention), null);
+        return (new ObserverOptions(address, port, key, data, program, retention, networks), null);
     }
 
     private static bool TryParseEndpoint(string text, out IPAddress address, out int port)

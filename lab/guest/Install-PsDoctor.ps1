@@ -62,7 +62,7 @@ Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $Root 'manifest.jso
     Set-Content -LiteralPath (Join-Path $Root 'Run-App.cmd') -Encoding ASCII
 @("@echo off", 'set "PSDOCTOR_INSTALL_ROOT=%~dp0"', 'if exist "%~dp0observer.url" set /p PSDOCTOR_OBSERVER_URL=<"%~dp0observer.url"', 'if exist "%~dp0observer.key" set "PSDOCTOR_OBSERVER_KEY_FILE=%~dp0observer.key"', '"%~dp0PsDoctor.Workbench\PsDoctor.Workbench.exe" %*') |
     Set-Content -LiteralPath (Join-Path $Root 'Run-Workbench.cmd') -Encoding ASCII
-@("@echo off", 'if not exist "%~dp0observer.key" (echo Нет observer.key в каталоге установки. Запустите Deploy-Observer.ps1. & exit /b 2)', '"%~dp0PsDoctor.Observer\PsDoctor.Observer.exe" --listen 0.0.0.0:8100 --allow-remote --key-file "%~dp0observer.key" --data "%~dp0sessions" %*') |
+@("@echo off", 'if not exist "%~dp0observer.key" (echo Нет observer.key в каталоге установки. Запустите Deploy-Observer.ps1. & exit /b 2)', '"%~dp0PsDoctor.Observer\PsDoctor.Observer.exe" --listen 0.0.0.0:8100 --allow-network 192.168.56.0/24 --key-file "%~dp0observer.key" --data "%~dp0sessions" %*') |
     Set-Content -LiteralPath (Join-Path $Root 'Run-Observer.cmd') -Encoding ASCII
 
 if ([string]::IsNullOrWhiteSpace($ObserverKeyFile)) {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using Avalonia;
@@ -27,6 +28,8 @@ public sealed partial class MainWindow : Window
     private long diagnosticAfter;
     private bool diagnosticPolling;
     private bool diagnosticDegraded;
+    private bool diagnosticCrashed;
+    private DateTime diagnosticStarted;
 
     public string TrayStatus => diagnosticSession is not null ? "Наблюдение за ProShow" :
         analysis?.Findings.Count > 0 ? "Есть рекомендации" :
@@ -514,6 +517,8 @@ public sealed partial class MainWindow : Window
     {
         diagnosticAfter = 0;
         diagnosticDegraded = false;
+        diagnosticCrashed = false;
+        diagnosticStarted = DateTime.Now;
         diagnosticTimer?.Stop();
         diagnosticTimer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         diagnosticTimer.Tick += async (_, _) => await PollDiagnosticAsync();
@@ -560,15 +565,14 @@ public sealed partial class MainWindow : Window
                     && fact.Data.TryGetProperty("abnormal", out var abnormal)
                     && abnormal.ValueKind == JsonValueKind.True)
                 {
-                    SetResult("ProShow неожиданно закрылся во время загрузки. Записанное сохранено.", "error");
+                    diagnosticCrashed = true;
+                    SetResult("ProShow неожиданно закрылся. Doctor дописывает сеанс.", "error");
                 }
                 if (fact.Kind == ProgramFactKinds.SessionFinished)
                 {
                     diagnosticSession = null;
                     diagnosticTimer?.Stop();
-                    SetResult(diagnosticDegraded
-                        ? "ProShow закрылся. Записанное сохранено, но запись файловой активности неполная."
-                        : "ProShow закрылся. Записанное сохранено.", diagnosticDegraded ? "warn" : "ok");
+                    ShowObservationOutcome(diagnosticCrashed ? "ProShow неожиданно закрылся" : "ProShow закрылся");
                     RefreshStatus();
                     return;
                 }
@@ -619,20 +623,31 @@ public sealed partial class MainWindow : Window
             await observer.StopAsync(session, cancellationToken);
             diagnosticSession = null;
             diagnosticTimer?.Stop();
-            SetResult(diagnosticDegraded ? "Наблюдение завершено. Записанное сохранено, запись файловой активности неполная." : "Наблюдение завершено. Записанное сохранено.",
-                diagnosticDegraded ? "warn" : "ok");
+            ShowObservationOutcome("Наблюдение завершено");
         }
         catch (ObserverException error) when (error.Error?.Error == ObserverErrors.SessionFinished)
         {
             diagnosticSession = null;
             diagnosticTimer?.Stop();
-            SetResult("Наблюдение уже завершилось. Записанное сохранено.", "ok");
+            ShowObservationOutcome(diagnosticCrashed ? "ProShow неожиданно закрылся" : "Наблюдение уже завершилось");
         }
         catch (Exception error)
         {
             SetResult("Не удалось закончить наблюдение: " + error.Message, "error");
         }
         RefreshStatus();
+    }
+
+    /// <summary>
+    /// Итог сеанса, как бы он ни кончился: что случилось и что дальше. Детекторов пока нет (Э4.4), поэтому
+    /// «дальше» всегда одно — сеанс ждёт инженера; время начала нужно ему, чтобы найти сеанс в списке.
+    /// </summary>
+    private void ShowObservationOutcome(string what)
+    {
+        var started = diagnosticStarted.ToString("dd.MM, HH:mm", CultureInfo.GetCultureInfo("ru-RU"));
+        var incomplete = diagnosticDegraded ? " Запись файловой активности неполная." : "";
+        SetResult($"{what}. Всё записано — сеанс от {started}.{incomplete} Инженер разберёт его, когда подключится.",
+            diagnosticCrashed ? "error" : diagnosticDegraded ? "warn" : "ok");
     }
 
     private async void ЗакончитьНаблюдение(object? sender, RoutedEventArgs args) => await FinishObservationAsync();

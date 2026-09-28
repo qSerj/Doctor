@@ -1,3 +1,4 @@
+using System.Net;
 using PsDoctor.Core.Observation;
 using Xunit;
 
@@ -11,8 +12,21 @@ public sealed class InstalledSettingsTests
         var (настройки, ошибка) = InstalledSettings.Parse("{}");
 
         Assert.Null(ошибка);
-        Assert.Equal(InstalledSettings.Default, настройки);
-        Assert.Equal(new Uri("http://127.0.0.1:8100/"), настройки!.LocalUrl);
+        var d = InstalledSettings.Default;
+        Assert.Equal(d.Listen, настройки!.Listen);
+        Assert.Equal(d.AllowNetworks, настройки.AllowNetworks);
+        Assert.Equal(d.Watchdog, настройки.Watchdog);
+        Assert.Equal(d.Retention, настройки.Retention);
+        Assert.Equal(new Uri("http://127.0.0.1:8100/"), настройки.LocalUrl);
+    }
+
+    [Fact]
+    public void По_умолчанию_слушает_сеть_и_пускает_192_168_0()
+    {
+        var d = InstalledSettings.Default;
+
+        Assert.Equal("0.0.0.0:8100", d.Listen);
+        Assert.Equal([IPNetwork.Parse("192.168.0.0/24")], d.AllowNetworks);
     }
 
     [Fact]
@@ -34,32 +48,37 @@ public sealed class InstalledSettingsTests
     }
 
     [Fact]
-    public void Сетевой_адрес_без_allowRemote_отвергается()
+    public void Сетевой_адрес_с_пустым_списком_сетей_отвергается()
     {
-        var (настройки, ошибка) = InstalledSettings.Parse("""{ "listen": "0.0.0.0:8100" }""");
+        var (настройки, ошибка) = InstalledSettings.Parse("""{ "listen": "0.0.0.0:8100", "allowNetworks": [] }""");
 
         Assert.Null(настройки);
-        Assert.Contains("allowRemote", ошибка!, StringComparison.Ordinal);
+        Assert.Contains("allowNetworks", ошибка!, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Сетевой_адрес_с_allowRemote_виден_с_этой_машины_через_петлю()
+    public void Петля_с_пустым_списком_сетей_допустима()
     {
-        var (настройки, _) = InstalledSettings.Parse("""{ "listen": "0.0.0.0:8100", "allowRemote": true }""");
+        var (настройки, ошибка) = InstalledSettings.Parse("""{ "listen": "127.0.0.1:8100", "allowNetworks": [] }""");
 
-        Assert.Equal(new Uri("http://127.0.0.1:8100/"), настройки!.LocalUrl);
+        Assert.Null(ошибка);
+        Assert.Empty(настройки!.AllowNetworks);
     }
 
-    [Theory]
-    [InlineData("не json")]
-    [InlineData("""{ "listen": "петля" }""")]
-    [InlineData("""{ "watchdog": { "misses": 0 } }""")]
-    [InlineData("""{ "retention": { "days": -1 } }""")]
-    public void Испорченные_настройки_ошибка_а_не_умолчания(string текст)
+    [Fact]
+    public void Список_сетей_из_файла_заменяет_умолчание()
     {
-        var (настройки, ошибка) = InstalledSettings.Parse(текст);
+        var (настройки, _) = InstalledSettings.Parse("""{ "allowNetworks": ["192.168.1.0/24", "10.0.0.0/8"] }""");
 
-        Assert.Null(настройки);
-        Assert.NotNull(ошибка);
+        Assert.Equal([IPNetwork.Parse("192.168.1.0/24"), IPNetwork.Parse("10.0.0.0/8")], настройки!.AllowNetworks);
+    }
+
+    [Fact]
+    public void Прежний_allowRemote_не_мешает_чтению()
+    {
+        var (настройки, ошибка) = InstalledSettings.Parse("""{ "listen": "127.0.0.1:8100", "allowRemote": false }""");
+
+        Assert.Null(ошибка);
+        Assert.Equal("127.0.0.1:8100", настройки!.Listen);
     }
 }

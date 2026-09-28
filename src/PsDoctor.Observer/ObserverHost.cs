@@ -26,9 +26,16 @@ public static class ObserverHost
         var app = builder.Build();
         var expected = Encoding.UTF8.GetBytes(options.Key);
 
-        // Проверка ключа стоит перед всеми маршрутами: открытых маршрутов у наблюдателя нет.
+        var networks = options.AllowNetworks ?? [];
+
+        // Сначала адрес, потом ключ: из чужой сети ключ не проверяется вовсе. Открытых маршрутов у наблюдателя нет.
         app.Use(async (context, next) =>
         {
+            if (!RemoteAccess.IsAllowed(context.Connection.RemoteIpAddress, networks))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
             if (!HasKey(context.Request.Headers.Authorization.ToString(), expected))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
