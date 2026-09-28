@@ -53,6 +53,7 @@ public sealed class FactRow
     {
         ProgramFactKinds.SessionStarted,
         ProgramFactKinds.SessionFinished,
+        ProgramFactKinds.Environment,
         ProgramFactKinds.ProgramLaunched,
         ProgramFactKinds.ProgramAttached,
         ProgramFactKinds.LaunchFailed,

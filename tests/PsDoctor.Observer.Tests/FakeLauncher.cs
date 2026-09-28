@@ -4,7 +4,7 @@ using PsDoctor.Core.Scenarios;
 namespace PsDoctor.Observer.Tests;
 
 /// <summary>Подменённый запуск: процессы — факты, которые пишет тест, выход — по команде теста.</summary>
-public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
+public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader
 {
     private readonly Lock gate = new();
     private readonly List<FakeRun> runs = [];
@@ -35,17 +35,36 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
     /// <summary>Поиск программы при подключении начался.</summary>
     public TaskCompletionSource FindStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Сколько раз искали программу для подключения.</summary>
+    public int Finds { get; private set; }
+
+    /// <summary>Поиск программы отказывает с этой причиной, хотя программа запущена: другой путь образа, два экземпляра.</summary>
+    public string? FindRefusal { get; set; }
+
+    /// <summary>Время создания найденного процесса: новый процесс с тем же номером — новое время.</summary>
+    public DateTime Started { get; set; } = DateTime.UnixEpoch;
+
+    /// <summary>Окружение для факта <c>environment</c>; <c>null</c> — факта нет, как у прежних сеансов тестов.</summary>
+    public EnvironmentFacts? Environment { get; set; }
+
+    public EnvironmentFacts? ReadEnvironment(int? processId) => Environment;
+
     public bool IsProgramRunning() => Foreign;
 
     public ProgramTarget FindRunning()
     {
         FindStarted.TrySetResult();
+        Finds++;
         if (FindDelay > TimeSpan.Zero)
         {
             Thread.Sleep(FindDelay);
         }
+        if (FindRefusal is not null)
+        {
+            throw new ProgramAttachException(FindRefusal);
+        }
         return Foreign
-            ? new ProgramTarget(1000, DateTime.UnixEpoch, @"C:\ProShow\proshow.exe")
+            ? new ProgramTarget(1000, Started, @"C:\ProShow\proshow.exe")
             : throw new ProgramAttachException(ObserverErrors.ProgramNotRunning);
     }
 

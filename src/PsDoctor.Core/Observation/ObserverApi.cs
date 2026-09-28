@@ -96,6 +96,9 @@ public static class ObserverErrors
     /// <summary>Запрос не разобран: нет тела, не JSON, кривой номер.</summary>
     public const string BadRequest = "bad-request";
 
+    /// <summary>Дежурство не подключается к программе, наблюдение за которой прекращено явным <c>stop</c>, пока она жива.</summary>
+    public const string StoppedProgram = "stopped-program";
+
     /// <summary>Метка не легла никуда: ни в живой сеанс, ни в файл меток.</summary>
     public const string IncidentNotStored = "incident-not-stored";
 }
@@ -114,6 +117,9 @@ public static class SessionOrigins
 {
     /// <summary>Мастер App «Решить проблему».</summary>
     public const string Wizard = "wizard";
+
+    /// <summary>Дежурство наблюдателя: увидел ProShow — подключился, монтажёру ничего не показывает.</summary>
+    public const string Watch = "watch";
 }
 
 /// <summary>Тело POST <see cref="ObserverRoutes.Incidents"/>.</summary>
@@ -171,7 +177,12 @@ public sealed record ConfirmAccepted(string Session);
 
 /// <summary>Ответ <c>/health</c>.</summary>
 /// <param name="Activity">Что наблюдатель делает сейчас; у наблюдателя до Э4.6 — <c>null</c>.</param>
-public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null);
+/// <param name="Watch">Дежурство; у наблюдателя до Э6.2 — <c>null</c>.</param>
+public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null, WatchStatus? Watch = null);
+
+/// <summary>Дежурство в ответе <c>/health</c>: включено ли и чем кончилось последнее неудачное подключение.</summary>
+/// <param name="LastRefusal">Имя последнего отказа подключения, <see cref="ObserverErrors"/>; удачное подключение его не стирает.</param>
+public sealed record WatchStatus(bool Enabled, string? LastRefusal = null, DateTime? LastRefusalUtc = null);
 
 /// <summary>
 /// Состояние наблюдателя в ответе <c>/health</c>: по нему пульт зажигает лампы, не читая журнал.

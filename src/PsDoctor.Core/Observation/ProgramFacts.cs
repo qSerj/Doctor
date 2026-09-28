@@ -81,6 +81,12 @@ public static class ProgramFactKinds
     /// </summary>
     public const string Incident = "incident";
 
+    /// <summary>
+    /// Окружение машины в начале сеанса — вторым фактом, сразу за <c>session-started</c>; данные —
+    /// <see cref="EnvironmentFacts"/>. Без него стенд с машиной монтажёра не сравнить.
+    /// </summary>
+    public const string Environment = "environment";
+
     public const string SessionFinished = "session-finished";
 }
 
@@ -264,6 +270,47 @@ public interface IProgramLauncher
     /// факт об этом уже записан.
     /// </summary>
     IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events);
+}
+
+/// <summary>
+/// Окружение машины и программы: всё, что владелец назвал вероятной причиной различий между стендом и машиной
+/// монтажёра (Э6.2, часть В). Незнание — <c>null</c>, а не отказ: сеанс не ждёт и не падает из-за одного вопроса.
+/// </summary>
+/// <param name="WindowsBuild">Сборка Windows с номером обновления, например <c>10.0.19045.4894</c>.</param>
+/// <param name="WindowsRelease">Выпуск, например <c>22H2</c>.</param>
+/// <param name="ProgramVersion">Версия файла программы.</param>
+/// <param name="ProgramElevated">Процесс программы повышен; у запуска наблюдателем — <c>null</c>: процесса ещё нет.</param>
+/// <param name="EnableLua">UAC, значение <c>EnableLUA</c>.</param>
+/// <param name="Antivirus">Антивирусы из центра безопасности Windows; <c>null</c> — центр не ответил.</param>
+/// <param name="KLite">Установленные K-Lite Codec Pack по разделу удаления программ.</param>
+public sealed record EnvironmentFacts(
+    string? WindowsBuild,
+    string? WindowsRelease,
+    string ProgramPath,
+    bool ProgramExists,
+    string? ProgramVersion,
+    bool? ProgramElevated,
+    int? EnableLua,
+    IReadOnlyList<AntivirusProduct>? Antivirus,
+    IReadOnlyList<InstalledProduct> KLite,
+    long? MemoryTotalBytes,
+    long? MemoryFreeBytes,
+    DiskSpace? SystemDisk,
+    DiskSpace? TempDisk);
+
+/// <param name="State">Слово состояния <c>productState</c> центра безопасности как есть.</param>
+public sealed record AntivirusProduct(string Name, int? State);
+
+public sealed record InstalledProduct(string Name, string? Version);
+
+public sealed record DiskSpace(string Root, long FreeBytes, long TotalBytes);
+
+/// <summary>Кто умеет описать окружение программы; запускатель на Windows — умеет, подмена в тестах — по желанию.</summary>
+public interface IEnvironmentReader
+{
+    /// <param name="processId">Процесс программы, если он уже есть: по нему видно, повышен ли он.</param>
+    /// <returns><c>null</c> — описывать нечего, факта не будет.</returns>
+    EnvironmentFacts? ReadEnvironment(int? processId);
 }
 
 /// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>

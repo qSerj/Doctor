@@ -11,6 +11,7 @@ namespace PsDoctor.Observer;
 /// а TLS у него нет и ключ едет по сети открытым текстом.
 /// </summary>
 /// <param name="AllowNetworks">Сети, из которых пускают кроме петли; <c>null</c> — только петля.</param>
+/// <param name="Watch">Дежурство, ключ <c>--watch</c>: наблюдатель сам подключается к запущенному ProShow.</param>
 /// <param name="DataDirectory">Каталог журналов сеансов; <c>null</c> — <see cref="DefaultDataDirectory"/>.</param>
 /// <param name="ProgramPath">Программа, которую запускает <c>launch</c>; <c>null</c> — ProShow на обычном месте.</param>
 /// <param name="Retention">
@@ -18,7 +19,7 @@ namespace PsDoctor.Observer;
 /// установщика по умолчанию. Ни одного ключа — <c>null</c>: наблюдатель стенда ничего не удаляет.
 /// </param>
 public sealed record ObserverOptions(IPAddress Address, int Port, string Key, string? DataDirectory = null, string? ProgramPath = null,
-    RetentionLimits? Retention = null, IReadOnlyList<IPNetwork>? AllowNetworks = null)
+    RetentionLimits? Retention = null, IReadOnlyList<IPNetwork>? AllowNetworks = null, bool Watch = false)
 {
     public const int DefaultPort = 8100;
 
@@ -36,6 +37,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
         string? program = null;
         var networks = new List<IPNetwork>();
         double? keepDays = null, keepMegabytes = null, keepMarkedDays = null;
+        var watch = false;
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -77,6 +79,9 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                     networks.Add(network.Value);
                     i++;
                     break;
+                case "--watch":
+                    watch = true;
+                    break;
                 default:
                     return (null, $"незнакомый ключ или нет значения: «{args[i]}»");
             }
@@ -103,7 +108,7 @@ public sealed record ObserverOptions(IPAddress Address, int Port, string Key, st
                 keepMarkedDays is { } markedDays ? TimeSpan.FromDays(markedDays) : d.MarkedAge);
         }
 
-        return (new ObserverOptions(address, port, key, data, program, retention, networks), null);
+        return (new ObserverOptions(address, port, key, data, program, retention, networks, watch), null);
     }
 
     private static bool TryParseEndpoint(string text, out IPAddress address, out int port)

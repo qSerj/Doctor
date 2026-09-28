@@ -130,7 +130,7 @@ public sealed class Watchdog
         return process;
     }
 
-    /// <summary>Ключи наблюдателя из настроек: адрес, ключ, каталог сеансов и пределы хранения.</summary>
+    /// <summary>Ключи наблюдателя из настроек: адрес, ключ, каталог сеансов, пределы хранения и дежурство.</summary>
     public static IReadOnlyList<string> ObserverArguments(InstalledSettings settings, InstalledLayout layout)
     {
         var arguments = new List<string> { "--listen", settings.Listen };
@@ -145,6 +145,10 @@ public sealed class Watchdog
             "--keep-mb", (settings.Retention.Bytes / (1024.0 * 1024)).ToString(CultureInfo.InvariantCulture),
             "--keep-marked-days", settings.Retention.MarkedAge.TotalDays.ToString(CultureInfo.InvariantCulture),
         ]);
+        if (settings.Watch)
+        {
+            arguments.Add("--watch");
+        }
         return arguments;
     }
 

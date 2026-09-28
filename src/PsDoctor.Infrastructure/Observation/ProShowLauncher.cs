@@ -7,7 +7,7 @@ namespace PsDoctor.Infrastructure.Observation;
 
 /// <summary>Запуск ProShow с файлом шоу под заданием — так же, как в опытах: программа и путь в кавычках.</summary>
 [SupportedOSPlatform("windows")]
-public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
+public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader
 {
     public const string DefaultProgramPath = @"C:\Program Files (x86)\Photodex\ProShow Producer\proshow.exe";
 
@@ -73,6 +73,8 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
             _ => found[0],
         };
     }
+
+    public EnvironmentFacts ReadEnvironment(int? processId) => MachineEnvironment.Read(ProgramPath, processId);
 
     public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
     {

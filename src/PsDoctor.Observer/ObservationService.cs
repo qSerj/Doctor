@@ -26,6 +26,9 @@ public sealed class ObservationService : IAsyncDisposable
     private readonly RetentionLimits? retention;
     // Пометка закрытого сеанса не меняется: журнал читается ради неё один раз за жизнь наблюдателя.
     private readonly Dictionary<string, bool> marks = [];
+    // Процессы, наблюдение за которыми прекращено явным stop, и когда: дежурство к ним не подключается, пока они живы.
+    // Процесс, получивший тот же номер позже, создан после остановки — его это не касается.
+    private readonly Dictionary<int, DateTime> stopped = [];
     private readonly Lock sweeping = new();
     private readonly Lock incidents = new();
 
@@ -91,6 +94,7 @@ public sealed class ObservationService : IAsyncDisposable
                     showPath: ((LaunchStep)parsed.Scenario.Steps[0]).ShowPath,
                     origin: origin);
                 current = session;
+                RecordEnvironment(session, null);
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
                     // Без помощника ETW сеанс идёт с фактом etw-state unavailable, а не отказом (Э6.2, часть А).
@@ -117,7 +121,10 @@ public sealed class ObservationService : IAsyncDisposable
         }
     }
 
-    /// <summary>Начинает сеанс чтения уже работающего ProShow; запуск и команды ему запрещены.</summary>
+    /// <summary>
+    /// Начинает сеанс чтения уже работающего ProShow; запуск и команды ему запрещены. Дежурство (<see cref="SessionOrigins.Watch"/>)
+    /// не подключается к процессу, наблюдение за которым прекращено явным <c>stop</c>.
+    /// </summary>
     public (AttachAccepted? Accepted, int Status, ObserverError? Error) Attach(string? origin = null)
     {
         lock (gate)
@@ -133,6 +140,10 @@ public sealed class ObservationService : IAsyncDisposable
             {
                 return (null, StatusCodes.Status409Conflict, new ObserverError(error.Reason));
             }
+            if (origin == SessionOrigins.Watch && stopped.TryGetValue(target.ProcessId, out var stoppedAt) && target.StartedUtc <= stoppedAt)
+            {
+                return (null, StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.StoppedProgram));
+            }
 
             var session = ObservationSession.Open(directory,
                 SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
@@ -140,6 +151,7 @@ public sealed class ObservationService : IAsyncDisposable
             current = session;
             try
             {
+                RecordEnvironment(session, target.ProcessId);
                 var run = session.Attach(target, attacher);
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
@@ -154,6 +166,12 @@ public sealed class ObservationService : IAsyncDisposable
             {
                 Discard(session);
                 return (null, StatusCodes.Status409Conflict, new ObserverError(error.Reason));
+            }
+            catch (IOException)
+            {
+                // Журнал не пишется — например, кончилось место: сеанс не начат, программа не тронута.
+                Discard(session);
+                return (null, StatusCodes.Status503ServiceUnavailable, new ObserverError(ObserverErrors.AttachFailed));
             }
         }
     }
@@ -354,6 +372,10 @@ public sealed class ObservationService : IAsyncDisposable
             if (session is not null)
             {
                 scenario?.Cancel();
+                if (session.ProcessId is { } pid)
+                {
+                    stopped[pid] = utcNow();
+                }
             }
         }
         if (session is null)
@@ -575,6 +597,18 @@ public sealed class ObservationService : IAsyncDisposable
     }
 
     private static RunResult Refuse(int status, ObserverError error) => new(null, status, error);
+
+    /// <summary>
+    /// Окружение машины — вторым фактом, сразу за <c>session-started</c>. Читается под замком: центр безопасности
+    /// Windows отвечает до пяти секунд, это меньше, чем ждёт старт ETW.
+    /// </summary>
+    private void RecordEnvironment(ObservationSession session, int? processId)
+    {
+        if (launcher is IEnvironmentReader reader && reader.ReadEnvironment(processId) is { } environment)
+        {
+            session.Log.Record(ProgramFactKinds.Environment, environment);
+        }
+    }
 
     private void OnScenarioDone(CancellationTokenSource cancellation)
     {

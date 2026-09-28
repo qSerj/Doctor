@@ -15,7 +15,12 @@ public sealed record WatchdogTiming(TimeSpan Poll, TimeSpan Timeout, int Misses)
 /// </summary>
 /// <param name="Listen">Где слушает наблюдатель. По умолчанию все адреса машины: инженер подключается из локальной сети.</param>
 /// <param name="AllowNetworks">Сети, из которых пускают кроме петли. Пусто — только петля, и тогда <paramref name="Listen"/> обязан быть петлёй.</param>
-public sealed record InstalledSettings(string Listen, IReadOnlyList<IPNetwork> AllowNetworks, WatchdogTiming Watchdog, RetentionLimits Retention)
+/// <param name="Watch">
+/// Дежурство: наблюдатель сам подключается к каждому запущенному ProShow. Нет поля — выключено; шаблон установщика
+/// его включает (Э6.2).
+/// </param>
+public sealed record InstalledSettings(string Listen, IReadOnlyList<IPNetwork> AllowNetworks, WatchdogTiming Watchdog, RetentionLimits Retention,
+    bool Watch = false)
 {
     /// <summary>
     /// Первые пределы хранения — из веса сеанса рендера в <c>e43-render-002</c>: 12,5 мин рендера — журнал 12,7 МБ
@@ -103,7 +108,8 @@ public sealed record InstalledSettings(string Listen, IReadOnlyList<IPNetwork> A
             listen,
             networks,
             new WatchdogTiming(TimeSpan.FromSeconds(poll), TimeSpan.FromSeconds(timeout), misses),
-            new RetentionLimits(TimeSpan.FromDays(days), (long)(megabytes * 1024 * 1024), TimeSpan.FromDays(markedDays))), null);
+            new RetentionLimits(TimeSpan.FromDays(days), (long)(megabytes * 1024 * 1024), TimeSpan.FromDays(markedDays)),
+            dto.Watch ?? d.Watch), null);
     }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -113,7 +119,7 @@ public sealed record InstalledSettings(string Listen, IReadOnlyList<IPNetwork> A
         AllowTrailingCommas = true,
     };
 
-    private sealed record Dto(string? Listen, string[]? AllowNetworks, WatchdogDto? Watchdog, RetentionDto? Retention);
+    private sealed record Dto(string? Listen, string[]? AllowNetworks, WatchdogDto? Watchdog, RetentionDto? Retention, bool? Watch);
 
     private sealed record WatchdogDto(double? PollSeconds, double? TimeoutSeconds, int? Misses);
 

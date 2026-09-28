@@ -55,11 +55,19 @@ public static class ObserverHost
             retention: options.Retention);
         // Проход хранения при старте — в фоне: сотни журналов не должны задерживать первый ответ /health сторожу.
         app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(service.Sweep));
+        var watch = options.Watch ? new WatchDuty(service) : null;
+        if (watch is not null)
+        {
+            app.Lifetime.ApplicationStarted.Register(watch.Start);
+            // Дежурство встаёт раньше, чем закрывается сеанс: иначе оно подключилось бы снова к той же программе.
+            app.Lifetime.ApplicationStopping.Register(watch.Dispose);
+        }
         var stopping = app.Lifetime.ApplicationStopping;
         // Остановка наблюдателя закрывает сеанс, но не программу.
         app.Lifetime.ApplicationStopped.Register(() => service.DisposeAsync().AsTask().GetAwaiter().GetResult());
 
-        app.MapGet(ObserverRoutes.Health, () => Results.Json(health with { Activity = service.Activity() }, ObservationJson.Options));
+        app.MapGet(ObserverRoutes.Health, () => Results.Json(
+            health with { Activity = service.Activity(), Watch = watch?.Status ?? new WatchStatus(false) }, ObservationJson.Options));
 
         app.MapPost(ObserverRoutes.Scenarios, async (HttpContext context) =>
         {
