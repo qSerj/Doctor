@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon>Assets/workbench.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />
@@ -13,6 +14,9 @@
   <ItemGroup>
     <!-- Сценарии опытов едут рядом с пультом и открываются из него списком. -->
     <None Include="Experiments/*.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/workbench-head.ico" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../PsDoctor.Observer.Client/PsDoctor.Observer.Client.csproj" />

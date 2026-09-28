@@ -7,6 +7,7 @@
         MinWidth="900"
         MinHeight="560"
         Background="#15171B"
+        Icon="/Assets/workbench-head.ico"
         Title="psdoctor — пульт наблюдателя">
   <Window.DataTemplates>
     <!-- Лампа: что горит словами, цвет — по признаку. Подписи и точки нет: состояние читается по цвету и строке
