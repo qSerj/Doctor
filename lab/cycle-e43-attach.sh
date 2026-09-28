@@ -180,10 +180,10 @@ restart)
   attach_or_die
   sleep 10
   say "перезапуск наблюдателя посреди сеанса (ETW-помощник не трогается)"
-  guest_ps "Stop-ScheduledTask -TaskName psdoctor-observer
+  guest_ps "Stop-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName watchdog
 Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -notmatch 'etw-helper' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }
 Start-Sleep -Seconds 1
-Start-ScheduledTask -TaskName psdoctor-observer
+Start-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName watchdog
 'перезапущен'"
   for _ in $(seq 1 30); do "${psdoctor[@]}" observe health >/dev/null 2>&1 && break; sleep 1; done
   observe health
@@ -243,7 +243,7 @@ etw)
   observe sessions
   before="$reply"
   say "останавливаю ETW-помощник"
-  guest_ps "Stop-ScheduledTask -TaskName psdoctor-etw
+  guest_ps "Stop-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName etw
 Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -match 'etw-helper' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }
 'остановлен'"
   observe attach
@@ -260,7 +260,7 @@ Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-O
   done
   check "ProShow жив после отказа" "$(alive "$(proshow_pids)")"
   say "запускаю ETW-помощник обратно"
-  guest_ps "Start-ScheduledTask -TaskName psdoctor-etw
+  guest_ps "Start-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName etw
 \$clock = [Diagnostics.Stopwatch]::StartNew()
 while (-not (Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -match 'etw-helper' }) -and \$clock.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 200 }
 'помощник: ' + [bool](Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -match 'etw-helper' })"

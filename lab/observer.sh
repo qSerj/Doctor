@@ -1,7 +1,9 @@
 #!/bin/bash
 # Оснастка стенда. Не часть продукта, см. lab/README.md.
-# Конвейер наблюдателя (Ш0 Э4.0): собрать на Linux, доставить на стенд, перезапустить задачей
-# в сеансе пользователя, спросить /health с хоста и прогнать тесты на стенде обоими путями.
+# Конвейер наблюдателя: собрать пакет Doctor (install/package.sh), поставить его на стенд продуктовым
+# установщиком, спросить /health с хоста и прогнать тесты на стенде обоими путями. Отдельного
+# лабораторного развёртывания нет: стенд стоит так же, как машина монтажёра, отличаются только настройки
+# (lab/guest/stand-settings.json) и ключ, который берётся с хоста.
 #   lab/observer.sh              — всё
 #   lab/observer.sh --no-tests   — без тестов на стенде
 #
@@ -23,6 +25,11 @@ tests=1
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 stage="$exchange/observer"
 guest_stage='\\VBoxSvr\exchange\observer'
+packages="$exchange/doctor"
+guest_packages='\\VBoxSvr\exchange\doctor'
+# Ключ и настройки установленного Doctor на стенде; установщик их не трогает.
+guest_key='C:/Users/user/AppData/Local/PsDoctor/observer.key'
+guest_settings='C:/ProgramData/PsDoctor/settings.json'
 ssh_opts=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$lab_key")
 
 step() { printf '\n== %s с: %s\n' "$SECONDS" "$*" >&2; }
@@ -33,14 +40,16 @@ cd "$repo"
 revision="$(git rev-parse HEAD)"
 [ -n "$(git status --porcelain)" ] && revision="$revision-dirty"
 
-step "сборка $revision"
-dotnet publish src/PsDoctor.Observer -c Release -r win-x64 --self-contained false \
-  -p:SourceRevisionId="$revision" -o artifacts/lab/observer --verbosity quiet --nologo
+step "пакет Doctor $revision"
+# Прежние пакеты стенду не нужны: ставится всегда последний.
+mkdir -p "$packages"
+rm -rf "$packages"/PsDoctor-*
+package="$(bash install/package.sh "$packages" | tail -n 1)"
+package_name="$(basename "$package")"
 
 step "доставка в папку обмена"
-mkdir -p "$stage"/{bin,lab,packages}
-sync_dir artifacts/lab/observer "$stage/bin"
-cp -f lab/guest/Deploy-Observer.ps1 lab/guest/Test-Stand.ps1 "$stage/lab/"
+mkdir -p "$stage"/{lab,packages}
+cp -f lab/guest/Test-Stand.ps1 "$stage/lab/"
 if [ "$tests" = 1 ]; then
   # Исходники — то, что видит git, без двора и памяти: они в .gitignore и на стенд не уходят.
   step "исходники для тестов на стенде"
@@ -59,14 +68,17 @@ if [ ! -s "$secret" ]; then
   (umask 077; openssl rand -hex 32 > "$secret")
   echo "создан $secret" >&2
 fi
-ssh "${ssh_opts[@]}" "user@$host" 'if not exist C:\lab\observer mkdir C:\lab\observer'
-scp "${ssh_opts[@]}" -q "$secret" "user@$host:C:/lab/observer/observer.key"
+ssh "${ssh_opts[@]}" "user@$host" 'if not exist C:\Users\user\AppData\Local\PsDoctor mkdir C:\Users\user\AppData\Local\PsDoctor & if not exist C:\ProgramData\PsDoctor mkdir C:\ProgramData\PsDoctor'
+# Сторож берёт ключ, который уже лежит в профиле, и не меняет его.
+scp "${ssh_opts[@]}" -q "$secret" "user@$host:$guest_key"
+step "настройки стенда"
+scp "${ssh_opts[@]}" -q lab/guest/stand-settings.json "user@$host:$guest_settings"
 # Ключ без пробельных символов: файл, приехавший с Windows-машины, кончается CR, и curl вставляет его
 # в заголовок как есть — наблюдатель отвечает 400 без тела. Клиенты на .NET значение обрезают сами.
 key="$(tr -d '[:space:]' < "$secret")"
 
-step "перезапуск на стенде"
-guest_ps Deploy-Observer.ps1 -Listen "$host:$port"
+step "установка на стенде"
+ssh "${ssh_opts[@]}" "user@$host" "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $guest_packages\\$package_name\\Install-Doctor.ps1 -User user -NoPause"
 
 step "/health с хоста"
 url="http://$host:$port/health"

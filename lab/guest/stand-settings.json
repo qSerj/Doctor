@@ -1,0 +1,8 @@
+{
+  // Оснастка стенда. Не часть продукта, см. lab/README.md.
+  // Настройки Doctor на стенде; lab/observer.sh кладёт их в %ProgramData%\PsDoctor до установщика.
+  // Пускается только хост VirtualBox. Журналы стенда — свидетельства опытов: хранятся годами.
+  "listen": "0.0.0.0:8100",
+  "allowNetworks": [ "192.168.56.1/32" ],
+  "retention": { "days": 3650, "megabytes": 102400, "markedDays": 3650 }
+}

@@ -42,3 +42,5 @@ path.write_text(json.dumps({
 PY
 mv "$work" "$package"
 printf 'Готово: %s\n' "$package" >&2
+# Путь пакета — в stdout: по нему lab/observer.sh ставит стенд.
+printf '%s\n' "$package"
