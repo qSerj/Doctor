@@ -249,6 +249,38 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
+    public void Подключение_начинает_пассивный_сеанс_где_команды_программе_отвергаются() => ОдинПоток.Выполнить(async () =>
+    {
+        запуск.Чужой = true;
+        using var пульт = await ПодключённыйAsync();
+
+        await пульт.AttachAsync();
+        Assert.Contains("подключён к ProShow, pid 1000", пульт.Status, StringComparison.Ordinal);
+        await ОдинПоток.ЖдатьAsync(() => пульт.Facts.Any(факт => факт.Kind == ProgramFactKinds.ProgramAttached), "факта подключения");
+
+        // Лента идёт: то, что программа делает после подключения, доходит до пульта.
+        запуск.Последний!.Отсчёты(3);
+        await ОдинПоток.ЖдатьAsync(() => пульт.Facts.Count(факт => факт.Kind == ProgramFactKinds.ProcessSample) == 3, "отсчётов в ленте");
+
+        // Команды программе пассивный сеанс отвергает целиком, программа их не видит.
+        await пульт.CloseProgramAsync();
+        Assert.Contains(ObserverErrors.PassiveSession, пульт.Status, StringComparison.Ordinal);
+        await пульт.PressAsync("Ok");
+        Assert.Contains(ObserverErrors.PassiveSession, пульт.Status, StringComparison.Ordinal);
+        Assert.Equal(0, запуск.Последний.Закрытий);
+        Assert.Empty(запуск.Последний.Нажатия);
+        Assert.True(запуск.Последний.Жив);
+
+        // Шаги оператора — можно: так идёт опыт e42-slide-001-attach.
+        пульт.ScenarioText = "say \"Дважды щёлкните по третьему слайду\"\nwait confirm 20";
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.AwaitingConfirm, "ожидания подтверждения");
+        await пульт.ConfirmAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+        Assert.Contains("completed", пульт.Outcome, StringComparison.Ordinal);
+    });
+
+    [Fact]
     public void Кнопки_диалога_без_имени_не_показываются()
     {
         var диалог = new DialogRow(new DialogInfo(1, "Slide Options", [], ["", " ", "OK", "Cancel"]));

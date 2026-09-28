@@ -5,15 +5,34 @@ namespace PsDoctor.Workbench.Tests;
 
 /// <summary>
 /// Подменённый запуск программы: диалог открыт с самого начала, нажатие его закрывает, выход — по команде
-/// теста. ProShow для этих тестов не нужен: пульт проверяется на настоящих маршрутах наблюдателя.
+/// теста. Программу, открытую мимо наблюдателя, можно подключить — без диалога. ProShow для этих тестов не
+/// нужен: пульт проверяется на настоящих маршрутах наблюдателя.
 /// </summary>
-internal sealed class Запуск : IProgramLauncher
+internal sealed class Запуск : IProgramLauncher, IProgramAttacher
 {
     private readonly Lock замок = new();
 
     public Прогон? Последний { get; private set; }
 
-    public bool IsProgramRunning() => Последний is { Жив: true };
+    /// <summary>ProShow открыт мимо наблюдателя: его можно найти и подключить.</summary>
+    public bool Чужой { get; set; }
+
+    public bool IsProgramRunning() => Чужой || Последний is { Жив: true };
+
+    public ProgramTarget FindRunning() => Чужой
+        ? new ProgramTarget(1000, DateTime.UnixEpoch, @"C:\ProShow\proshow.exe")
+        : throw new ProgramAttachException(ObserverErrors.ProgramNotRunning);
+
+    public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
+    {
+        var прогон = new Прогон(facts, events);
+        facts.Record(ProgramFactKinds.ProgramAttached, target, target.ProcessId);
+        lock (замок)
+        {
+            Последний = прогон;
+        }
+        return прогон;
+    }
 
     public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
     {
