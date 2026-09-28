@@ -20,7 +20,7 @@ export PROJECT_SOURCE='\\VBoxSvr\exchange\projects\slow-001'
 export PROJECT_DIR='C:\lab\slow-001'
 
 # Только имя файла шоу, без каталога.
-export SHOW_FILE='Юбилей папыpsh.psh'
+export SHOW_FILE='ИМЯ_ПРОЕКТА.psh'
 
 # Каталог журналов текущей проверки.
 export OUT="$PWD/artifacts/lab/slow-project"
