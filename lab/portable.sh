@@ -16,6 +16,16 @@ else
 fi
 export PYTHON
 
+# Стенд — мимо прокси. На Windows-хосте в окружении бывает HTTP_PROXY на местный прокси, и тогда curl и клиент
+# наблюдателя на .NET ходят к стенду через него: прокси отвечает 503. Адрес стенда дописывается в NO_PROXY
+# точным адресом — диапазоны .NET не понимает.
+stand_address="${LAB_HOST:-192.168.56.5}"
+case ",${NO_PROXY:-}," in
+  *",$stand_address,"*) ;;
+  *) NO_PROXY="${NO_PROXY:+$NO_PROXY,}$stand_address" ;;
+esac
+export NO_PROXY no_proxy="$NO_PROXY"
+
 # Содержимое каталога-источника в каталог-приёмник, как rsync -a --delete: лишнее в приёмнике удаляется.
 sync_dir() {
   local from="$1" to="$2"

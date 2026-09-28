@@ -6,6 +6,8 @@
 # (lab/guest/stand-settings.json) и ключ, который берётся с хоста.
 #   lab/observer.sh              — всё
 #   lab/observer.sh --no-tests   — без тестов на стенде
+#   lab/observer.sh --watch      — с дежурством: на стенд едет копия настроек с "watch": true (проверка Э6.2);
+#                                  ключи сочетаются
 #
 # Стенд должен быть запущен. Сети у стенда нет, поэтому пакеты для тестов восстанавливаются здесь
 # в локальный источник и уходят вместе с исходниками через папку обмена.
@@ -20,7 +22,14 @@ exchange="${LAB_EXCHANGE:-$HOME/Lab/exchange}"
 port="${OBSERVER_PORT:-8100}"
 secret="${OBSERVER_KEY:-$HOME/Lab/secrets/observer.key}"
 tests=1
-[ "${1:-}" = "--no-tests" ] && tests=0
+watch=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-tests) tests=0 ;;
+    --watch) watch=1 ;;
+    *) echo "незнакомый ключ: $arg" >&2; exit 2 ;;
+  esac
+done
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 stage="$exchange/observer"
@@ -72,7 +81,15 @@ ssh "${ssh_opts[@]}" "user@$host" 'if not exist C:\Users\user\AppData\Local\PsDo
 # Сторож берёт ключ, который уже лежит в профиле, и не меняет его.
 scp "${ssh_opts[@]}" -q "$secret" "user@$host:$guest_key"
 step "настройки стенда"
-scp "${ssh_opts[@]}" -q lab/guest/stand-settings.json "user@$host:$guest_settings"
+settings=lab/guest/stand-settings.json
+if [ "$watch" = 1 ]; then
+  # Сам файл стенда дежурства не включает: копия с "watch": true — только для проверки дежурства (Э6.2).
+  # Настройки разбираются с комментариями и висячими запятыми, поэтому поле встаёт первой строкой объекта.
+  [ "$(head -n 1 "$settings" | tr -d '\r')" = "{" ] || { echo "$settings должен начинаться строкой «{»" >&2; exit 1; }
+  { echo '{'; echo '  "watch": true,'; tail -n +2 "$settings"; } > "$stage/stand-settings.json"
+  settings="$stage/stand-settings.json"
+fi
+scp "${ssh_opts[@]}" -q "$settings" "user@$host:$guest_settings"
 # Ключ без пробельных символов: файл, приехавший с Windows-машины, кончается CR, и curl вставляет его
 # в заголовок как есть — наблюдатель отвечает 400 без тела. Клиенты на .NET значение обрезают сами.
 key="$(tr -d '[:space:]' < "$secret")"
@@ -91,6 +108,10 @@ done
 echo "$body"
 commit="$(printf '%s' "$body" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["commit"])')"
 [ "$commit" = "$revision" ] || { echo "коммит на стенде $commit, собран $revision" >&2; exit 1; }
+watching="$(printf '%s' "$body" | "$PYTHON" -c 'import json,sys; print(str((json.load(sys.stdin).get("watch") or {}).get("enabled")).lower())')"
+expected="$([ "$watch" = 1 ] && echo true || echo false)"
+[ "$watching" = "$expected" ] || { echo "дежурство на стенде: $watching, ожидалось $expected" >&2; exit 1; }
+echo "дежурство: $watching" >&2
 unauthorized="$(curl -s -o /dev/null -w '%{http_code}' -m 2 "$url")"
 [ "$unauthorized" = 401 ] || { echo "без ключа ответ $unauthorized, ожидался 401" >&2; exit 1; }
 echo "без ключа: $unauthorized" >&2

@@ -86,6 +86,7 @@ public sealed class ObservationService : IAsyncDisposable
                 {
                     return Refuse(StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.ProgramRunning));
                 }
+                var environment = ReadEnvironment(null);
                 session = ObservationSession.Open(
                     directory,
                     SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
@@ -94,7 +95,7 @@ public sealed class ObservationService : IAsyncDisposable
                     showPath: ((LaunchStep)parsed.Scenario.Steps[0]).ShowPath,
                     origin: origin);
                 current = session;
-                RecordEnvironment(session, null);
+                RecordEnvironment(session, environment);
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
                     // Без помощника ETW сеанс идёт с фактом etw-state unavailable, а не отказом (Э6.2, часть А).
@@ -145,13 +146,16 @@ public sealed class ObservationService : IAsyncDisposable
                 return (null, StatusCodes.Status409Conflict, new ObserverError(ObserverErrors.StoppedProgram));
             }
 
+            // Окружение читается до открытия сеанса: центр безопасности отвечает секундами, и всё это время открытый, но ещё
+            // не подключённый сеанс выглядел бы в /health запуском, а не подключением.
+            var environment = ReadEnvironment(target.ProcessId);
             var session = ObservationSession.Open(directory,
                 SessionIds.New(utcNow(), id => File.Exists(Path.Combine(directory, id + SessionIds.JournalExtension))),
                 build, OnFinished, origin: origin);
             current = session;
             try
             {
-                RecordEnvironment(session, target.ProcessId);
+                RecordEnvironment(session, environment);
                 var run = session.Attach(target, attacher);
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
@@ -599,12 +603,16 @@ public sealed class ObservationService : IAsyncDisposable
     private static RunResult Refuse(int status, ObserverError error) => new(null, status, error);
 
     /// <summary>
-    /// Окружение машины — вторым фактом, сразу за <c>session-started</c>. Читается под замком: центр безопасности
-    /// Windows отвечает до пяти секунд, это меньше, чем ждёт старт ETW.
+    /// Окружение машины для факта <c>environment</c>. Читается под замком, до открытия сеанса: центр безопасности Windows
+    /// отвечает до пяти секунд — меньше, чем ждёт старт ETW.
     /// </summary>
-    private void RecordEnvironment(ObservationSession session, int? processId)
+    private EnvironmentFacts? ReadEnvironment(int? processId) =>
+        launcher is IEnvironmentReader reader ? reader.ReadEnvironment(processId) : null;
+
+    /// <summary>Окружение — вторым фактом, сразу за <c>session-started</c>.</summary>
+    private static void RecordEnvironment(ObservationSession session, EnvironmentFacts? environment)
     {
-        if (launcher is IEnvironmentReader reader && reader.ReadEnvironment(processId) is { } environment)
+        if (environment is not null)
         {
             session.Log.Record(ProgramFactKinds.Environment, environment);
         }
