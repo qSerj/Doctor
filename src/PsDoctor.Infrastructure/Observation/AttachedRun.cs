@@ -111,6 +111,10 @@ public sealed class AttachedRun : IProgramRun
         {
             using (process)
             {
+                // Процесс без потоков не живёт: родитель умер посреди CreateProcess, и первый поток так и не
+                // появился. Такой объект держится только нашим же хэндлом, и без этой проверки сеанс не закрылся бы
+                // никогда (28.09.2026, снятие proshow.exe диспетчером задач).
+                if (process.Threads.Count == 0) continue;
                 var handle = OpenProcess(ProcessQueryLimitedInformation | Synchronize, false, process.Id);
                 if (handle == IntPtr.Zero) continue;
                 if (!GetProcessTimes(handle, out var created, out _, out _, out _))
@@ -184,7 +188,8 @@ public sealed class AttachedRun : IProgramRun
     private void Exit(TrackedProcess process)
     {
         if (!live.Remove(process.Id)) return;
-        var code = GetExitCodeProcess(process.Handle, out var value) ? unchecked((int)value) : (int?)null;
+        // STILL_ACTIVE — у процесса без потоков: кода выхода у него нет.
+        var code = GetExitCodeProcess(process.Handle, out var value) && value != StillActive ? unchecked((int)value) : (int?)null;
         var cpu = GetProcessTimes(process.Handle, out _, out _, out var kernel, out var user)
             ? (double?)(kernel + user) / 1e7 : null;
         var hasVm = NtQueryInformationProcess(process.Handle, ProcessVmCountersClass, out VmCountersEx vm,

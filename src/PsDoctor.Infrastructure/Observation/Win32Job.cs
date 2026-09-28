@@ -13,6 +13,8 @@ internal static class Win32Job
 
     public const uint ProcessQueryLimitedInformation = 0x1000;
     public const uint Synchronize = 0x00100000;
+    /// <summary>Код GetExitCodeProcess у процесса, который не завершился.</summary>
+    public const uint StillActive = 259;
 
     public const int ErrorAccessDenied = 5;
 

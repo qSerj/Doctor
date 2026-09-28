@@ -623,7 +623,7 @@ public sealed partial class MainWindow : Window
             await observer.StopAsync(session, cancellationToken);
             diagnosticSession = null;
             diagnosticTimer?.Stop();
-            ShowObservationOutcome("Наблюдение завершено");
+            ShowObservationOutcome(diagnosticCrashed ? "ProShow неожиданно закрылся" : "Наблюдение завершено");
         }
         catch (ObserverException error) when (error.Error?.Error == ObserverErrors.SessionFinished)
         {
