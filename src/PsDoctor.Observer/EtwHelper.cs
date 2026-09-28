@@ -11,8 +11,13 @@ namespace PsDoctor.Observer;
 public sealed record EtwCommand(string Id, string Session, string Action, int RootPid, int ObserverPid, string ProgramImage, int[]? InitialPids = null);
 public sealed record EtwStatus(string State, string? Error = null, long LostEvents = 0);
 public sealed record EtwRawEvent(DateTime TimeUtc, int ProcessId, string Operation, string? File, long Bytes, int? Status);
+/// <param name="CommandLine">Командная строка процесса из события старта: у воркера ProShow она называет входной файл.</param>
 public sealed record EtwSummary(DateTime SecondUtc, int ProcessId, string? File, int Opens, int Reads, long ReadBytes,
-    int Writes, long WriteBytes, int SharingViolations, string? ProcessStart = null, int? ParentProcessId = null);
+    int Writes, long WriteBytes, int SharingViolations, string? ProcessStart = null, int? ParentProcessId = null,
+    string? CommandLine = null);
+
+/// <summary>Сердцебиение помощника: раз в секунду новое время. По его смене мост знает, что помощник жив.</summary>
+public sealed record EtwHeartbeat(int Pid, DateTime TimeUtc);
 
 public static class EtwFiles
 {
@@ -21,6 +26,7 @@ public static class EtwFiles
 
     public static string Directory(string sessions) => Path.Combine(sessions, "etw");
     public static string Command(string sessions) => Path.Combine(Directory(sessions), "command.json");
+    public static string Heartbeat(string sessions) => Path.Combine(Directory(sessions), "helper.json");
     public static string Status(string sessions, string id) => Path.Combine(Directory(sessions), id + ".status.json");
     public static string Summary(string sessions, string id) => Path.Combine(Directory(sessions), id + ".summary.jsonl");
     public static string Raw(string sessions, string id, int segment = 0) =>
@@ -33,6 +39,14 @@ public static class EtwFiles
         File.WriteAllText(temporary, JsonSerializer.Serialize(value, ObservationJson.Options), new UTF8Encoding(false));
         File.Move(temporary, path, true);
     }
+
+    /// <summary>
+    /// Файл записи сеанса открывается дозаписью: помощник, поднятый посреди сеанса или после перезагрузки,
+    /// не должен укоротить то, что записал прежний.
+    /// </summary>
+    public static StreamWriter OpenAppend(string path) => new(
+        new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete),
+        new UTF8Encoding(false));
 }
 
 /// <summary>Отдельный процесс с повышенными правами держит ETW, а обычный Observer читает его файлы.</summary>
@@ -42,12 +56,23 @@ public static class EtwHelper
     {
         if (!OperatingSystem.IsWindows()) return 2;
         System.IO.Directory.CreateDirectory(EtwFiles.Directory(sessions));
-        string? seen = null;
+        StopOrphanSessions();
+        // Команда, лежащая в файле до старта помощника, — от прежнего сеанса Windows или прежнего помощника. Исполнить её
+        // значило бы заново открыть запись оборванного сеанса поверх его файлов. Живой сеанс возобновит запись сам:
+        // его мост увидит сердцебиение и пришлёт новую команду.
+        string? seen = CurrentCommandId(sessions);
         EtwCapture? capture = null;
+        var beat = Stopwatch.StartNew();
+        WriteHeartbeat(sessions);
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                if (beat.Elapsed >= TimeSpan.FromSeconds(1))
+                {
+                    WriteHeartbeat(sessions);
+                    beat.Restart();
+                }
                 EtwCommand? command = null;
                 try
                 {
@@ -100,6 +125,46 @@ public static class EtwHelper
         return 0;
     }
 
+    /// <summary>Номер команды, лежащей в файле сейчас; нет файла или он не читается — <c>null</c>.</summary>
+    public static string? CurrentCommandId(string sessions)
+    {
+        try
+        {
+            var path = EtwFiles.Command(sessions);
+            return File.Exists(path)
+                ? JsonSerializer.Deserialize<EtwCommand>(File.ReadAllText(path), ObservationJson.Options)?.Id
+                : null;
+        }
+        catch (Exception error) when (error is IOException or JsonException) { return null; }
+    }
+
+    private static void WriteHeartbeat(string sessions)
+    {
+        try { EtwFiles.WriteAtomically(EtwFiles.Heartbeat(sessions), new EtwHeartbeat(Environment.ProcessId, DateTime.UtcNow)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Пропущенный удар мост переживёт: помощник пропавшим считается только после десяти секунд без смены.
+        }
+    }
+
+    /// <summary>
+    /// Ядерные сессии прежнего помощника, снятого без остановки записи, живут до перезагрузки и держат буферы.
+    /// Своих у нового помощника ещё нет, поэтому останавливаются все с нашим префиксом.
+    /// </summary>
+    private static void StopOrphanSessions()
+    {
+        try
+        {
+            foreach (var name in TraceEventSession.GetActiveSessionNames())
+            {
+                if (!name.StartsWith(EtwCapture.SessionPrefix, StringComparison.Ordinal)) continue;
+                try { TraceEventSession.GetActiveSession(name)?.Stop(noThrow: true); }
+                catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException or UnauthorizedAccessException) { }
+    }
+
     private static long ReadLost(string sessions, string id)
     {
         try
@@ -119,6 +184,8 @@ public static class EtwHelper
 /// <summary>Сырые файловые события и секундные агрегаты одного сеанса.</summary>
 internal sealed class EtwCapture : IDisposable
 {
+    public const string SessionPrefix = "PsDoctor-";
+
     private readonly string sessions;
     private readonly EtwCommand command;
     private readonly HashSet<int> processes = [];
@@ -141,15 +208,15 @@ internal sealed class EtwCapture : IDisposable
         ObserverPid = command.ObserverPid;
         if (command.RootPid > 0) processes.Add(command.RootPid);
         foreach (var pid in command.InitialPids ?? []) if (pid > 0) processes.Add(pid);
-        summary = Open(EtwFiles.Summary(sessions, command.Session));
-        raw = Open(EtwFiles.Raw(sessions, command.Session));
+        summary = EtwFiles.OpenAppend(EtwFiles.Summary(sessions, command.Session));
+        raw = EtwFiles.OpenAppend(EtwFiles.Raw(sessions, command.Session));
     }
 
     public int ObserverPid { get; }
 
     public void Start()
     {
-        session = new TraceEventSession("PsDoctor-" + command.Session) { StopOnDispose = true };
+        session = new TraceEventSession(SessionPrefix + command.Session) { StopOnDispose = true };
         session.EnableKernelProvider(KernelTraceEventParser.Keywords.Process |
             KernelTraceEventParser.Keywords.FileIO | KernelTraceEventParser.Keywords.FileIOInit);
         var kernel = session.Source.Kernel;
@@ -163,7 +230,7 @@ internal sealed class EtwCapture : IDisposable
                 else if (!processes.Contains(data.ParentID)) return;
                 processes.Add(data.ProcessID);
                 WriteSummary(new EtwSummary(data.TimeStamp.ToUniversalTime(), data.ProcessID, null, 0, 0, 0, 0, 0, 0,
-                    data.ImageFileName, data.ParentID));
+                    data.ImageFileName, data.ParentID, data.CommandLine));
             }
         };
         kernel.ProcessStop += data => { lock (gate) processes.Remove(data.ProcessID); };
@@ -290,15 +357,11 @@ internal sealed class EtwCapture : IDisposable
             var next = EtwFiles.Raw(sessions, command.Session, i);
             if (File.Exists(prior)) File.Move(prior, next, true);
         }
-        raw = Open(EtwFiles.Raw(sessions, command.Session));
+        raw = EtwFiles.OpenAppend(EtwFiles.Raw(sessions, command.Session));
     }
 
     private void WriteSummary(EtwSummary value) =>
         summary.WriteLine(JsonSerializer.Serialize(value, ObservationJson.Options));
-
-    private static StreamWriter Open(string path) => new(
-        new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete),
-        new UTF8Encoding(false));
 
     public void Dispose()
     {

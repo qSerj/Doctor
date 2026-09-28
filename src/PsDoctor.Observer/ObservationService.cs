@@ -83,14 +83,10 @@ public sealed class ObservationService : IAsyncDisposable
                 current = session;
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
                 {
-                    try { session.SetTrace(EtwBridge.Start(directory, session.Id, 0,
-                        Path.GetFileName(proshow.ProgramPath), session.Log)); }
-                    catch (EtwStartException)
-                    {
-                        Discard(session);
-                        return Refuse(StatusCodes.Status503ServiceUnavailable,
-                            new ObserverError(ObserverErrors.EtwUnavailable));
-                    }
+                    // Без помощника ETW сеанс идёт с фактом etw-state unavailable, а не отказом (Э6.2, часть А).
+                    var opened = session;
+                    session.SetTrace(EtwBridge.Open(directory, session.Id, () => opened.ProcessId ?? 0,
+                        Path.GetFileName(proshow.ProgramPath), session.Log));
                 }
             }
             else if (session is null)
@@ -136,16 +132,13 @@ public sealed class ObservationService : IAsyncDisposable
             {
                 var run = session.Attach(target, attacher);
                 if (OperatingSystem.IsWindows() && launcher is ProShowLauncher proshow)
-                    session.SetTrace(EtwBridge.Start(directory, session.Id, target.ProcessId,
-                        Path.GetFileName(proshow.ProgramPath), session.Log,
-                        (run as AttachedRun)?.LiveProcessIds()));
+                {
+                    Func<IReadOnlyCollection<int>?>? processes = run is AttachedRun attached ? attached.LiveProcessIds : null;
+                    session.SetTrace(EtwBridge.Open(directory, session.Id, () => target.ProcessId,
+                        Path.GetFileName(proshow.ProgramPath), session.Log, processes));
+                }
                 return (new AttachAccepted(session.Id, target.ProcessId, target.StartedUtc),
                     StatusCodes.Status201Created, null);
-            }
-            catch (EtwStartException)
-            {
-                Discard(session);
-                return (null, StatusCodes.Status503ServiceUnavailable, new ObserverError(ObserverErrors.EtwUnavailable));
             }
             catch (ProgramAttachException error)
             {

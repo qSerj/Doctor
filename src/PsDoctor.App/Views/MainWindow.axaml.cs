@@ -542,7 +542,7 @@ public sealed partial class MainWindow : Window
                 }
                 if (fact.Kind == ProgramFactKinds.EtwState
                     && fact.Data.TryGetProperty("state", out var state)
-                    && state.GetString() is "failed" or "degraded")
+                    && state.GetString() is "failed" or "degraded" or "unavailable")
                 {
                     diagnosticDegraded = true;
                     SetResult("Наблюдение продолжается, но запись файловой активности неполная. Проверьте помощник диагностики.", "warn");
