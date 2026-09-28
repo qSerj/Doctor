@@ -30,8 +30,17 @@ public sealed partial class MainWindow : Window
     private bool diagnosticDegraded;
     private bool diagnosticCrashed;
     private DateTime diagnosticStarted;
+    private readonly ProShowHangWatch hang = new();
+    private bool wizardOpen;
 
-    public string TrayStatus => diagnosticSession is not null ? "Наблюдение за ProShow" :
+    /// <summary>Сколько мастер ждёт наблюдателя с меткой, прежде чем записать её у себя и идти дальше.</summary>
+    private static readonly TimeSpan IncidentTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Монотонные часы учёта зависания: перевод системного времени их не сдвигает.</summary>
+    private static TimeSpan Now => TimeSpan.FromMilliseconds(Environment.TickCount64);
+
+    public string TrayStatus => hang.NotResponding(Now) ? "ProShow не отвечает" :
+        diagnosticSession is not null ? "Наблюдение за ProShow" :
         analysis?.Findings.Count > 0 ? "Есть рекомендации" :
         cleaner.IsProgramRunning() ? "Всё нормально" : "ProShow не запущен";
 
@@ -53,8 +62,10 @@ public sealed partial class MainWindow : Window
         var watching = diagnosticSession is not null;
         var hasFindings = analysis?.Findings.Count > 0;
 
+        // Не отвечающий ProShow главнее всего: Оля видит, что это замечено, и знает, куда нажать.
         var (tone, icon, title, hint) =
-            watching ? ("watch", "IconWatch", "Идёт наблюдение", "Работайте в ProShow как обычно. Doctor записывает, что происходит.")
+            hang.NotResponding(Now) ? ("warn", "IconWarning", "ProShow не отвечает", "Бывает при загрузке больших файлов. Если не пройдёт — нажмите «Решить проблему».")
+            : watching ? ("watch", "IconWatch", "Идёт наблюдение", "Работайте в ProShow как обычно. Doctor записывает, что происходит.")
             : hasFindings ? ("warn", "IconWarning", "Есть рекомендации", "В проекте есть файлы, которые могут замедлять работу ProShow.")
             : running is null ? ("idle", "IconUnknown", "Состояние неизвестно", "Не удалось проверить, запущен ли ProShow.")
             : running.Value
@@ -142,7 +153,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Doctor забывает выбранный проект; следующая кнопка, которой он нужен, спросит его заново.</summary>
-    private void СброситьПроект(object? sender, RoutedEventArgs args)
+    private void СброситьПроект(object? sender, RoutedEventArgs args) => ForgetProject();
+
+    private void ForgetProject()
     {
         showPath = null;
         analysis = null;
@@ -274,18 +287,241 @@ public sealed partial class MainWindow : Window
     private static long Number(Finding finding, string key) =>
         finding.Numbers.TryGetValue(key, out var value) ? value : 0;
 
+    /// <summary>
+    /// «Решить проблему». Первое действие, до любого окна, — метка инцидента (не дольше 5 с) и проба ProShow только
+    /// чтением. Дальше путь выбирает ProShow: не отвечает или жив без окна — окно ожидания; работает — запись, если её
+    /// ещё нет, и восстановление; не запущен — восстановление и запуск под наблюдением. Идущий сеанс — дежурства или
+    /// мастера — App себе не забирает и нового не начинает. Повторное нажатие при открытом мастере — только ещё одна метка.
+    /// </summary>
     public async Task ShowProblemAsync()
     {
-        if (!await ResolvePendingAttemptAsync())
+        if (wizardOpen)
         {
+            SetResult(MarkedText(await MarkIncidentAsync()), "watch");
             return;
         }
-        await RecoverOrObserveAsync();
+        wizardOpen = true;
+        try
+        {
+            await RunWizardAsync();
+        }
+        finally
+        {
+            wizardOpen = false;
+            RefreshStatus();
+        }
+    }
+
+    private async Task RunWizardAsync()
+    {
+        SetResult("Отмечаем момент…", "watch", busy: true);
+        var marking = MarkIncidentAsync();
+        var snapshot = await ProbeAsync();
+        var mark = await marking;
+        var recording = diagnosticSession is not null || mark?.Session is not null;
+        SetResult(MarkedText(mark), "watch");
+
+        if (snapshot.State is ProShowState.Hung or ProShowState.NoWindow)
+        {
+            if (await ShowNotRespondingAsync(recording) != HangOutcome.Closed)
+            {
+                return;
+            }
+            recording = false;
+        }
+        else if (snapshot.State == ProShowState.Responding && !recording && mark is not null)
+        {
+            recording = await AttachAsync();
+        }
+        await RecoverAsync(recording);
+    }
+
+    private static string MarkedText(IncidentRecord? mark) => mark is null
+        ? "Момент отмечен на этом компьютере."
+        : "Момент отмечен. Инженер найдёт его в записи.";
+
+    /// <summary>
+    /// Метка инцидента у наблюдателя, не дольше <see cref="IncidentTimeout"/>. Наблюдатель не настроен или не ответил —
+    /// метка остаётся строкой <c>incident</c> в истории мастера на этом компьютере, и мастер идёт дальше без записи.
+    /// </summary>
+    /// <param name="note">Пояснение для инженера, без человеческих фраз: например, что ProShow завершён по кнопке.</param>
+    private async Task<IncidentRecord?> MarkIncidentAsync(string? note = null)
+    {
+        string result;
+        try
+        {
+            if (ObserverAddress() is null)
+            {
+                result = "not-configured";
+            }
+            else
+            {
+                using var limit = new CancellationTokenSource(IncidentTimeout);
+                using var observer = CreateObserver();
+                return await observer.MarkIncidentAsync(IncidentSources.Wizard, note, limit.Token);
+            }
+        }
+        catch (Exception)
+        {
+            result = "observer-unavailable";
+        }
+        repairHistory.TryAppend(new RepairHistoryEvent(DateTimeOffset.UtcNow, "incident", 0, ProblemSymptom, showPath, result));
+        return null;
+    }
+
+    /// <summary>Проба ProShow вне потока окна; снимок идёт в учёт зависания. Сбой пробы — прежний снимок.</summary>
+    public async Task<ProShowSnapshot> ProbeAsync()
+    {
+        ProShowSnapshot snapshot;
+        try
+        {
+            snapshot = await Task.Run(ProShowProbe.Read);
+        }
+        catch (Exception)
+        {
+            return hang.Last;
+        }
+        hang.Observe(Now, snapshot);
+        return snapshot;
+    }
+
+    /// <summary>Необработанная ошибка погашена: Оля видит, что Doctor жив, а строка ошибки уже в журнале App.</summary>
+    public void ReportUnexpected() => SetResult("Что-то пошло не так. Doctor продолжает работать.", "warn");
+
+    private enum HangOutcome
+    {
+        /// <summary>Окно закрыто, а ProShow так и не ожил.</summary>
+        StillHung,
+
+        Responding,
+
+        /// <summary>ProShow закрылся сам или завершён по кнопке.</summary>
+        Closed,
+    }
+
+    /// <summary>
+    /// Окно ожидания, пока ProShow не отвечает или жив без окна. Раз в секунду — проба. Первые 60 с — только «не
+    /// закрывайте»; дальше «занят, подождите» или, в двух случаях из решения владельца, кнопка «Завершить ProShow»
+    /// с подтверждением (<see cref="ProShowHangWatch"/>). Восстановление здесь не предлагается: оно требует закрытого ProShow.
+    /// </summary>
+    /// <param name="recording">ProShow записывается — окно так и говорит.</param>
+    private async Task<HangOutcome> ShowNotRespondingAsync(bool recording)
+    {
+        var opened = Now;
+        var outcome = HangOutcome.StillHung;
+        var dialog = Dialog("ProShow не отвечает");
+        var message = new TextBlock { Classes = { "body" } };
+        var elapsed = new TextBlock { Classes = { "caption" } };
+        var terminate = DialogButton("Завершить ProShow");
+        terminate.IsVisible = false;
+        var close = DialogButton("Понятно", primary: true);
+        close.IsCancel = true;
+        close.Click += (_, _) => dialog.Close();
+        var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        var updating = false;
+
+        void Show(ProShowSnapshot snapshot)
+        {
+            if (snapshot.State is ProShowState.Responding or ProShowState.NotRunning)
+            {
+                timer.Stop();
+                outcome = snapshot.State == ProShowState.Responding ? HangOutcome.Responding : HangOutcome.Closed;
+                message.Text = snapshot.State == ProShowState.Responding ? "ProShow снова отвечает. Можно работать."
+                    : recording ? "ProShow закрылся. Всё записано."
+                    : "ProShow закрылся.";
+                elapsed.IsVisible = false;
+                terminate.IsVisible = false;
+                return;
+            }
+            var now = Now;
+            var advice = hang.Advice(now, opened);
+            message.Text = advice switch
+            {
+                HangAdvice.Busy when snapshot.Rendering => "Идёт рендер: ProShow занят, но работает. Подождите.",
+                HangAdvice.Busy => "ProShow занят, но работает. Подождите.",
+                HangAdvice.OfferTerminate when snapshot.State == ProShowState.NoWindow =>
+                    "ProShow закрылся не до конца: он работает без окна. Его можно завершить.",
+                HangAdvice.OfferTerminate =>
+                    "ProShow не отвечает уже несколько минут и ничего не делает. Если ждать больше нельзя, его можно завершить. Несохранённые изменения пропадут.",
+                _ when recording => "Doctor записывает, что происходит. Не закрывайте ProShow: иногда он оживает сам.",
+                _ => "Не закрывайте ProShow: иногда он оживает сам.",
+            };
+            var passed = now - opened;
+            elapsed.Text = $"Прошло: {(int)passed.TotalMinutes}:{passed.Seconds:00}";
+            terminate.IsVisible = advice == HangAdvice.OfferTerminate;
+        }
+
+        async Task UpdateAsync()
+        {
+            if (updating) return;
+            updating = true;
+            try { Show(await ProbeAsync()); }
+            finally { updating = false; }
+        }
+
+        timer.Tick += async (_, _) => await UpdateAsync();
+        terminate.Click += async (_, _) =>
+        {
+            timer.Stop();
+            if (await ConfirmTerminateAsync(dialog) && await TerminateAsync(opened))
+            {
+                outcome = HangOutcome.Closed;
+                dialog.Close();
+                return;
+            }
+            timer.Start();
+            await UpdateAsync();
+        };
+        dialog.Closed += (_, _) => timer.Stop();
+        dialog.Content = Page("IconWarning", "warn", "ProShow не отвечает", null, message, elapsed, Buttons(terminate, close));
+        Show(hang.Last);
+        timer.Start();
+        await dialog.ShowDialog(this);
+        return outcome;
+    }
+
+    private async Task<bool> ConfirmTerminateAsync(Window owner)
+    {
+        var dialog = Dialog("Завершить ProShow?");
+        var cancel = DialogButton("Отмена");
+        cancel.IsCancel = true;
+        cancel.Click += (_, _) => dialog.Close(false);
+        // Главная кнопка, но не по Enter: случайное нажатие не должно завершать программу.
+        var confirm = DialogButton("Завершить ProShow", primary: true);
+        confirm.IsDefault = false;
+        confirm.Click += (_, _) => dialog.Close(true);
+        dialog.Content = Page("IconWarning", "warn", "Завершить ProShow?",
+            "Несохранённые изменения в проекте пропадут. Doctor отметит для инженера, что ProShow завершён по вашей кнопке.",
+            Buttons(cancel, confirm));
+        return await dialog.ShowDialog<bool?>(owner) == true;
+    }
+
+    /// <summary>
+    /// Завершает ProShow по кнопке Оли. Снова проба: совет должен остаться «завершить» — иначе ProShow ожил, начал
+    /// работать или рендерить, и завершать нельзя. Перед завершением — метка с пояснением; завершается только найденный
+    /// процесс, сверенный по номеру и времени создания.
+    /// </summary>
+    private async Task<bool> TerminateAsync(TimeSpan opened)
+    {
+        var snapshot = await ProbeAsync();
+        if (hang.Advice(Now, opened) != HangAdvice.OfferTerminate)
+        {
+            return false;
+        }
+        var targets = snapshot.Targets;
+        await MarkIncidentAsync($"terminate state={snapshot.State.ToString().ToLowerInvariant()} pids={string.Join(",", targets.Select(t => t.ProcessId))}");
+        var results = await Task.Run(() => targets.Select(ProShowProbe.Terminate).ToList());
+        var done = results.TrueForAll(ok => ok);
+        SetResult(done ? "ProShow завершён. Момент отмечен для инженера." : "Не удалось завершить ProShow.", done ? "warn" : "error");
+        return done;
     }
 
     private async Task<bool> ResolvePendingAttemptAsync()
     {
-        var pending = repairHistory.PendingAttempt();
+        var now = DateTimeOffset.UtcNow;
+        // Про попытку старше двух суток не спрашиваем: она получает ответ «неизвестно».
+        repairHistory.ExpireFeedback(now);
+        var pending = repairHistory.PendingAttempt(now);
         if (pending is null)
         {
             return true;
@@ -315,8 +551,8 @@ public sealed partial class MainWindow : Window
             answer == 1 ? "unresolved" : "resolved"));
         if (answer == 0)
         {
+            // Мастер идёт дальше: Оля нажала «Решить проблему» из-за новой беды, а не чтобы похвалить прошлую попытку.
             SetResult("Отлично! Doctor запомнил, что восстановление помогло.", "ok");
-            return false;
         }
         return true;
     }
@@ -328,15 +564,27 @@ public sealed partial class MainWindow : Window
     private const string ProblemSymptom = "problem";
 
     /// <summary>
-    /// Проект мастер не спрашивает: восстановлению он не обязателен (без него — только файлы программы), а запуск
-    /// под наблюдением сам предложит выбрать его. Выбранный раньше проект берётся как есть.
+    /// Быстрое восстановление, потом наблюдение. Проект мастер не спрашивает: восстановлению он не обязателен (без него —
+    /// только файлы программы), а запуск под наблюдением сам предложит выбрать его. Выбранный раньше проект берётся как есть.
     /// </summary>
-    private async Task RecoverOrObserveAsync()
+    /// <param name="recording">ProShow уже записывается — сеансом этого App или дежурства: наблюдение не предлагается.</param>
+    private async Task RecoverAsync(bool recording)
     {
-        var path = showPath;
-        var failedAttempts = repairHistory.UnresolvedAttempts(ProblemSymptom);
+        if (!await ResolvePendingAttemptAsync())
+        {
+            return;
+        }
+        var path = ExistingShowPath();
+        var failedAttempts = repairHistory.UnresolvedAttempts(ProblemSymptom, DateTimeOffset.UtcNow);
         if (failedAttempts >= 2)
         {
+            if (recording)
+            {
+                await ShowInfoAsync("Doctor записывает работу ProShow",
+                    "Быстрое восстановление уже пробовали два раза, но проблема осталась. Момент отмечен, инженер разберёт запись.",
+                    "IconWatch", "watch");
+                return;
+            }
             var answer = await AskAsync(
                 "Переходим к наблюдению",
                 "Быстрое восстановление уже пробовали два раза, но проблема осталась. Теперь Doctor будет наблюдать за ProShow и сохранит факты для разбора.",
@@ -359,6 +607,13 @@ public sealed partial class MainWindow : Window
         var candidates = cleaner.Find(path);
         if (candidates.Count == 0)
         {
+            if (recording)
+            {
+                await ShowInfoAsync("Быстрое восстановление",
+                    "Служебных файлов, которые стоит подготовить заново, нет. Doctor записывает работу ProShow, инженер разберёт запись.",
+                    "IconWatch", "watch");
+                return;
+            }
             if (await AskAsync("Быстрое восстановление", "Служебных файлов, которые стоит подготовить заново, нет. Следующий шаг — наблюдение за ProShow.",
                     "Начать наблюдение", null, "IconRepair") == 0)
             {
@@ -371,7 +626,7 @@ public sealed partial class MainWindow : Window
             "Попробовать быстрое восстановление?",
             "Doctor подготовит служебные файлы заново. Ваш проект и исходные материалы не меняются. Первый запуск после этого может быть дольше: ProShow заново проиндексирует материалы.",
             "Попробовать",
-            "Наблюдать за ProShow",
+            recording ? null : "Наблюдать за ProShow",
             "IconRepair");
         if (answerToRepair == 1)
         {
@@ -384,7 +639,7 @@ public sealed partial class MainWindow : Window
         }
         if (cleaner.IsProgramRunning())
         {
-            await ShowInfoAsync("Сначала закройте ProShow", "Сохраните работу и закройте ProShow обычным способом, затем снова нажмите «Решить проблему». Doctor не закрывает программу сам.", "IconError", "error");
+            await ShowInfoAsync("Сначала закройте ProShow", "Сохраните работу и закройте ProShow обычным способом, затем снова нажмите «Решить проблему».", "IconError", "error");
             return;
         }
 
@@ -401,6 +656,16 @@ public sealed partial class MainWindow : Window
         var tone = result == "completed" ? "ok" : "warn";
         SetResult(message, tone);
         await ShowInfoAsync(result == "completed" ? "Восстановление завершено" : "Быстрое восстановление", message, ToneIcon(tone), tone);
+    }
+
+    /// <summary>Выбранный проект, если файл на месте; переехавший забывается — иначе поиск служебного файла проекта упал бы.</summary>
+    private string? ExistingShowPath()
+    {
+        if (showPath is not null && !File.Exists(showPath))
+        {
+            ForgetProject();
+        }
+        return showPath;
     }
 
     private async Task StartObservationAsync()
@@ -473,32 +738,55 @@ public sealed partial class MainWindow : Window
             await ShowInfoAsync("Наблюдение за ProShow", "ProShow сейчас не работает. Прошлый сбой записать уже нельзя: откройте проект и повторите проблему под наблюдением.", "IconWatch", "watch");
             return;
         }
+        await AttachAsync();
+    }
+
+    /// <summary>
+    /// Пассивное подключение мастера к работающему ProShow. <c>true</c> — ProShow записывается: подключился этот App или
+    /// сеанс уже шёл. Отказ <c>program-running</c> значит, что дежурство успело первым, — это не ошибка.
+    /// </summary>
+    private async Task<bool> AttachAsync()
+    {
         try
         {
+            SetResult("Подключаемся к ProShow…", "watch", busy: true);
             using var observer = CreateObserver();
             var accepted = await observer.AttachAsync(origin: SessionOrigins.Wizard);
             diagnosticSession = accepted.Session;
             StartDiagnosticWatch();
             SetResult("Наблюдаем за ProShow. Повторите то, на чём возникает проблема. Всё записанное остаётся на этом компьютере.", "watch");
+            return true;
+        }
+        catch (ObserverException error) when (error.Error?.Error == ObserverErrors.ProgramRunning)
+        {
+            SetResult("Doctor уже записывает работу ProShow. Момент отмечен.", "watch");
+            return true;
         }
         catch (ObserverException error)
         {
+            // Наблюдатель ищет ProShow по пути из настроек, App — по имени: «не запущен» у наблюдателя при живом ProShow
+            // значит другую установку, а не закрывшуюся программу.
             var message = error.Error?.Error switch
             {
-                ObserverErrors.ProgramNotRunning => "ProShow уже закрылся. Прошлый сбой записать нельзя; повторите проблему под наблюдением.",
+                ObserverErrors.ProgramNotRunning when !cleaner.IsProgramRunning() =>
+                    "ProShow уже закрылся. Прошлый сбой записать нельзя; повторите проблему под наблюдением.",
                 ObserverErrors.AmbiguousProgram => "Найдено несколько окон ProShow. Закройте лишние экземпляры и повторите подключение.",
-                ObserverErrors.EtwUnavailable => "Не удалось включить полную диагностику файловой активности. Проверьте помощник наблюдения.",
-                ObserverErrors.ProgramRunning => "Наблюдение уже идёт в другом сеансе.",
-                _ => "Не удалось начать наблюдение: " + error.Message,
+                _ => "Не удалось подключиться к ProShow. Момент отмечен.",
             };
-            SetResult(message, "error");
+            SetResult(message, "warn");
+            return false;
         }
         catch (Exception error)
         {
-            SetResult("Не удалось начать наблюдение: " + error.Message, "error");
+            SetResult("Не удалось подключиться к ProShow: " + error.Message, "warn");
+            return false;
         }
-        RefreshStatus();
+        finally
+        {
+            RefreshStatus();
+        }
     }
+
     private void StartDiagnosticWatch()
     {
         diagnosticAfter = 0;

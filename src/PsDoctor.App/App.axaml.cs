@@ -21,6 +21,20 @@ public sealed partial class App : Application
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var window = new MainWindow();
             desktop.MainWindow = window;
+            // Ошибка одного действия не роняет Doctor: трей живёт, строка ошибки — в app-errors.jsonl для инженера.
+            Dispatcher.UIThread.UnhandledException += (_, args) =>
+            {
+                AppErrors.Write(args.Exception, "ui", handled: true);
+                args.Handled = true;
+                window.ReportUnexpected();
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+                AppErrors.Write(args.ExceptionObject as Exception, "domain", handled: false);
+            TaskScheduler.UnobservedTaskException += (_, args) =>
+            {
+                AppErrors.Write(args.Exception, "task", handled: true);
+                args.SetObserved();
+            };
             window.Closing += (_, args) =>
             {
                 if (args.CloseReason == WindowCloseReason.WindowClosing)
@@ -65,8 +79,14 @@ public sealed partial class App : Application
             };
             tray.Clicked += (_, _) => ShowWindow(window);
             SingleInstance.Listen(() => Dispatcher.UIThread.Post(() => ShowWindow(window)));
+            // Раз в 5 с — проба ProShow: по ней статус говорит «ProShow не отвечает», а мастер знает, сколько длится зависание.
             var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            statusTimer.Tick += (_, _) => { window.RefreshStatus(); status.Header = window.TrayStatus; };
+            statusTimer.Tick += async (_, _) =>
+            {
+                await window.ProbeAsync();
+                window.RefreshStatus();
+                status.Header = window.TrayStatus;
+            };
             statusTimer.Start();
             status.Header = window.TrayStatus;
             desktop.Exit += (_, _) => { statusTimer.Stop(); tray.Dispose(); };

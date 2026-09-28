@@ -261,7 +261,7 @@ public sealed class WindowWatcher : IDisposable
     /// Окно класса <c>#32770</c> без владельца, но с кнопкой — окно сообщения, а не главное окно. Без кнопки
     /// окно этого класса остаётся кандидатом в главные: так устроены программы-диалоги.
     /// </summary>
-    private static bool IsOwnerlessMessage(IntPtr hwnd) =>
+    internal static bool IsOwnerlessMessage(IntPtr hwnd) =>
         ClassName(hwnd) == "#32770" && VisibleChildren(hwnd).Any(child => ClassName(child) == "Button");
 
     /// <summary>Об окне уже записан факт обычного окна.</summary>

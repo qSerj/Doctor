@@ -3,7 +3,10 @@ using PsDoctor.Core.Observation;
 
 namespace PsDoctor.Infrastructure.Observation;
 
-/// <summary>Событие локальной истории попыток восстановления Doctor.</summary>
+/// <summary>
+/// Событие локальной истории попыток восстановления Doctor: <c>attempt</c>, <c>result</c>, <c>feedback</c> и <c>incident</c> —
+/// метка «Решить проблему», которую не принял наблюдатель (номер попытки 0, на счёт попыток не влияет).
+/// </summary>
 public sealed record RepairHistoryEvent(
     DateTimeOffset TimeUtc,
     string Event,
@@ -70,18 +73,37 @@ public sealed class RepairHistory
 
     public int NextAttempt() => Read().Select(item => item.Attempt).DefaultIfEmpty().Max() + 1;
 
-    public RepairHistoryEvent? PendingAttempt() => Read()
-        .Where(item => item.Event == "attempt")
-        .GroupJoin(Read().Where(item => item.Event == "feedback"),
-            attempt => attempt.Attempt,
-            feedback => feedback.Attempt,
-            (attempt, feedback) => new { attempt, feedback })
-        .Where(pair => !pair.feedback.Any())
-        .OrderByDescending(pair => pair.attempt.Attempt)
-        .Select(pair => pair.attempt)
+    /// <summary>
+    /// Неудачи считаются только за этот срок: без него пара старых отказов навсегда убирала бы быстрое восстановление
+    /// (решение владельца 28.09.2026, Э6.2).
+    /// </summary>
+    public static readonly TimeSpan FailureWindow = TimeSpan.FromDays(14);
+
+    /// <summary>
+    /// Про попытку старше этого срока «помогло ли» не спрашивается: ответ был бы уже не о ней, а ответы сместились
+    /// бы к «нет». Такая попытка получает ответ <c>unknown</c>, см. <see cref="ExpireFeedback"/>.
+    /// </summary>
+    public static readonly TimeSpan FeedbackWindow = TimeSpan.FromDays(2);
+
+    /// <summary>Последняя попытка без ответа, если она не старше <see cref="FeedbackWindow"/>.</summary>
+    public RepairHistoryEvent? PendingAttempt(DateTimeOffset now) => Unanswered(Read())
+        .Where(attempt => attempt.TimeUtc >= now - FeedbackWindow)
+        .OrderByDescending(attempt => attempt.Attempt)
         .FirstOrDefault();
 
-    public int UnresolvedAttempts(string symptom)
+    /// <summary>Попыткам без ответа старше <see cref="FeedbackWindow"/> дописывает ответ <c>unknown</c>; возвращает их число.</summary>
+    public int ExpireFeedback(DateTimeOffset now)
+    {
+        var stale = Unanswered(Read()).Where(attempt => attempt.TimeUtc < now - FeedbackWindow).ToList();
+        foreach (var attempt in stale)
+        {
+            TryAppend(new RepairHistoryEvent(now, "feedback", attempt.Attempt, attempt.Symptom, attempt.ProjectPath, "unknown"));
+        }
+        return stale.Count;
+    }
+
+    /// <summary>Подтверждённые неудачи симптома за последние <see cref="FailureWindow"/>.</summary>
+    public int UnresolvedAttempts(string symptom, DateTimeOffset now)
     {
         var events = Read();
         var feedback = events.Where(item => item.Event == "feedback")
@@ -89,10 +111,17 @@ public sealed class RepairHistory
             .ToDictionary(group => group.Key, group => group.Last().Result);
         return events.Where(item => item.Event == "attempt"
                 && item.Symptom == symptom
+                && item.TimeUtc >= now - FailureWindow
                 && feedback.GetValueOrDefault(item.Attempt) == "unresolved")
             .Select(item => item.Attempt)
             .Distinct()
             .Count();
+    }
+
+    private static IEnumerable<RepairHistoryEvent> Unanswered(IReadOnlyList<RepairHistoryEvent> events)
+    {
+        var answered = events.Where(item => item.Event == "feedback").Select(item => item.Attempt).ToHashSet();
+        return events.Where(item => item.Event == "attempt" && !answered.Contains(item.Attempt));
     }
 
     public bool TryAppend(RepairHistoryEvent item)
