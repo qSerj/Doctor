@@ -135,6 +135,21 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Incident_ставит_метку_а_incidents_её_показывает()
+    {
+        var (code, stdout, _) = await Observe("incident", "--note", "проверка");
+        var (списокCode, список, _) = await Observe("incidents");
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        var метка = JsonSerializer.Deserialize<IncidentRecord>(Assert.Single(stdout), ObservationJson.Options)!;
+        Assert.Equal(IncidentSources.Cli, метка.Source);
+        Assert.Equal("проверка", метка.Note);
+        Assert.Equal(ProgramStates.None, метка.Program);
+        Assert.Equal(ObserveExitCodes.Done, списокCode);
+        Assert.Equal(метка, JsonSerializer.Deserialize<IncidentRecord>(Assert.Single(список), ObservationJson.Options));
+    }
+
+    [Fact]
     public async Task Чужой_ключ_сбой_окружения()
     {
         await File.WriteAllTextAsync(_файлКлюча, "wrong-key");

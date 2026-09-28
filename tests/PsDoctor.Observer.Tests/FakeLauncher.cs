@@ -29,11 +29,25 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
     /// <summary>Процесс найден, но подключиться к нему не удаётся — например, он вышел между поиском и подключением.</summary>
     public bool AttachFails { get; set; }
 
+    /// <summary>Сколько длится поиск программы при подключении — под замком сервиса, как старт ETW на Windows.</summary>
+    public TimeSpan FindDelay { get; set; }
+
+    /// <summary>Поиск программы при подключении начался.</summary>
+    public TaskCompletionSource FindStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public bool IsProgramRunning() => Foreign;
 
-    public ProgramTarget FindRunning() => Foreign
-        ? new ProgramTarget(1000, DateTime.UnixEpoch, @"C:\ProShow\proshow.exe")
-        : throw new ProgramAttachException(ObserverErrors.ProgramNotRunning);
+    public ProgramTarget FindRunning()
+    {
+        FindStarted.TrySetResult();
+        if (FindDelay > TimeSpan.Zero)
+        {
+            Thread.Sleep(FindDelay);
+        }
+        return Foreign
+            ? new ProgramTarget(1000, DateTime.UnixEpoch, @"C:\ProShow\proshow.exe")
+            : throw new ProgramAttachException(ObserverErrors.ProgramNotRunning);
+    }
 
     public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
     {

@@ -54,6 +54,12 @@ public static class ObserverRoutes
     /// <summary>GET: скачать один артефакт по непрозрачному идентификатору.</summary>
     public static string Artifact(string session, string id) =>
         $"/sessions/{Uri.EscapeDataString(session)}/artifacts/{Uri.EscapeDataString(id)}";
+
+    /// <summary>
+    /// POST <see cref="IncidentRequest"/>: метка инцидента — монтажёр сказал «плохо» вот сейчас. GET: все метки,
+    /// <see cref="IncidentRecord"/>, в порядке записи.
+    /// </summary>
+    public const string Incidents = "/incidents";
 }
 
 /// <summary>Устойчивые имена отказов API, не фразы.</summary>
@@ -89,6 +95,9 @@ public static class ObserverErrors
 
     /// <summary>Запрос не разобран: нет тела, не JSON, кривой номер.</summary>
     public const string BadRequest = "bad-request";
+
+    /// <summary>Метка не легла никуда: ни в живой сеанс, ни в файл меток.</summary>
+    public const string IncidentNotStored = "incident-not-stored";
 }
 
 /// <param name="Origin">Кто начал сеанс, <see cref="SessionOrigins"/>; действует, только если сценарий открывает сеанс.</param>
@@ -106,6 +115,40 @@ public static class SessionOrigins
     /// <summary>Мастер App «Решить проблему».</summary>
     public const string Wizard = "wizard";
 }
+
+/// <summary>Тело POST <see cref="ObserverRoutes.Incidents"/>.</summary>
+/// <param name="Source">Откуда метка, <see cref="IncidentSources"/>; незнакомое значение пишется как есть.</param>
+/// <param name="Note">Пояснение, например что Doctor по кнопке монтажёра завершил ProShow.</param>
+public sealed record IncidentRequest(string Source, string? Note = null)
+{
+    public const int MaxSource = 64;
+    public const int MaxNote = 1000;
+}
+
+/// <summary>Кто поставил метку инцидента.</summary>
+public static class IncidentSources
+{
+    /// <summary>Кнопка «Решить проблему» в App.</summary>
+    public const string Wizard = "wizard";
+
+    /// <summary><c>psdoctor observe incident</c>.</summary>
+    public const string Cli = "cli";
+}
+
+/// <summary>
+/// Метка инцидента: ответ POST и строка файла меток. Вердикта в ней нет — только когда нажали и что в этот миг
+/// видел наблюдатель.
+/// </summary>
+/// <param name="Session">Живой сеанс, в который лёг факт <c>incident</c>; <c>null</c> — сеанса не было или он закрывался.</param>
+/// <param name="Number">Номер факта <c>incident</c> в <paramref name="Session"/>.</param>
+/// <param name="Recent">
+/// Последний сеанс, кончившийся не раньше чем за 30 мин до метки, в том числе оборванный: метка после падения
+/// ProShow или перезагрузки относится к нему.
+/// </param>
+/// <param name="Program">Состояние программы, <see cref="ProgramStates"/>.</param>
+/// <param name="ProcessId">Процесс программы под наблюдением.</param>
+public sealed record IncidentRecord(DateTime AtUtc, string Source, string? Note, string? Session, long? Number,
+    string? Recent, string Program, int? ProcessId);
 
 /// <param name="After">Номер последнего факта сеанса до начала сценария: факты сценария идут после него.</param>
 public sealed record RunScenarioAccepted(string Session, long After);

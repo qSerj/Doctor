@@ -177,6 +177,31 @@ public sealed class ObservationSession : IProgramEvents
         return ActionResult.Done;
     }
 
+    /// <summary>
+    /// Пишет факт снаружи — метку инцидента, если сеанс ещё не закрывается; иначе <c>null</c>. Признак закрытия
+    /// проверяется под тем же замком, под которым его ставит <see cref="FinishAsync"/>, поэтому факт либо ложится
+    /// раньше <c>session-finished</c>, либо не пишется вовсе.
+    /// </summary>
+    public Fact? TryRecord<T>(string kind, T data)
+    {
+        lock (gate)
+        {
+            if (finishing)
+            {
+                return null;
+            }
+            try
+            {
+                return Log.Record(kind, data);
+            }
+            catch (IOException)
+            {
+                // Кончилось место под журнал: метку сохранит файл меток.
+                return null;
+            }
+        }
+    }
+
     public void SetTrace(EtwBridge bridge)
     {
         lock (gate) trace = bridge;

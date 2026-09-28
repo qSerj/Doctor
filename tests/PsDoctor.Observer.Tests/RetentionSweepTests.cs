@@ -76,6 +76,29 @@ public sealed class RetentionSweepTests : IDisposable
     }
 
     [Fact]
+    public async Task Сеансы_названные_в_файле_меток_помечены()
+    {
+        var живой = Журнал(Сейчас.AddDays(-3));
+        var последний = Журнал(Сейчас.AddDays(-3).AddSeconds(1));
+        var обычный = Журнал(Сейчас.AddDays(-3).AddSeconds(2));
+        var метки = Path.Combine(_каталог, ObservationService.IncidentsFile);
+        File.WriteAllLines(метки,
+        [
+            $$"""{"atUtc":"2026-09-22T12:00:00Z","source":"wizard","note":null,"session":"{{живой}}","number":5,"recent":null,"program":"attached","processId":1000}""",
+            $$"""{"atUtc":"2026-09-22T12:10:00Z","source":"wizard","note":null,"session":null,"number":null,"recent":"{{последний}}","program":"none","processId":null}""",
+            """{"atUtc":"2026-09-22T12:20""",
+        ]);
+
+        await using var служба = Служба(new RetentionLimits(TimeSpan.FromDays(1), 1024 * 1024, TimeSpan.FromDays(30)));
+        служба.Sweep();
+
+        Assert.True(Есть(живой));
+        Assert.True(Есть(последний));
+        Assert.False(Есть(обычный));
+        Assert.True(File.Exists(метки));
+    }
+
+    [Fact]
     public async Task Без_пределов_ничего_не_удаляется()
     {
         var старый = Журнал(Сейчас.AddDays(-400));

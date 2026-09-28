@@ -27,6 +27,16 @@ public sealed class ObservationService : IAsyncDisposable
     // Пометка закрытого сеанса не меняется: журнал читается ради неё один раз за жизнь наблюдателя.
     private readonly Dictionary<string, bool> marks = [];
     private readonly Lock sweeping = new();
+    private readonly Lock incidents = new();
+
+    /// <summary>Файл меток инцидентов в каталоге сеансов: только дописывается, хранение его не удаляет.</summary>
+    public const string IncidentsFile = "incidents.jsonl";
+
+    /// <summary>Сколько после конца сеанса метка ещё относится к нему: падение или перезагрузка, вход, нажатие.</summary>
+    public static readonly TimeSpan RecentWindow = TimeSpan.FromMinutes(30);
+
+    /// <summary>Сколько последних сеансов смотреть в поисках <see cref="IncidentRecord.Recent"/>.</summary>
+    private const int RecentCandidates = 3;
 
     /// <param name="retention">Пределы хранения; <c>null</c> — ничего не удаляется, как на стенде без установщика.</param>
     public ObservationService(string directory, IProgramLauncher launcher, ObserverHealth build, TimeSpan? actionTimeout = null,
@@ -167,6 +177,145 @@ public sealed class ObservationService : IAsyncDisposable
             null, null, running);
     }
 
+    /// <summary>
+    /// Метка инцидента: факт <c>incident</c> в живой сеанс, который не закрывается, и строка в файл меток — всегда.
+    /// <c>null</c> — метка не легла никуда.
+    /// </summary>
+    /// <remarks>
+    /// Без замка <c>gate</c>, как <see cref="Activity"/>: подключение держит его до десяти секунд, пока стартует ETW,
+    /// а метку монтажёр ставит в тот миг, когда ему плохо. Сеанс, открытый таким подключением, метку получит;
+    /// если подключение затем отвергнуто, в файле останется имя без журнала.
+    /// </remarks>
+    public IncidentRecord? Incident(string source, string? note)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(source);
+        var at = utcNow();
+        var session = Volatile.Read(ref current);
+        var fact = session is { Log.IsCompleted: false }
+            ? session.TryRecord(ProgramFactKinds.Incident, new { source, note, atUtc = at })
+            : null;
+        var activity = Activity();
+        var marked = fact is null ? null : session!.Id;
+        var record = new IncidentRecord(at, source, note, marked, fact?.Number, Recent(at, marked),
+            activity.Program, activity.ProcessId);
+        return AppendIncident(record) || fact is not null ? record : null;
+    }
+
+    /// <summary>Все метки по порядку. Битая строка, в том числе недописанный хвост после обрыва, пропускается.</summary>
+    public IReadOnlyList<IncidentRecord> Incidents()
+    {
+        string[] lines;
+        try
+        {
+            lock (incidents)
+            {
+                var path = Path.Combine(directory, IncidentsFile);
+                lines = File.Exists(path) ? File.ReadAllLines(path, Encoding.UTF8) : [];
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+        var result = new List<IncidentRecord>();
+        foreach (var line in lines)
+        {
+            try
+            {
+                if (JsonSerializer.Deserialize<IncidentRecord>(line, ObservationJson.Options) is { Source: not null, Program: not null } record)
+                {
+                    result.Add(record);
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+        return result;
+    }
+
+    private bool AppendIncident(IncidentRecord record)
+    {
+        var line = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(record, ObservationJson.Options) + "\n");
+        try
+        {
+            lock (incidents)
+            {
+                Directory.CreateDirectory(directory);
+                using var stream = new FileStream(Path.Combine(directory, IncidentsFile), FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite, FileShare.Read);
+                if (stream.Length > 0)
+                {
+                    // Прошлая запись оборвана посередине строки: новая метка начинается с новой строки, а не склеивается с ней.
+                    stream.Seek(-1, SeekOrigin.End);
+                    if (stream.ReadByte() != '\n')
+                    {
+                        stream.WriteByte((byte)'\n');
+                    }
+                }
+                stream.Seek(0, SeekOrigin.End);
+                stream.Write(line);
+                stream.Flush(flushToDisk: true);
+            }
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Самый поздно кончившийся из последних сеансов, кроме <paramref name="except"/>, если он кончился не раньше
+    /// <see cref="RecentWindow"/> до метки. Конец — время из имени плюс время последнего целого факта, поэтому подходит
+    /// и оборванный сеанс. Отвергнутый подключением или запуском сеанс кончается <c>no-program</c> и не считается.
+    /// </summary>
+    private string? Recent(DateTime at, string? except)
+    {
+        IEnumerable<string> ids;
+        try
+        {
+            ids = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(SessionIds.IsValid)
+                    .Select(id => id!)
+                    .Where(id => id != except)
+                    .OrderDescending(StringComparer.Ordinal)
+                    .Take(RecentCandidates)
+                    .ToList()
+                : [];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        string? recent = null;
+        var latest = at - RecentWindow;
+        foreach (var id in ids)
+        {
+            if (SessionIds.StartedUtc(id) is not { } started || LastFact(id) is not { } last)
+            {
+                continue;
+            }
+            if (last.Kind == ProgramFactKinds.SessionFinished
+                && last.Data.TryGetProperty("reason", out var reason)
+                && reason.ValueKind == JsonValueKind.String
+                && reason.GetString() == SessionEndReasons.NoProgram)
+            {
+                continue;
+            }
+            var end = started + last.Elapsed;
+            if (end >= latest)
+            {
+                recent = id;
+                latest = end;
+            }
+        }
+        return recent;
+    }
+
     /// <summary>Отменяет выполняемый сценарий. Сеанс — <c>null</c>, если отменять нечего.</summary>
     public string? Cancel()
     {
@@ -253,6 +402,47 @@ public sealed class ObservationService : IAsyncDisposable
     /// </summary>
     private bool EndsFinished(string id)
     {
+        var last = TailLines(id).LastOrDefault();
+        if (last is null)
+        {
+            return false;
+        }
+        try
+        {
+            using var fact = JsonDocument.Parse(last);
+            return fact.RootElement.TryGetProperty("kind", out var kind)
+                && kind.ValueKind == JsonValueKind.String
+                && kind.GetString() == ProgramFactKinds.SessionFinished;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Последний целый факт журнала по хвосту файла: недописанная последняя строка пропускается.</summary>
+    private Fact? LastFact(string id)
+    {
+        var lines = TailLines(id);
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            try
+            {
+                if (JsonSerializer.Deserialize<Fact>(lines[i], ObservationJson.Options) is { Kind: not null, Data.ValueKind: JsonValueKind.Object } fact)
+                {
+                    return fact;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Строки хвоста журнала; первая может быть обрезана. Нечитаемый файл — пусто.</summary>
+    private string[] TailLines(string id)
+    {
         try
         {
             var path = Path.Combine(directory, id + SessionIds.JournalExtension);
@@ -260,26 +450,17 @@ public sealed class ObservationService : IAsyncDisposable
             var size = (int)Math.Min(stream.Length, JournalTail);
             if (size == 0)
             {
-                return false;
+                return [];
             }
             stream.Seek(-size, SeekOrigin.End);
             var tail = new byte[size];
             stream.ReadExactly(tail, 0, size);
-            var last = Encoding.UTF8.GetString(tail)
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .LastOrDefault();
-            if (last is null)
-            {
-                return false;
-            }
-            using var fact = JsonDocument.Parse(last);
-            return fact.RootElement.TryGetProperty("kind", out var kind)
-                && kind.ValueKind == JsonValueKind.String
-                && kind.GetString() == ProgramFactKinds.SessionFinished;
+            return Encoding.UTF8.GetString(tail)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return false;
+            return [];
         }
     }
 
@@ -473,6 +654,11 @@ public sealed class ObservationService : IAsyncDisposable
                     .Where(file => SessionIds.IsValid(file.Id))
                     .ToLookup(file => file.Id, file => file.Path)
                 : Enumerable.Empty<string>().ToLookup(_ => "", _ => "");
+            // Метка после конца сеанса в журнал не ложится: такой сеанс помечен строкой файла меток.
+            var named = Incidents()
+                .SelectMany(incident => new[] { incident.Session, incident.Recent })
+                .OfType<string>()
+                .ToHashSet(StringComparer.Ordinal);
 
             var stored = new List<StoredSession>();
             foreach (var journal in Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension))
@@ -483,7 +669,7 @@ public sealed class ObservationService : IAsyncDisposable
                     continue;
                 }
                 var bytes = Size(journal) + etw[id].Sum(Size);
-                stored.Add(new StoredSession(id, started, bytes, IsMarked(id, journal)));
+                stored.Add(new StoredSession(id, started, bytes, named.Contains(id) || IsMarked(id, journal)));
             }
 
             foreach (var id in Retention.Expired(stored, retention, utcNow()))

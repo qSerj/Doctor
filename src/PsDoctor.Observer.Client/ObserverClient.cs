@@ -76,6 +76,27 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<ConfirmAccepted>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Метка инцидента: факт в живой сеанс и строка в файл меток наблюдателя. Наблюдатель отвечает, не дожидаясь
+    /// начатого подключения; предел ожидания задаёт вызывающий.
+    /// </summary>
+    /// <param name="source">Кто ставит метку, <see cref="IncidentSources"/>.</param>
+    public async Task<IncidentRecord> MarkIncidentAsync(string source, string? note = null, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.PostAsJsonAsync(ObserverRoutes.Incidents, new IncidentRequest(source, note), ObservationJson.Options, timeout.Token)
+            .ConfigureAwait(false);
+        return await ReadAsync<IncidentRecord>(response, timeout.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>Все метки инцидентов в порядке записи.</summary>
+    public async Task<IReadOnlyList<IncidentRecord>> IncidentsAsync(CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.GetAsync(ObserverRoutes.Incidents, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<List<IncidentRecord>>(response, timeout.Token).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> SessionsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);

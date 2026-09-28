@@ -75,6 +75,12 @@ public static class ProgramFactKinds
     /// </summary>
     public const string Episode = "episode";
 
+    /// <summary>
+    /// Метка инцидента: монтажёр нажал «Решить проблему» или инженер — <c>observe incident</c>. Действие человека, а не
+    /// вердикт; данные — источник, пояснение и время. Сеанс с меткой хранится дольше, см. <see cref="Retention"/>.
+    /// </summary>
+    public const string Incident = "incident";
+
     public const string SessionFinished = "session-finished";
 }
 

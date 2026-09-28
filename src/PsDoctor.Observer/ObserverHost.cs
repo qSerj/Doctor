@@ -112,6 +112,30 @@ public static class ObserverHost
                 ? Results.Json(new ConfirmAccepted(session), ObservationJson.Options)
                 : Results.Json(new ObserverError(ObserverErrors.NothingRunning), ObservationJson.Options, statusCode: StatusCodes.Status409Conflict));
 
+        app.MapPost(ObserverRoutes.Incidents, async (HttpContext context) =>
+        {
+            IncidentRequest? request;
+            try
+            {
+                request = await context.Request.ReadFromJsonAsync<IncidentRequest>(ObservationJson.Options, context.RequestAborted);
+            }
+            catch (Exception e) when (e is JsonException or InvalidOperationException)
+            {
+                request = null;
+            }
+            if (request is null || string.IsNullOrWhiteSpace(request.Source) || request.Source.Length > IncidentRequest.MaxSource
+                || request.Note is { Length: > IncidentRequest.MaxNote })
+            {
+                return Results.Json(new ObserverError(ObserverErrors.BadRequest), ObservationJson.Options, statusCode: StatusCodes.Status400BadRequest);
+            }
+            return service.Incident(request.Source, request.Note) is { } record
+                ? Results.Json(record, ObservationJson.Options, statusCode: StatusCodes.Status201Created)
+                : Results.Json(new ObserverError(ObserverErrors.IncidentNotStored), ObservationJson.Options,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+        });
+
+        app.MapGet(ObserverRoutes.Incidents, () => Results.Json(service.Incidents(), ObservationJson.Options));
+
         app.MapGet(ObserverRoutes.Sessions, () => Results.Json(service.Sessions(), ObservationJson.Options));
 
         app.MapPost("/sessions/{id}/stop", async (string id) =>

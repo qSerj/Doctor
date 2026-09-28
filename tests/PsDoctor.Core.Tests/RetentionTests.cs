@@ -66,4 +66,11 @@ public sealed class RetentionTests
         Assert.False(Retention.IsMarked([Факт(ProgramFactKinds.SessionStarted, """{"origin":null}""")]));
         Assert.False(Retention.IsMarked([Факт(ProgramFactKinds.SessionStarted, """{"origin":"workbench"}""")]));
     }
+
+    [Fact]
+    public void Помечен_сеанс_с_меткой_инцидента()
+    {
+        Assert.True(Retention.IsMarked([Факт(ProgramFactKinds.SessionStarted, """{"origin":"watch"}"""),
+            Факт(ProgramFactKinds.Incident, """{"source":"wizard","note":null}""")]));
+    }
 }

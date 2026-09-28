@@ -3,7 +3,7 @@ namespace PsDoctor.Core.Observation;
 /// <summary>Пределы хранения сеансов наблюдателя.</summary>
 /// <param name="Age">Сколько живёт обычный сеанс.</param>
 /// <param name="Bytes">Сколько байтов занимают все сеансы вместе.</param>
-/// <param name="MarkedAge">Сколько живёт помеченный сеанс — с эпизодом или начатый мастером.</param>
+/// <param name="MarkedAge">Сколько живёт помеченный сеанс — с эпизодом, с меткой инцидента или начатый мастером.</param>
 public sealed record RetentionLimits(TimeSpan Age, long Bytes, TimeSpan MarkedAge);
 
 /// <summary>Сеанс на диске, как его видит хранение: время открытия, вес всех его файлов, пометка.</summary>
@@ -52,13 +52,16 @@ public static class Retention
         return expired;
     }
 
-    /// <summary>Сеанс помечен, если его начал мастер или в нём есть эпизод детектора.</summary>
+    /// <summary>
+    /// Сеанс помечен, если его начал мастер или в нём есть эпизод детектора или метка инцидента. Метку, поставленную
+    /// после конца сеанса, журнал уже не примет: такие сеансы помечает файл меток наблюдателя.
+    /// </summary>
     public static bool IsMarked(IEnumerable<Fact> facts)
     {
         ArgumentNullException.ThrowIfNull(facts);
         foreach (var fact in facts)
         {
-            if (fact.Kind == ProgramFactKinds.Episode)
+            if (fact.Kind is ProgramFactKinds.Episode or ProgramFactKinds.Incident)
             {
                 return true;
             }

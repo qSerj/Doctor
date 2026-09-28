@@ -103,6 +103,8 @@ public static class ObserveCommand
                 "attach" => output.Json(await client.AttachAsync(cancellationToken).ConfigureAwait(false)),
                 "raw" => await RawAsync(client, options, stdout, cancellationToken).ConfigureAwait(false),
                 "sessions" => output.Lines(await client.SessionsAsync(cancellationToken).ConfigureAwait(false)),
+                "incident" => output.Json(await client.MarkIncidentAsync(IncidentSources.Cli, options.Note, cancellationToken).ConfigureAwait(false)),
+                "incidents" => output.Lines(await client.IncidentsAsync(cancellationToken).ConfigureAwait(false)),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "confirm" => output.Json(await client.ConfirmAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
@@ -291,12 +293,15 @@ public static class ObserveCommand
         writer.WriteLine("  confirm                         оператор сделал сказанное: засчитать шагу wait confirm");
         writer.WriteLine("  dialogs [сеанс]                 открытые диалоги с кнопками, строка на диалог");
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");
+        writer.WriteLine("  incident [--note <текст>]       поставить метку инцидента, как кнопка «Решить проблему»");
+        writer.WriteLine("  incidents                       метки инцидентов, строка на метку");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");
         writer.WriteLine($"  --key-file <файл>               ключ Bearer, иначе {KeyFileVariable}");
         writer.WriteLine("  --follow                        run: до закрытия сеанса; facts: ждать новые факты");
         writer.WriteLine("  --after <номер>                 facts: только после этого номера");
         writer.WriteLine("  --kind <вид,вид>                facts: только эти виды");
+        writer.WriteLine("  --note <текст>                  incident: пояснение к метке");
         writer.WriteLine();
         writer.WriteLine($"Коды возврата: {ObserveExitCodes.Done} — выполнено; {ObserveExitCodes.ScenarioNotCompleted} — сценарий не выполнен; "
             + $"{ObserveExitCodes.Refused} — отказ наблюдателя; {ObserveExitCodes.Environment} — сбой окружения.");
@@ -348,6 +353,8 @@ public static class ObserveCommand
 
         public List<string>? Kinds { get; private set; }
 
+        public string? Note { get; private set; }
+
         public static Options Parse(IReadOnlyList<string> args)
         {
             var options = new Options();
@@ -376,6 +383,9 @@ public static class ObserveCommand
                         break;
                     case "--kind":
                         options.Kinds = [.. Value().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+                        break;
+                    case "--note":
+                        options.Note = Value();
                         break;
                     case "--help" or "-h":
                         options.Command = "help";

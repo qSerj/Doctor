@@ -319,6 +319,8 @@ public sealed class ObservationApiTests : IAsyncLifetime
                      (HttpMethod.Get, ObserverRoutes.Facts("20260917-000000-000")),
                      (HttpMethod.Get, ObserverRoutes.Raw("20260917-000000-000")),
                      (HttpMethod.Get, ObserverRoutes.Dialogs("20260917-000000-000")),
+                     (HttpMethod.Post, ObserverRoutes.Incidents),
+                     (HttpMethod.Get, ObserverRoutes.Incidents),
                  })
         {
             using var запрос = new HttpRequestMessage(метод, путь) { Content = new StringContent("{\"text\":\"launch x\"}", Encoding.UTF8, "application/json") };
