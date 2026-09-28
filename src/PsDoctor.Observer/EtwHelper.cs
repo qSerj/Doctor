@@ -32,12 +32,39 @@ public static class EtwFiles
     public static string Raw(string sessions, string id, int segment = 0) =>
         Path.Combine(Directory(sessions), id + ".raw." + segment + ".jsonl");
 
+    /// <summary>Сколько раз пробовать подменить файл, пока его держит читатель: до 200 мс.</summary>
+    private const int ReplaceAttempts = 10;
+
+    private static readonly TimeSpan ReplacePause = TimeSpan.FromMilliseconds(20);
+
+    /// <summary>
+    /// Пишет файл целиком и подменяет им прежний. На NTFS открытый файл не подменить, как бы его ни открыли, даже с
+    /// <see cref="FileShare.Delete"/>; а другая сторона канала читает его каждые 100 мс–1 с. Читатель держит файл мгновение,
+    /// поэтому несколько попыток. Не вышло — временный файл убирается, исключение уходит выше.
+    /// </summary>
     public static void WriteAtomically<T>(string path, T value)
     {
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(value, ObservationJson.Options), new UTF8Encoding(false));
-        File.Move(temporary, path, true);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporary, path, true);
+                return;
+            }
+            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && attempt < ReplaceAttempts)
+            {
+                Thread.Sleep(ReplacePause);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                try { File.Delete(temporary); }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+                throw;
+            }
+        }
     }
 
     /// <summary>
@@ -80,7 +107,7 @@ public static class EtwHelper
                     if (File.Exists(path))
                         command = JsonSerializer.Deserialize<EtwCommand>(File.ReadAllText(path), ObservationJson.Options);
                 }
-                catch (Exception error) when (error is IOException or JsonException)
+                catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
                 {
                     // Атомарная замена обычно исключает неполный файл; следующий опрос повторит чтение.
                 }
@@ -135,7 +162,7 @@ public static class EtwHelper
                 ? JsonSerializer.Deserialize<EtwCommand>(File.ReadAllText(path), ObservationJson.Options)?.Id
                 : null;
         }
-        catch (Exception error) when (error is IOException or JsonException) { return null; }
+        catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 
     private static void WriteHeartbeat(string sessions)
@@ -172,7 +199,7 @@ public static class EtwHelper
             var text = File.ReadAllText(EtwFiles.Status(sessions, id));
             return JsonSerializer.Deserialize<EtwStatus>(text, ObservationJson.Options)?.LostEvents ?? 0;
         }
-        catch (Exception error) when (error is IOException or JsonException) { return 0; }
+        catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException) { return 0; }
     }
     private static bool IsAlive(int pid)
     {

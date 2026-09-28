@@ -115,6 +115,47 @@ public sealed class EtwBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task Подмена_файла_канала_дожидается_короткого_чтения()
+    {
+        var путь = EtwFiles.Heartbeat(_каталог);
+        EtwFiles.WriteAtomically(путь, new EtwHeartbeat(1, DateTime.UnixEpoch));
+
+        // Другая сторона канала читает файл мгновение; на Windows подмена в этот миг отказывает и повторяется.
+        var читатель = new FileStream(путь, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var отпустить = Task.Run(async () =>
+        {
+            await Task.Delay(10);
+            await читатель.DisposeAsync();
+        });
+        EtwFiles.WriteAtomically(путь, new EtwHeartbeat(2, DateTime.UnixEpoch));
+        await отпустить;
+
+        Assert.Equal(2, JsonSerializer.Deserialize<EtwHeartbeat>(File.ReadAllText(путь), ObservationJson.Options)!.Pid);
+        Assert.Empty(Directory.EnumerateFiles(EtwFiles.Directory(_каталог), "*.tmp"));
+    }
+
+    [Fact]
+    public void Подмена_под_долгим_читателем_отказывает_без_временного_файла()
+    {
+        // Открытый файл мешает подмене только на Windows.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var путь = EtwFiles.Heartbeat(_каталог);
+        EtwFiles.WriteAtomically(путь, new EtwHeartbeat(1, DateTime.UnixEpoch));
+
+        using (new FileStream(путь, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var отказ = Record.Exception(() => EtwFiles.WriteAtomically(путь, new EtwHeartbeat(2, DateTime.UnixEpoch)));
+            Assert.True(отказ is IOException or UnauthorizedAccessException, $"подмена отказала так: {отказ}");
+        }
+
+        Assert.Equal(1, JsonSerializer.Deserialize<EtwHeartbeat>(File.ReadAllText(путь), ObservationJson.Options)!.Pid);
+        Assert.Empty(Directory.EnumerateFiles(EtwFiles.Directory(_каталог), "*.tmp"));
+    }
+
+    [Fact]
     public void Помощник_при_старте_видит_прежнюю_команду_и_не_исполняет_её()
     {
         EtwFiles.WriteAtomically(EtwFiles.Command(_каталог), new EtwCommand("прежняя", Сеанс, "start", 1000, 4242, "proshow.exe"));
@@ -132,7 +173,9 @@ public sealed class EtwBridgeTests : IDisposable
     {
         while (!стоп.IsCancellationRequested)
         {
-            EtwFiles.WriteAtomically(EtwFiles.Heartbeat(_каталог), new EtwHeartbeat(4242, DateTime.UtcNow));
+            // Как у настоящего помощника: пропущенный удар мост переживёт.
+            try { EtwFiles.WriteAtomically(EtwFiles.Heartbeat(_каталог), new EtwHeartbeat(4242, DateTime.UtcNow)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             try { await Task.Delay(50, стоп); }
             catch (OperationCanceledException) { }
         }
@@ -145,7 +188,7 @@ public sealed class EtwBridgeTests : IDisposable
             var путь = EtwFiles.Command(_каталог);
             return File.Exists(путь) ? JsonSerializer.Deserialize<EtwCommand>(File.ReadAllText(путь), ObservationJson.Options) : null;
         }
-        catch (Exception e) when (e is IOException or JsonException) { return null; }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 
     private List<string?> Состояния() => [.. _журнал.After(0)

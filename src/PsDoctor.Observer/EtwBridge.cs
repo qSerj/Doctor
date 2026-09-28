@@ -142,7 +142,7 @@ public sealed class EtwBridge : IDisposable
                 ? JsonSerializer.Deserialize<EtwStatus>(File.ReadAllText(path), ObservationJson.Options)
                 : null;
         }
-        catch (Exception error) when (error is IOException or JsonException) { return null; }
+        catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>Последнее сердцебиение помощника; нет файла или он не читается — <c>null</c>.</summary>
