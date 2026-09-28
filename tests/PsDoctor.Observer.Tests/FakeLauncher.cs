@@ -45,7 +45,7 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher
         return run;
     }
 
-    public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
+    public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
     {
         if (Fails)
         {

@@ -86,6 +86,7 @@ public static class ScenarioParser
         var arguments = new Arguments(line, words);
         ScenarioStep? step = words[0] switch
         {
+            "launch" when words.Count == 1 => new LaunchStep(line, text, null),
             "launch" => arguments.Text(1) is { } path ? new LaunchStep(line, text, path) : null,
             "close" => new CloseStep(line, text),
             "press" => arguments.Text(1) is { } button ? new PressStep(line, text, button) : null,

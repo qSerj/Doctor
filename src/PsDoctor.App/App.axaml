@@ -158,6 +158,21 @@
       <Setter Property="Foreground" Value="White" />
       <Setter Property="VerticalAlignment" Value="Top" />
     </Style>
+    <!-- Крестик «забыть проект» в шапке: без фона, пока на него не наведут. -->
+    <Style Selector="Border.hero Button.dismiss">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Border.hero Button.dismiss:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#33FFFFFF" />
+    </Style>
+    <Style Selector="Border.hero Button.dismiss PathIcon">
+      <Setter Property="Width" Value="14" />
+      <Setter Property="Height" Value="14" />
+    </Style>
     <Style Selector="Border.hero Border.halo">
       <Setter Property="Width" Value="56" />
       <Setter Property="Height" Value="56" />
@@ -305,31 +320,6 @@
     </Style>
     <Style Selector="Button.primary Border.tile PathIcon, Button.primary PathIcon.chevron">
       <Setter Property="Foreground" Value="White" />
-    </Style>
-
-    <!-- Выбор в мастере: крупные карточки вместо строк списка. -->
-    <Style Selector="ListBox.choices">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="0" />
-    </Style>
-    <Style Selector="ListBox.choices ListBoxItem">
-      <Setter Property="Margin" Value="0,0,0,8" />
-      <Setter Property="Padding" Value="12,10" />
-      <Setter Property="CornerRadius" Value="12" />
-      <Setter Property="Background" Value="White" />
-      <Setter Property="BorderBrush" Value="#E1E6EE" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Cursor" Value="Hand" />
-    </Style>
-    <Style Selector="ListBox.choices ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#F2F7FD" />
-      <Setter Property="BorderBrush" Value="#A9CBEF" />
-    </Style>
-    <Style Selector="ListBox.choices ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#E5F0FB" />
-      <Setter Property="BorderBrush" Value="#0F6CBD" />
-      <Setter Property="BorderThickness" Value="2" />
     </Style>
 
   </Application.Styles>

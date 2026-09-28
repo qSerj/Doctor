@@ -253,11 +253,11 @@ public interface IProgramLauncher
     bool IsProgramRunning();
 
     /// <summary>
-    /// Запускает программу с файлом шоу. Факты о процессах пишутся в <paramref name="facts"/>,
+    /// Запускает программу с файлом шоу или без него (<paramref name="showPath"/> <c>null</c>). Факты о процессах пишутся в <paramref name="facts"/>,
     /// выходы сообщаются в <paramref name="events"/>. Не запустилась — <see cref="ProgramLaunchException"/>,
     /// факт об этом уже записан.
     /// </summary>
-    IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events);
+    IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events);
 }
 
 /// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>

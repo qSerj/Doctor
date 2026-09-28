@@ -125,7 +125,7 @@ public sealed class ObservationSession : IProgramEvents
     }
 
     /// <summary>Запуск программы — действие <c>launch</c>. Программа в сеансе одна.</summary>
-    public ActionResult Launch(string showPath, IProgramLauncher launcher)
+    public ActionResult Launch(string? showPath, IProgramLauncher launcher)
     {
         lock (gate)
         {

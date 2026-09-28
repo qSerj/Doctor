@@ -103,8 +103,17 @@ public sealed class ScenarioParserTests
         Assert.True(ScenarioParser.Parse("say \"Нажмите\"\nwait confirm\npress Ok").Scenario!.DrivesProgram);
     }
 
+    [Fact]
+    public void Launch_без_файла_запускает_программу_без_проекта()
+    {
+        var result = ScenarioParser.Parse("launch");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(new LaunchStep(1, "launch", null), Assert.Single(result.Scenario!.Steps));
+    }
+
     [Theory]
-    [InlineData("launch", ScenarioErrorKind.MissingArgument, null)]
+    [InlineData("launch \"\"", ScenarioErrorKind.MissingArgument, null)]
     [InlineData("press \"\"", ScenarioErrorKind.MissingArgument, null)]
     [InlineData("wait", ScenarioErrorKind.MissingArgument, "wait")]
     [InlineData("wait dialog", ScenarioErrorKind.MissingArgument, null)]

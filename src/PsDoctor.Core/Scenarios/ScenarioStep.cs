@@ -11,8 +11,8 @@ public abstract record ScenarioStep(int Line, string Text);
 /// <summary>Действие: исполняет его подставленная реализация, исполнитель только ждёт итога.</summary>
 public abstract record ActionStep(int Line, string Text) : ScenarioStep(Line, Text);
 
-/// <summary><c>launch &lt;файл шоу&gt;</c> — запуск программы с проектом.</summary>
-public sealed record LaunchStep(int Line, string Text, string ShowPath) : ActionStep(Line, Text);
+/// <summary><c>launch [&lt;файл шоу&gt;]</c> — запуск программы с проектом или без него (<paramref name="ShowPath"/> <c>null</c>).</summary>
+public sealed record LaunchStep(int Line, string Text, string? ShowPath) : ActionStep(Line, Text);
 
 /// <summary><c>close</c> — то же, что крестик главного окна.</summary>
 public sealed record CloseStep(int Line, string Text) : ActionStep(Line, Text);

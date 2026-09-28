@@ -7,7 +7,16 @@ namespace PsDoctor.App;
 internal static class Program
 {
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    public static void Main(string[] args)
+    {
+        using var claim = SingleInstance.Claim(out var first);
+        if (!first)
+        {
+            SingleInstance.WakeFirst();
+            return;
+        }
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
 
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()

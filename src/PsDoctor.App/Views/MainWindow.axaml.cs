@@ -141,6 +141,16 @@ public sealed partial class MainWindow : Window
         return path;
     }
 
+    /// <summary>Doctor забывает выбранный проект; следующая кнопка, которой он нужен, спросит его заново.</summary>
+    private void СброситьПроект(object? sender, RoutedEventArgs args)
+    {
+        showPath = null;
+        analysis = null;
+        Control<Border>("ProjectLine").IsVisible = false;
+        Control<Border>("AdviceBorder").IsVisible = false;
+        RefreshStatus();
+    }
+
     public async Task OpenProjectAsync()
     {
         var path = await PickShowAsync();
@@ -270,38 +280,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-
-        var dialog = Dialog("Решить проблему", 500);
-        var choices = new ListBox { Classes = { "choices" }, ItemsSource = new[]
-        {
-            Choice("IconSlowLoad", "Проект не открывается или долго загружается", "Сначала быстро восстановим служебные файлы, потом при необходимости включим наблюдение."),
-            Choice("IconStrange", "ProShow зависает или закрывается во время работы", "Сначала быстрое восстановление, потом соберём сведения о работе программы."),
-            Choice("IconRender", "Рендер зависает или ProShow закрывается", "Сначала быстрое восстановление, потом понаблюдаем за выводом."),
-            Choice("IconMedia", "Видео или картинка дают плохой результат", "Проверим проект и исходные материалы."),
-        }, SelectedIndex = 0 };
-        var next = DialogButton("Далее", primary: true);
-        var cancel = DialogButton("Отмена");
-        cancel.IsCancel = true;
-        next.Click += (_, _) => dialog.Close(choices.SelectedIndex);
-        cancel.Click += (_, _) => dialog.Close(-1);
-        choices.DoubleTapped += (_, _) => dialog.Close(choices.SelectedIndex);
-        dialog.Content = Page("IconQuestion", "info", "Что происходит?", "Выберите, что больше похоже на вашу ситуацию.",
-            choices, Buttons(cancel, next));
-        var choice = await dialog.ShowDialog<int>(this);
-        if (choice < 0) return;
-        var symptom = choice switch
-        {
-            0 => "load",
-            1 => "editing",
-            2 => "render",
-            _ => "media",
-        };
-        if (symptom == "media")
-        {
-            await CheckProjectAsync();
-            return;
-        }
-        await RecoverOrObserveAsync(symptom);
+        await RecoverOrObserveAsync();
     }
 
     private async Task<bool> ResolvePendingAttemptAsync()
@@ -342,15 +321,20 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
-    private async Task RecoverOrObserveAsync(string symptom)
-    {
-        var path = showPath ?? await PickShowAsync();
-        if (path is null)
-        {
-            return;
-        }
+    /// <summary>
+    /// Мастер один на все жалобы: выбор симптома убран 28.09.2026 — ветки делали одно и то же. Попытки
+    /// восстановления пишутся под одним симптомом; прежние записи с load, editing и render счёт не ведут.
+    /// </summary>
+    private const string ProblemSymptom = "problem";
 
-        var failedAttempts = repairHistory.UnresolvedAttempts(symptom);
+    /// <summary>
+    /// Проект мастер не спрашивает: восстановлению он не обязателен (без него — только файлы программы), а запуск
+    /// под наблюдением сам предложит выбрать его. Выбранный раньше проект берётся как есть.
+    /// </summary>
+    private async Task RecoverOrObserveAsync()
+    {
+        var path = showPath;
+        var failedAttempts = repairHistory.UnresolvedAttempts(ProblemSymptom);
         if (failedAttempts >= 2)
         {
             var answer = await AskAsync(
@@ -362,21 +346,24 @@ public sealed partial class MainWindow : Window
                 "watch");
             if (answer == 0)
             {
-                await StartObservationForSymptomAsync(symptom, path);
+                await StartObservationAsync();
             }
             return;
         }
 
-        if (failedAttempts == 1)
+        if (failedAttempts == 1 && !await ShowDiskCheckAsync(path))
         {
-            await ShowDiskCheckAsync(path);
+            return;
         }
 
         var candidates = cleaner.Find(path);
         if (candidates.Count == 0)
         {
-            await ShowInfoAsync("Быстрое восстановление", "Служебных файлов, которые стоит подготовить заново, нет. Переходим к наблюдению за ProShow.", "IconRepair");
-            await StartObservationForSymptomAsync(symptom, path);
+            if (await AskAsync("Быстрое восстановление", "Служебных файлов, которые стоит подготовить заново, нет. Следующий шаг — наблюдение за ProShow.",
+                    "Начать наблюдение", null, "IconRepair") == 0)
+            {
+                await StartObservationAsync();
+            }
             return;
         }
 
@@ -388,7 +375,7 @@ public sealed partial class MainWindow : Window
             "IconRepair");
         if (answerToRepair == 1)
         {
-            await StartObservationForSymptomAsync(symptom, path);
+            await StartObservationAsync();
             return;
         }
         if (answerToRepair != 0)
@@ -402,10 +389,10 @@ public sealed partial class MainWindow : Window
         }
 
         var attempt = repairHistory.NextAttempt();
-        repairHistory.TryAppend(new RepairHistoryEvent(DateTimeOffset.UtcNow, "attempt", attempt, symptom, path));
+        repairHistory.TryAppend(new RepairHistoryEvent(DateTimeOffset.UtcNow, "attempt", attempt, ProblemSymptom, path));
         var outcome = cleaner.Clean(path);
         var result = outcome.ProgramRunning ? "program-running" : outcome.Failed.Count > 0 ? "partial" : "completed";
-        repairHistory.TryAppend(new RepairHistoryEvent(DateTimeOffset.UtcNow, "result", attempt, symptom, path, result));
+        repairHistory.TryAppend(new RepairHistoryEvent(DateTimeOffset.UtcNow, "result", attempt, ProblemSymptom, path, result));
         var message = outcome.ProgramRunning
             ? "ProShow запустился во время операции. Файлы не менялись."
             : outcome.Failed.Count > 0
@@ -416,22 +403,20 @@ public sealed partial class MainWindow : Window
         await ShowInfoAsync(result == "completed" ? "Восстановление завершено" : "Быстрое восстановление", message, ToneIcon(tone), tone);
     }
 
-    private async Task StartObservationForSymptomAsync(string symptom, string path)
+    private async Task StartObservationAsync()
     {
         if (!cleaner.IsProgramRunning() && diagnosticSession is null)
         {
-            showPath = path;
-            await ShowInfoAsync("Наблюдение за ProShow",
-                "ProShow сейчас не работает. Прошлый сбой записать уже нельзя: Doctor может запустить проект под наблюдением, чтобы вы повторили проблему.", "IconWatch", "watch");
-            await ShowDiagnosticAsync();
+            await ShowDiagnosticAsync("ProShow сейчас не работает, и прошлый сбой уже не записать. Doctor запустит ProShow под наблюдением — повторите проблему.");
             return;
         }
-        await ShowPassiveAsync(symptom == "render");
+        await ShowPassiveAsync();
     }
 
-    private async Task ShowDiskCheckAsync(string projectPath)
+    /// <summary>Шаг мастера: <c>false</c> — оператор закрыл окно или нажал «Отмена», мастер дальше не идёт.</summary>
+    private async Task<bool> ShowDiskCheckAsync(string? projectPath)
     {
-        var roots = new[] { Path.GetPathRoot(projectPath), Path.GetPathRoot(ProShowLauncher.DefaultProgramPath) }
+        var roots = new[] { projectPath is null ? null : Path.GetPathRoot(projectPath), Path.GetPathRoot(ProShowLauncher.DefaultProgramPath) }
             .Where(root => !string.IsNullOrWhiteSpace(root))
             .Distinct(StringComparer.OrdinalIgnoreCase);
         var lines = roots.Select(root =>
@@ -447,18 +432,21 @@ public sealed partial class MainWindow : Window
         var dialog = Dialog("Проверить свободное место");
         var openCleanup = DialogButton("Открыть очистку Windows");
         var next = DialogButton("Продолжить", primary: true);
+        var cancel = DialogButton("Отмена");
+        cancel.IsCancel = true;
+        cancel.Click += (_, _) => dialog.Close(false);
         openCleanup.Click += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo("cleanmgr.exe") { UseShellExecute = true }); }
             catch (Exception error) { SetResult("Не удалось открыть очистку Windows: " + error.Message, "error"); }
         };
-        next.Click += (_, _) => dialog.Close();
+        next.Click += (_, _) => dialog.Close(true);
         dialog.Content = Page("IconDisk", "info", "Хватает ли места на диске?",
             "Перед второй попыткой посмотрим, есть ли место для временных файлов ProShow.",
             new Border { Classes = { "card" }, Child = new TextBlock { Text = string.Join("\n", lines), Classes = { "body" } } },
             new TextBlock { Text = "Очистка Windows открывается отдельно; Doctor через неё ничего не удаляет.", Classes = { "caption" }, TextWrapping = TextWrapping.Wrap },
-            Buttons(openCleanup, next));
-        await dialog.ShowDialog(this);
+            Buttons(openCleanup, cancel, next));
+        return await dialog.ShowDialog<bool>(this);
     }
 
     private static string FormatBytes(long value) => value switch
@@ -468,7 +456,7 @@ public sealed partial class MainWindow : Window
         _ => $"{value:N0} Б",
     };
 
-    private async Task ShowPassiveAsync(bool render)
+    private async Task ShowPassiveAsync()
     {
         if (diagnosticSession is not null)
         {
@@ -491,9 +479,7 @@ public sealed partial class MainWindow : Window
             var accepted = await observer.AttachAsync(origin: SessionOrigins.Wizard);
             diagnosticSession = accepted.Session;
             StartDiagnosticWatch();
-            SetResult(render
-                ? "Наблюдаем за ProShow. Запустите вывод обычным способом. Всё записанное остаётся на этом компьютере."
-                : "Наблюдаем за ProShow. Откройте проблемный проект обычным способом. Всё записанное остаётся на этом компьютере.", "watch");
+            SetResult("Наблюдаем за ProShow. Повторите то, на чём возникает проблема. Всё записанное остаётся на этом компьютере.", "watch");
         }
         catch (ObserverException error)
         {
@@ -652,7 +638,12 @@ public sealed partial class MainWindow : Window
 
     private async void ЗакончитьНаблюдение(object? sender, RoutedEventArgs args) => await FinishObservationAsync();
 
-    private async Task ShowDiagnosticAsync()
+    /// <summary>
+    /// Запуск под наблюдением: только ProShow или ProShow сразу с проектом. Проект, выбранный раньше, виден
+    /// карточкой; если его нет, «С проектом…» сначала спрашивает файл.
+    /// </summary>
+    /// <param name="reason">Почему мастер пришёл к запуску — первая строка окна.</param>
+    private async Task ShowDiagnosticAsync(string reason)
     {
         if (diagnosticSession is not null)
         {
@@ -665,31 +656,44 @@ public sealed partial class MainWindow : Window
             await ShowInfoAsync("Диагностический запуск", "ProShow уже запущен. Диагностический запуск не создаёт второй экземпляр.");
             return;
         }
-        var path = showPath ?? await PickShowAsync();
-        if (path is null) return;
         if (!HasObserverConfiguration())
         {
-            await ShowInfoAsync("Наблюдение не настроено",
-                "Проект выбран, но наблюдение не настроено. Позовите администратора: Doctor установлен не полностью.", "IconError", "error");
+            await ShowInfoAsync("Наблюдение не настроено", "Позовите администратора: Doctor установлен не полностью.", "IconError", "error");
             return;
         }
 
-        var dialog = Dialog("Запуск проекта с диагностикой");
-        var launch = DialogButton("Запустить ProShow", primary: true);
+        const int Bare = 1, WithProject = 2;
+        var dialog = Dialog("Запуск под наблюдением");
         var cancel = DialogButton("Отмена");
         cancel.IsCancel = true;
-        launch.Click += (_, _) => dialog.Close(true);
-        cancel.Click += (_, _) => dialog.Close(false);
-        dialog.Content = Page("IconLaunch", "watch", "Запуск с диагностикой",
-            "Doctor запустит ProShow и будет наблюдать, как открывается проект. Это не мешает работе.",
-            ProjectCard(path),
-            Buttons(cancel, launch));
-        if (!await dialog.ShowDialog<bool>(this)) return;
+        cancel.Click += (_, _) => dialog.Close(null);
+        Button bare, withProject;
+        Control[] content;
+        if (showPath is { } known)
+        {
+            // Проект уже выбран — по умолчанию он и открывается.
+            bare = DialogButton("Только ProShow");
+            withProject = DialogButton("С проектом", primary: true);
+            content = [ProjectCard(known)];
+        }
+        else
+        {
+            bare = DialogButton("Запустить ProShow", primary: true);
+            withProject = DialogButton("С проектом…");
+            content = [];
+        }
+        bare.Click += (_, _) => dialog.Close(Bare);
+        withProject.Click += (_, _) => dialog.Close(WithProject);
+        dialog.Content = Page("IconLaunch", "watch", "Запуск под наблюдением", reason, [.. content, Buttons(cancel, bare, withProject)]);
+        var choice = await dialog.ShowDialog<int?>(this);
+        if (choice is null) return;
+        var path = choice == WithProject ? showPath ?? await PickShowAsync() : null;
+        if (choice == WithProject && path is null) return;
         try
         {
             using var observer = CreateObserver();
             await observer.HealthAsync();
-            var accepted = await observer.RunAsync($"launch \"{path}\"", origin: SessionOrigins.Wizard);
+            var accepted = await observer.RunAsync(path is null ? "launch" : $"launch \"{path}\"", origin: SessionOrigins.Wizard);
             diagnosticSession = accepted.Session;
             StartDiagnosticWatch();
             SetResult("Наблюдаем за ProShow. Работайте как обычно. Всё записанное остаётся на этом компьютере.", "watch");
@@ -711,7 +715,7 @@ public sealed partial class MainWindow : Window
         await dialog.ShowDialog(this);
     }
 
-    /// <summary>0 — главный ответ, 1 — второй, −1 — отмена или закрытие окна.</summary>
+    /// <summary>0 — главный ответ, 1 — второй, −1 — «Отмена» или крестик.</summary>
     private async Task<int> AskAsync(string title, string message, string primary, string? secondary, string icon = "IconQuestion", string tone = "info")
     {
         var dialog = Dialog(title);
@@ -729,19 +733,8 @@ public sealed partial class MainWindow : Window
         }
         buttons.Add(first);
         dialog.Content = Page(icon, tone, title, message, Buttons([.. buttons]));
-        return await dialog.ShowDialog<int>(this);
-    }
-
-    private static Grid Choice(string icon, string title, string description)
-    {
-        var text = new StackPanel { Spacing = 2, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = title, FontWeight = FontWeight.SemiBold, FontSize = 15, TextWrapping = TextWrapping.Wrap });
-        text.Children.Add(new TextBlock { Text = description, Classes = { "caption" }, TextWrapping = TextWrapping.Wrap });
-        Grid.SetColumn(text, 1);
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 12 };
-        row.Children.Add(Tile(icon));
-        row.Children.Add(text);
-        return row;
+        // Крестик — та же «Отмена»: без этого ShowDialog<int> вернул бы 0, то есть главный ответ.
+        return await dialog.ShowDialog<int?>(this) ?? -1;
     }
 
     private static Border ProjectCard(string path)

@@ -389,10 +389,10 @@ public sealed class UnsupportedLauncher : IProgramLauncher
 {
     public bool IsProgramRunning() => false;
 
-    public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
+    public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
     {
         ArgumentNullException.ThrowIfNull(facts);
-        facts.Record(ProgramFactKinds.LaunchFailed, new LaunchFailed(showPath, "platform", 0));
+        facts.Record(ProgramFactKinds.LaunchFailed, new LaunchFailed(showPath ?? "", "platform", 0));
         throw new ProgramLaunchException("запуск программы есть только на Windows");
     }
 }

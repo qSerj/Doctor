@@ -82,14 +82,13 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
         facts.Record(ProgramFactKinds.ProgramAttached, target, target.ProcessId);
         return AttachedRun.Start(target, facts, events);
     }
-    public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
+    public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
     {
-        ArgumentException.ThrowIfNullOrEmpty(showPath);
-        // Текущий каталог — каталог файла шоу, как при открытии проекта двойным щелчком.
-        var directory = Path.GetDirectoryName(showPath);
+        // Текущий каталог — каталог файла шоу, как при открытии проекта двойным щелчком; без проекта — как из ярлыка.
+        var directory = string.IsNullOrEmpty(showPath) ? Path.GetDirectoryName(ProgramPath) : Path.GetDirectoryName(showPath);
         return ProgramRun.Start(
             ProgramPath,
-            $"\"{ProgramPath}\" \"{showPath}\"",
+            string.IsNullOrEmpty(showPath) ? $"\"{ProgramPath}\"" : $"\"{ProgramPath}\" \"{showPath}\"",
             Directory.Exists(directory) ? directory : null,
             facts,
             events,
@@ -106,7 +105,7 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
     /// Временный каталог — только файлы ffmpeg программы (<c>py*</c>, <c>px*</c>, <c>dpx*</c>, опыт 07): прочего там
     /// много и оно чужое. Каталог файла шоу — без вложенных, ради <c>.pxc</c>, <c>.bak</c> и автосохранения рядом.
     /// </summary>
-    public static IReadOnlyList<ServiceFilePlace> ServicePlaces(string programPath, string showPath)
+    public static IReadOnlyList<ServiceFilePlace> ServicePlaces(string programPath, string? showPath)
     {
         var vendor = Path.GetDirectoryName(Path.GetDirectoryName(programPath)) ?? Path.GetDirectoryName(programPath)!;
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -127,7 +126,7 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher
             new(temp, false, "px*"),
             new(temp, false, "dpx*"),
         };
-        if (Path.GetDirectoryName(showPath) is { Length: > 0 } show)
+        if (!string.IsNullOrEmpty(showPath) && Path.GetDirectoryName(showPath) is { Length: > 0 } show)
         {
             places.Add(new ServiceFilePlace(show, false));
         }

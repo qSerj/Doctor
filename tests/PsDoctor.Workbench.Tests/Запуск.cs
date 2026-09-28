@@ -15,7 +15,7 @@ internal sealed class Запуск : IProgramLauncher
 
     public bool IsProgramRunning() => Последний is { Жив: true };
 
-    public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
+    public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
     {
         var прогон = new Прогон(facts, events);
         facts.Record(ProgramFactKinds.ProgramLaunched, new ProgramLaunched("proshow.exe", $"proshow.exe \"{showPath}\"", null, true), прогон.ProcessId);

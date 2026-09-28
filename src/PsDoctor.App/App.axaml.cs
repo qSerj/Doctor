@@ -64,6 +64,7 @@ public sealed partial class App : Application
                 IsVisible = true,
             };
             tray.Clicked += (_, _) => ShowWindow(window);
+            SingleInstance.Listen(() => Dispatcher.UIThread.Post(() => ShowWindow(window)));
             var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             statusTimer.Tick += (_, _) => { window.RefreshStatus(); status.Header = window.TrayStatus; };
             statusTimer.Start();

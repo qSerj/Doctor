@@ -316,11 +316,11 @@ public sealed class ObserveCommandTests : IAsyncLifetime
 
         public bool IsProgramRunning() => false;
 
-        public IProgramRun Launch(string showPath, IFactRecorder facts, IProgramEvents events)
+        public IProgramRun Launch(string? showPath, IFactRecorder facts, IProgramEvents events)
         {
             _факты = facts;
             _события = events;
-            facts.Record(ProgramFactKinds.ProgramLaunched, new ProgramLaunched("proshow.exe", showPath, null, true), ProcessId);
+            facts.Record(ProgramFactKinds.ProgramLaunched, new ProgramLaunched("proshow.exe", showPath ?? "proshow.exe", null, true), ProcessId);
             _запущен.TrySetResult();
             return this;
         }
