@@ -9,19 +9,15 @@
         Background="#15171B"
         Title="psdoctor — пульт наблюдателя">
   <Window.DataTemplates>
-    <!-- Лампа: точка, подпись и что горит словами. Цвет — по признаку, смысл назначает модель. -->
+    <!-- Лампа: что горит словами, цвет — по признаку. Подписи и точки нет: состояние читается по цвету и строке
+         (владелец, 28.09.2026); подпись — в подсказке. -->
     <DataTemplate DataType="{x:Type vm:Lamp}">
       <Border Classes="lamp"
               Classes.on="{Binding IsOn}"
               Classes.attention="{Binding IsAttention}"
-              Classes.alarm="{Binding IsAlarm}">
-        <Grid ColumnDefinitions="Auto,*">
-          <Ellipse Grid.Column="0" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,8,0" />
-          <StackPanel Grid.Column="1">
-            <TextBlock Classes="caption" Text="{Binding Label}" />
-            <TextBlock Classes="lamp-text" Text="{Binding Text}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Text}" />
-          </StackPanel>
-        </Grid>
+              Classes.alarm="{Binding IsAlarm}"
+              ToolTip.Tip="{Binding Tip}">
+        <TextBlock Classes="lamp-text" Text="{Binding Text}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
       </Border>
     </DataTemplate>
   </Window.DataTemplates>
@@ -31,36 +27,29 @@
       <Setter Property="BorderBrush" Value="#2E343C" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="Padding" Value="8,3" />
       <Setter Property="Margin" Value="0,0,6,0" />
-    </Style>
-    <Style Selector="Border.lamp Ellipse">
-      <Setter Property="Fill" Value="#4A515C" />
     </Style>
     <Style Selector="Border.lamp.on">
       <Setter Property="Background" Value="#17331F" />
       <Setter Property="BorderBrush" Value="#2B6B3D" />
     </Style>
-    <Style Selector="Border.lamp.on Ellipse">
-      <Setter Property="Fill" Value="#3FD06B" />
-    </Style>
     <Style Selector="Border.lamp.attention">
       <Setter Property="Background" Value="#3A2F10" />
       <Setter Property="BorderBrush" Value="#A07E22" />
-    </Style>
-    <Style Selector="Border.lamp.attention Ellipse">
-      <Setter Property="Fill" Value="#F0C040" />
     </Style>
     <Style Selector="Border.lamp.alarm">
       <Setter Property="Background" Value="#3D1515" />
       <Setter Property="BorderBrush" Value="#A83232" />
     </Style>
-    <Style Selector="Border.lamp.alarm Ellipse">
-      <Setter Property="Fill" Value="#FF5555" />
-    </Style>
     <Style Selector="TextBlock.lamp-text">
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <!-- Строка последнего события: пакет сохранён, отказ, обрыв. Читается, а не угадывается. -->
+    <Style Selector="TextBlock.status">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="#D8DEE6" />
     </Style>
     <!-- Шаг, на котором стоит сценарий. -->
     <Style Selector="StackPanel.current TextBlock">
@@ -93,14 +82,14 @@
 
   <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="8">
 
-    <!-- Полоса состояния: четыре лампы и настройки. Видна всегда, на любой вкладке. -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,*,*,*,Auto,Auto" Margin="0,0,0,4">
+    <!-- Полоса состояния: три лампы и настройки. Видна всегда, на любой вкладке. Лампы «Оператор» нет: чего ждут
+         от оператора, крупно видно в панели «Сейчас» (владелец, 28.09.2026). -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,*,*,Auto,Auto" Margin="0,0,0,4">
       <ContentControl Grid.Column="0" Content="{Binding LinkLamp}" />
       <ContentControl Grid.Column="1" Content="{Binding ProgramLamp}" />
       <ContentControl Grid.Column="2" Content="{Binding RunLamp}" />
-      <ContentControl Grid.Column="3" Content="{Binding OperatorLamp}" />
       <!-- Пресет — машина: выбор загружает файл и переподключает пульт. -->
-      <ComboBox Grid.Column="4" Width="150" Margin="0,0,6,0" VerticalAlignment="Stretch" VerticalContentAlignment="Center"
+      <ComboBox Grid.Column="3" Width="150" Margin="0,0,6,0" VerticalAlignment="Stretch" VerticalContentAlignment="Center"
                 ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset, Mode=OneWay}"
                 SelectionChanged="ПресетВыбран" PlaceholderText="машина…" ToolTip.Tip="пресет: адрес, ключ, обмен, файл шоу">
         <ComboBox.ItemTemplate>
@@ -109,11 +98,11 @@
           </DataTemplate>
         </ComboBox.ItemTemplate>
       </ComboBox>
-      <ToggleButton Grid.Column="5" Name="КнопкаНастроек" Content="Настройки" VerticalAlignment="Stretch" />
+      <ToggleButton Grid.Column="4" Name="КнопкаНастроек" Content="Настройки" VerticalAlignment="Stretch" />
     </Grid>
 
     <!-- Последнее, что случилось: отказ, обрыв, принятый сценарий. Сверху, чтобы не теряться. -->
-    <TextBlock Grid.Row="1" Classes="caption" Margin="2,0,0,6" TextWrapping="Wrap" Text="{Binding Status}" />
+    <TextBlock Grid.Row="1" Classes="status" Margin="2,2,0,6" TextWrapping="Wrap" Text="{Binding Status}" />
 
     <!-- Связь и пути: задаются один раз и запоминаются. -->
     <Border Grid.Row="2" Classes="group" IsVisible="{Binding #КнопкаНастроек.IsChecked}">

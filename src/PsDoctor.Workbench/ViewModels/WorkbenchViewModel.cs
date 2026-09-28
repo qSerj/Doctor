@@ -78,6 +78,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private bool includeRaw;
     private SessionArtifact? selectedArtifact;
     private string instruction = "";
+    private int? instructionLine;
     private bool awaitingConfirm;
     private bool showAllFacts;
     private FactRow? selectedFact;
@@ -86,7 +87,6 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private Lamp linkLamp = new("Связь", "", LampTone.Off);
     private Lamp programLamp = new("ProShow", "", LampTone.Off);
     private Lamp runLamp = new("Прогон", "", LampTone.Off);
-    private Lamp operatorLamp = new("Оператор", "", LampTone.Off);
 
     /// <param name="connect">Как создаётся клиент; тест подставляет свой.</param>
     /// <param name="environment">Откуда берутся значения по умолчанию для адреса и ключа; они главнее сохранённых.</param>
@@ -217,7 +217,10 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Последняя инструкция оператору из факта <c>operator-instruction</c> выбранного сеанса.</summary>
+    /// <summary>
+    /// Инструкция оператору из факта <c>operator-instruction</c> выбранного сеанса. Она относится к следующему шагу:
+    /// гаснет, когда кончился первый шаг после неё или весь сценарий, чтобы выполненное не висело крупно.
+    /// </summary>
     public string Instruction
     {
         get => instruction;
@@ -462,13 +465,6 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref runLamp, value);
     }
 
-    /// <summary>Чего сценарий или программа ждут от человека.</summary>
-    public Lamp OperatorLamp
-    {
-        get => operatorLamp;
-        private set => SetProperty(ref operatorLamp, value);
-    }
-
     /// <summary>Шаг, на котором стоит сценарий, — крупно в панели «Сейчас».</summary>
     public string CurrentStep => Steps.FirstOrDefault(s => s.IsCurrent)?.Text ?? "";
 
@@ -579,6 +575,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         Dialogs.Clear();
         // Лента пойдёт с начала журнала и снова назначит инструкцию и ожидание подтверждения.
         Instruction = "";
+        instructionLine = null;
         AwaitingConfirm = false;
         if (session is null || client is null)
         {
@@ -1057,17 +1054,22 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             case ScenarioFactKinds.StepDone:
                 Mark(fact, StepState.Done, Seconds(fact));
                 AwaitingConfirm = false;
+                ForgetInstructionAfter(fact);
                 break;
             case ScenarioFactKinds.StepFailed:
                 Mark(fact, StepState.Failed, Text(fact, "reason") ?? "");
                 AwaitingConfirm = false;
+                ForgetInstructionAfter(fact);
                 break;
             case ScenarioFactKinds.OperatorInstruction:
                 Instruction = Text(fact, "text") ?? "";
+                instructionLine = Number(fact, "line");
                 break;
             case ScenarioFactKinds.ScenarioFinished:
                 ScenarioRunning = false;
                 AwaitingConfirm = false;
+                Instruction = "";
+                instructionLine = null;
                 var status = Text(fact, "status") ?? "";
                 lastScenarioStatus = status;
                 Outcome = $"сценарий: {status}"
@@ -1092,6 +1094,16 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
                 break;
             default:
                 break;
+        }
+    }
+
+    /// <summary>Шаг после строки инструкции кончился — она выполнена. Шаги идут по порядку, поэтому хватает номера строки.</summary>
+    private void ForgetInstructionAfter(Fact fact)
+    {
+        if (instructionLine is { } said && Number(fact, "line") is { } line && line > said)
+        {
+            Instruction = "";
+            instructionLine = null;
         }
     }
 
@@ -1142,10 +1154,6 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             : lastScenarioStatus is { } done ? new Lamp("Прогон", $"кончился · {done}",
                 done == "completed" ? LampTone.Off : LampTone.Attention)
             : new Lamp("Прогон", "нет", LampTone.Off);
-
-        OperatorLamp = CanConfirm ? new Lamp("Оператор", "ждём «Сделано»", LampTone.Attention)
-            : Dialogs.Count > 0 ? new Lamp("Оператор", $"открыт диалог «{Dialogs[^1].Title}»", LampTone.Attention)
-            : new Lamp("Оператор", "ничего не ждём", LampTone.Off);
 
         OnPropertyChanged(nameof(CanConfirm));
         OnPropertyChanged(nameof(CanRun));

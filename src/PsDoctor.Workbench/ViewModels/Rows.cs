@@ -85,20 +85,20 @@ public sealed class FactRow
 /// <summary>Цвет лампы: смысл, а не оттенок — оттенок назначает окно.</summary>
 public enum LampTone
 {
-    /// <summary>Выключено: не запущено, не идёт, ничего не ждём.</summary>
+    /// <summary>Выключено: не подключён, не запущено, не идёт.</summary>
     Off,
 
     /// <summary>Работает как надо: на связи, под наблюдением, прогон идёт.</summary>
     On,
 
-    /// <summary>Требует внимания человека: ждём «Сделано», открыт диалог, ProShow мимо наблюдателя, прогон сорвался.</summary>
+    /// <summary>Требует внимания человека: ProShow мимо наблюдателя, прогон сорвался.</summary>
     Attention,
 
     /// <summary>Беда: нет связи с наблюдателем.</summary>
     Alarm,
 }
 
-/// <summary>Лампа в полосе состояния: подпись, что горит словами, и цвет.</summary>
+/// <summary>Лампа в полосе состояния: подпись (окно даёт её подсказкой), что горит словами, и цвет.</summary>
 public sealed record Lamp(string Label, string Text, LampTone Tone)
 {
     // Окну нужны признаки, а не перечисление: стиль вешается на класс по булеву признаку без конвертера.
@@ -107,6 +107,9 @@ public sealed record Lamp(string Label, string Text, LampTone Tone)
     public bool IsAttention => Tone == LampTone.Attention;
 
     public bool IsAlarm => Tone == LampTone.Alarm;
+
+    /// <summary>Подсказка: подпись и полный текст — в полосе текст бывает обрезан.</summary>
+    public string Tip => $"{Label}: {Text}";
 }
 
 /// <summary>Главная кнопка панели «Сейчас»: одно действие, которого обстановка ждёт первым.</summary>
@@ -187,7 +190,10 @@ public sealed class SessionRow(SessionSummary summary)
     public string Mark => Active ? "живой" : Finished ? "закрыт" : "оборван";
 }
 
-/// <summary>Открытый диалог программы и его кнопки: каждую можно нажать из пульта.</summary>
+/// <summary>
+/// Открытый диалог программы и его кнопки: каждую можно нажать из пульта. Кнопки без имени — вкладки и значки
+/// вроде тех, что в Slide Options, — не показываются: нажать их по имени нельзя, а пустой квадрат только путает.
+/// </summary>
 public sealed class DialogRow(DialogInfo dialog)
 {
     public long Handle { get; } = dialog.Handle;
@@ -196,7 +202,7 @@ public sealed class DialogRow(DialogInfo dialog)
 
     public string Text { get; } = string.Join(" | ", dialog.Texts);
 
-    public IReadOnlyList<string> Buttons { get; } = dialog.Buttons;
+    public IReadOnlyList<string> Buttons { get; } = [.. dialog.Buttons.Where(b => !string.IsNullOrWhiteSpace(b))];
 }
 
 /// <summary>Сценарий опыта — файл рядом с пультом.</summary>

@@ -113,10 +113,29 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
         Assert.False(пульт.CanConfirm);
         запуск.Последний!.Выйти();
         await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+        Assert.Equal("", пульт.Instruction);
 
         Assert.Contains("completed", пульт.Outcome, StringComparison.Ordinal);
         Assert.All(пульт.Steps, шаг => Assert.Equal(StepState.Done, шаг.State));
         Assert.Contains(пульт.Facts, факт => факт.Kind == ScenarioFactKinds.OperatorConfirmed);
+    });
+
+    [Fact]
+    public void Инструкция_гаснет_когда_кончился_шаг_после_неё() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync();
+        пульт.ScenarioText = $"launch {Проект}\nwait dialog 10\npress \"Ok\"\n"
+            + "say \"Дважды щёлкните по третьему слайду\"\nwait confirm 20\nwait 20";
+
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.AwaitingConfirm, "ожидания подтверждения");
+        Assert.Equal("Дважды щёлкните по третьему слайду", пульт.Instruction);
+
+        await пульт.ConfirmAsync();
+        await ОдинПоток.ЖдатьAsync(() => пульт.Steps[5].IsCurrent, "паузы после подтверждения");
+        Assert.Equal("", пульт.Instruction);
+        await пульт.CancelAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "отмены сценария");
     });
 
     [Fact]
@@ -192,7 +211,7 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
-    public void Лампы_идут_за_программой_прогоном_и_оператором() => ОдинПоток.Выполнить(async () =>
+    public void Лампы_идут_за_программой_и_прогоном() => ОдинПоток.Выполнить(async () =>
     {
         using var пульт = await ПодключённыйAsync(частоОпрашивать: true);
         Assert.Equal(new Lamp("ProShow", "не запущен", LampTone.Off), пульт.ProgramLamp);
@@ -206,14 +225,12 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
 
         Assert.Equal("под наблюдением · запуск · pid 1000", пульт.ProgramLamp.Text);
         Assert.Equal(new Lamp("Прогон", "идёт · шаг 4 из 4", LampTone.On), пульт.RunLamp);
-        Assert.Equal(new Lamp("Оператор", "ждём «Сделано»", LampTone.Attention), пульт.OperatorLamp);
         Assert.Equal(PrimaryAction.Confirm, пульт.Primary);
         Assert.Equal("wait confirm 20", пульт.CurrentStep);
 
         await пульт.ExecutePrimaryAsync();
         await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
         Assert.Equal(new Lamp("Прогон", "кончился · completed", LampTone.Off), пульт.RunLamp);
-        Assert.Equal(new Lamp("Оператор", "ничего не ждём", LampTone.Off), пульт.OperatorLamp);
         Assert.Equal(PrimaryAction.Run, пульт.Primary);
 
         запуск.Последний!.Выйти();
@@ -221,15 +238,23 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
-    public void Открытый_диалог_зажигает_лампу_оператора() => ОдинПоток.Выполнить(async () =>
+    public void Открытый_диалог_виден_в_панели_Сейчас() => ОдинПоток.Выполнить(async () =>
     {
         using var пульт = await ПодключённыйAsync();
         пульт.ScenarioText = $"launch {Проект}";
         await пульт.RunAsync();
         await ОдинПоток.ЖдатьAsync(() => пульт.Dialogs.Count == 1, "диалога в пульте");
 
-        Assert.Equal(new Lamp("Оператор", "открыт диалог «ProShow Producer»", LampTone.Attention), пульт.OperatorLamp);
+        Assert.Equal("ProShow Producer", пульт.Dialogs[0].Title);
     });
+
+    [Fact]
+    public void Кнопки_диалога_без_имени_не_показываются()
+    {
+        var диалог = new DialogRow(new DialogInfo(1, "Slide Options", [], ["", " ", "OK", "Cancel"]));
+
+        Assert.Equal(new[] { "OK", "Cancel" }, диалог.Buttons);
+    }
 
     [Fact]
     public void Связь_гаснет_без_наблюдателя_и_возвращается_сама() => ОдинПоток.Выполнить(async () =>
