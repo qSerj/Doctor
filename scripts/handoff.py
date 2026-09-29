@@ -2,8 +2,9 @@
 """Оснастка разработки: перенос работы Doctor между машинами без участия ИИ.
 
 У переноса одна машина-источник. export собирает на накопитель всё, без чего
-работу не продолжить: Git обоих репозиториев, чаты агента, пакеты проверок,
-artifacts/ и локальный профиль для справки. receive сверяет пакет с этой машиной
+работу не продолжить: Git обоих репозиториев, выжимку свежих чатов и их копии,
+память агента, пакеты проверок, artifacts/ и локальный профиль для справки.
+digest делает ту же выжимку отдельно — чтобы сверить её до export. receive сверяет пакет с этой машиной
 и без --apply ничего не меняет; с --apply только перематывает Git вперёд и
 докладывает файлы. Слияния нет: любое расхождение — остановка с объяснением.
 """
@@ -23,7 +24,8 @@ import sys
 import uuid
 
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
+ACCEPTED_FORMATS = (2, 3)
 JOURNAL = Path("memory") / "Ход работы.md"
 BACKUP_DIR = ".handoff-backup"
 
@@ -106,6 +108,140 @@ def journal_tail(memorex: Path | None) -> str:
     return sections[-1].strip() if len(sections) > 1 else ""
 
 
+# ---------- выжимка чатов ----------
+
+def parse_time(value: object) -> dt.datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.astimezone()
+
+
+def last_export_time(config: dict) -> dt.datetime:
+    """Время последнего пакета этой машины в transit_root; пакетов нет — начало сегодняшнего дня."""
+    latest = None
+    transit = Path(config["transit_root"])
+    for manifest_path in transit.glob("*/manifest.json") if transit.is_dir() else []:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        created = parse_time(manifest.get("created_at"))
+        if manifest.get("machine") == config["machine"] and created and (latest is None or created > latest):
+            latest = created
+    return latest or dt.datetime.combine(dt.date.today(), dt.time()).astimezone()
+
+
+def fresh_sessions(chats: Path, since: dt.datetime) -> list[Path]:
+    if not chats.is_dir():
+        return []
+    return sorted((path for path in chats.glob("*.jsonl")
+                   if dt.datetime.fromtimestamp(path.stat().st_mtime).astimezone() > since),
+                  key=lambda path: path.stat().st_mtime)
+
+
+SERVICE_BLOCK = re.compile(r"<(system-reminder|local-command-stdout|local-command-stderr|local-command-caveat)>.*?</\1>", re.S)
+
+
+def owner_text(content: object) -> str:
+    if isinstance(content, list):
+        content = "\n".join(block.get("text", "") for block in content
+                            if isinstance(block, dict) and block.get("type") == "text")
+    if not isinstance(content, str):
+        return ""
+    command = re.search(r"<command-name>(.*?)</command-name>", content, re.S)
+    if command:
+        arguments = re.search(r"<command-args>(.*?)</command-args>", content, re.S)
+        return f"{command.group(1).strip()} {arguments.group(1).strip() if arguments else ''}".strip()
+    text = SERVICE_BLOCK.sub("", content).strip()
+    return "" if text.startswith("[Request interrupted") else text
+
+
+def read_session(path: Path, since: dt.datetime) -> dict:
+    """Реплики владельца и агента после since: без вывода инструментов, размышлений и служебных вставок."""
+    session = {"id": path.stem, "title": "", "transfer": False, "turns": []}
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            kind = record.get("type")
+            if kind == "custom-title":
+                session["title"] = record.get("customTitle") or session["title"]
+                continue
+            if record.get("isSidechain") or record.get("isMeta"):
+                continue
+            message = record.get("message") or {}
+            speaker, text = None, ""
+            if kind == "user":
+                speaker, text = "Владелец", owner_text(message.get("content"))
+                if text.startswith("/handoff"):
+                    session["transfer"] = True
+            elif kind == "attachment":
+                attachment = record.get("attachment") or {}
+                if attachment.get("type") == "queued_command" and attachment.get("commandMode") == "prompt":
+                    speaker, text = "Владелец", owner_text(attachment.get("prompt"))
+            elif kind == "assistant" and isinstance(message.get("content"), list):
+                for block in message["content"]:
+                    if block.get("type") == "tool_use" and block.get("name") == "Skill" \
+                            and (block.get("input") or {}).get("skill") == "handoff":
+                        session["transfer"] = True
+                speaker = "Агент"
+                text = "\n".join(block.get("text", "") for block in message["content"]
+                                 if block.get("type") == "text").strip()
+            moment = parse_time(record.get("timestamp"))
+            if not speaker or not text or (moment and moment <= since):
+                continue
+            session["turns"].append((speaker, moment, text))
+    return session
+
+
+def render_digest(machine: str, since: dt.datetime, sessions: list[dict]) -> str:
+    now = dt.datetime.now().astimezone().replace(microsecond=0)
+    lines = [f"# Выжимка чатов — {machine}, {since.replace(microsecond=0).isoformat()} … {now.isoformat()}", "",
+             "Реплики владельца и агента из сессий этой машины после прошлого пакета, без вывода инструментов. "
+             "Сверить с коммитами и Memorex: что сказано здесь и не записано нигде, — владельцу списком.", ""]
+    for session in sessions:
+        if not session["turns"]:
+            continue
+        first, last = session["turns"][0][1], session["turns"][-1][1]
+        span = f"{first.astimezone():%d.%m %H:%M}–{last.astimezone():%H:%M}" if first and last else ""
+        mark = ", чат переноса" if session["transfer"] else ""
+        lines += [f"## {session['title'] or 'без заголовка'} — `{session['id'][:8]}`, {span}{mark}", ""]
+        for speaker, moment, text in session["turns"]:
+            stamp = f", {moment.astimezone():%H:%M}" if moment else ""
+            lines += [f"**{speaker}{stamp}:**", "", text, ""]
+    if len(lines) == 4:
+        lines += ["Реплик нет.", ""]
+    return "\n".join(lines)
+
+
+def build_digest(machine: str, sessions: list[Path], since: dt.datetime) -> tuple[str, int]:
+    read = [read_session(path, since) for path in sessions]
+    return render_digest(machine, since, read), sum(1 for session in read if session["turns"])
+
+
+def digest(config: dict, root: Path, source: Path | None, since_text: str | None, out: Path | None) -> Path:
+    if since_text:
+        since = parse_time(since_text)
+        if since is None:
+            raise HandoffError(f"--since: не разобрано время «{since_text}»; нужен ISO 8601, например 2026-09-28T09:00")
+    else:
+        since = last_export_time(config) if source is None else dt.datetime.fromtimestamp(0).astimezone()
+    chats = source or claude_projects() / chats_name(root)
+    sessions = fresh_sessions(chats, since)
+    text, count = build_digest(config["machine"] if source is None else str(source), sessions, since)
+    target = out or Path(config.get("digests", Path.home() / "Lab" / "digests")) / f"{dt.date.today().isoformat()}-{config['machine']}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    log("OK", f"выжимка {target}: сессий с репликами {count}, с {since.replace(microsecond=0).isoformat()}, {len(text.encode('utf-8')) // 1024} КБ")
+    return target
+
+
 # ---------- export ----------
 
 def check_source_repo(name: str, repo: Path, push: bool) -> dict:
@@ -145,7 +281,9 @@ def readme(manifest: dict) -> str:
              manifest["journal"] or "Раздела нет: страница `Memorex/memory/Ход работы.md` пуста или отсутствует.", "",
              "## Состав", "",
              "- `git/*.bundle` — все ветки репозиториев, если на приёме нет сети.",
-             f"- `chats/{manifest['chats']}/` — сессии агента и его `memory/`.",
+             f"- `chats/digest.md` — выжимка сессий этой машины с {manifest['chats']['since']} ({manifest['chats']['sessions']} с репликами).",
+             "- `chats/sessions/` — копии тех же сессий `.jsonl`: если выжимку не успели сверить на источнике, из них это делается на приёме.",
+             "- `chats/memory/` — память агента.",
              "- `experiments/lab-exchange-checks/` — пакеты проверок.",
              "- `experiments/repo-artifacts/` — игнорируемый `artifacts/` репозитория.",
              "- `context/CLAUDE.local.md` — профиль машины-источника, только для справки.", "",
@@ -174,9 +312,16 @@ def export(config: dict, root: Path, push: bool) -> Path:
             run(["git", "-C", str(path), "bundle", "create", str(bundle), "--branches", "--tags"])
             run(["git", "-C", str(path), "bundle", "verify", str(bundle)])
         chats = claude_projects() / chats_name(root)
-        if chats.is_dir():
-            copy_tree(chats, building / "chats" / chats.name)
-        else:
+        since = last_export_time(config)
+        sessions = fresh_sessions(chats, since)
+        (building / "chats" / "sessions").mkdir(parents=True)
+        for session in sessions:
+            shutil.copy2(session, building / "chats" / "sessions" / session.name)
+        digest_text, digest_count = build_digest(config["machine"], sessions, since)
+        (building / "chats" / "digest.md").write_text(digest_text, encoding="utf-8")
+        if (chats / "memory").is_dir():
+            copy_tree(chats / "memory", building / "chats" / "memory")
+        elif not chats.is_dir():
             log("WARNING", f"каталог чатов не найден: {chats}")
         checks = Path(config["exchange_checks"])
         if checks.is_dir():
@@ -193,7 +338,9 @@ def export(config: dict, root: Path, push: bool) -> Path:
             log("WARNING", "нет раздела в Memorex/memory/Ход работы.md — «где остановились» будет пустым")
         manifest = {"format": FORMAT_VERSION, "name": name, "machine": config["machine"],
                     "created_at": dt.datetime.now().astimezone().replace(microsecond=0).isoformat(),
-                    "repositories": heads, "chats": chats.name, "journal": journal}
+                    "repositories": heads, "journal": journal,
+                    "chats": {"since": since.replace(microsecond=0).isoformat(), "sessions": digest_count,
+                              "copies": len(sessions)}}
         (building / "README.md").write_text(readme(manifest), encoding="utf-8")
         manifest["files"] = {path.relative_to(building).as_posix(): sha256(path) for path in files_under(building)}
         (building / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -202,6 +349,7 @@ def export(config: dict, root: Path, push: bool) -> Path:
         log("ERROR", f"пакет не собран; неполный каталог оставлен для разбора: {building}")
         raise
     log("OK", f"пакет {transit / name}")
+    log("OK", f"чаты: сессий с репликами {digest_count} с {manifest['chats']['since']}, копий .jsonl {len(sessions)}")
     return transit / name
 
 
@@ -228,8 +376,8 @@ def load_package(config: dict, argument: str) -> tuple[Path, dict]:
         manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise HandoffError(f"нет manifest.json в {package}; это не пакет export") from error
-    if manifest.get("format") != FORMAT_VERSION:
-        raise HandoffError(f"формат пакета {manifest.get('format')} не поддерживается (нужен {FORMAT_VERSION})")
+    if manifest.get("format") not in ACCEPTED_FORMATS:
+        raise HandoffError(f"формат пакета {manifest.get('format')} не поддерживается (нужен один из {ACCEPTED_FORMATS})")
     broken = [name for name, digest in manifest["files"].items()
               if not (package / name).is_file() or sha256(package / name) != digest]
     if broken:
@@ -310,11 +458,38 @@ def plan_artifacts(plan: Plan, source: Path, target: Path, package_name: str) ->
         plan.notes.append("artifacts/: совпадает с пакетом")
 
 
+def plan_digest(plan: Plan, source: Path, config: dict, manifest: dict) -> None:
+    """Формат 3: выжимка и копии сессий кладутся для чтения; продолжать чужую сессию здесь нельзя."""
+    target = Path(config.get("chats_readonly", Path.home() / "Lab" / "chats")) / manifest["name"]
+    if not (source / "digest.md").is_file():
+        return
+    if (target / "digest.md").is_file() and same_file(source / "digest.md", target / "digest.md"):
+        plan.notes.append(f"выжимка чатов: уже лежит в {target}")
+        return
+    for path in [source / "digest.md", *files_under(source / "sessions")]:
+        plan.step("", lambda s=path, t=target / path.relative_to(source): copy_file(s, t))
+    info = manifest["chats"]
+    plan.step(f"выжимка чатов: {info['sessions']} сесс. с репликами с {info['since']}, копий .jsonl {info['copies']} → {target / 'digest.md'}")
+
+
+def plan_memory(plan: Plan, memory_source: Path, root: Path) -> None:
+    if not memory_source.is_dir():
+        return
+    memory_target = claude_projects() / chats_name(root) / "memory"
+    for path in files_under(memory_source):
+        relative = path.relative_to(memory_source)
+        local = memory_target / relative
+        if not local.exists():
+            plan.step(f"память агента: добавить {relative}", lambda s=path, t=local: copy_file(s, t))
+        elif not same_file(path, local):
+            plan.notes.append(f"память агента: {relative} различается — оставлен здешний, сведите вручную или через skill")
+
+
 def plan_chats(plan: Plan, source: Path, root: Path, config: dict, package_name: str) -> None:
+    """Формат 2: полные копии каталога чатов."""
     if not source.is_dir():
         return
     local_chats = claude_projects() / chats_name(root)
-    memory_source = source / "memory"
     if source.name == local_chats.name:
         target, readonly = local_chats, False
     else:
@@ -339,16 +514,7 @@ def plan_chats(plan: Plan, source: Path, root: Path, config: dict, package_name:
         plan.step(f"чаты: добавить {added}, дополнить {replaced} → {where}")
     else:
         plan.notes.append("чаты: новых нет")
-    if not memory_source.is_dir():
-        return
-    memory_target = local_chats / "memory"
-    for path in files_under(memory_source):
-        relative = path.relative_to(memory_source)
-        local = memory_target / relative
-        if not local.exists():
-            plan.step(f"память агента: добавить {relative}", lambda s=path, t=local: copy_file(s, t))
-        elif not same_file(path, local):
-            plan.notes.append(f"память агента: {relative} различается — оставлен здешний, сведите вручную или через skill")
+    plan_memory(plan, source / "memory", root)
 
 
 def receive(config: dict, root: Path, argument: str, apply: bool) -> int:
@@ -360,7 +526,11 @@ def receive(config: dict, root: Path, argument: str, apply: bool) -> int:
         plan_repo(plan, name, local_repos.get(name), info, package / "git" / f"{name}.bundle")
     plan_checks(plan, package / "experiments" / "lab-exchange-checks", Path(config["exchange_checks"]))
     plan_artifacts(plan, package / "experiments" / "repo-artifacts", root / "artifacts", manifest["name"])
-    plan_chats(plan, package / "chats" / manifest["chats"], root, config, manifest["name"])
+    if manifest["format"] == 2:
+        plan_chats(plan, package / "chats" / manifest["chats"], root, config, manifest["name"])
+    else:
+        plan_digest(plan, package / "chats", config, manifest)
+        plan_memory(plan, package / "chats" / "memory", root)
     plan.notes.append("CLAUDE.local.md не трогается: у этой машины свой профиль")
 
     for note in plan.notes:
@@ -392,6 +562,10 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     export_parser = sub.add_parser("export", help="собрать пакет на накопитель")
     export_parser.add_argument("--push", action="store_true", help="отправить неотправленные коммиты вместо остановки")
+    digest_parser = sub.add_parser("digest", help="выжимка реплик из сессий агента после прошлого пакета этой машины")
+    digest_parser.add_argument("--since", help="с какого времени (ISO 8601); по умолчанию — время прошлого пакета этой машины")
+    digest_parser.add_argument("--from", dest="source", type=Path, help="каталог с .jsonl, например принятые чаты; тогда по умолчанию — все сессии")
+    digest_parser.add_argument("--out", type=Path, help="куда записать; по умолчанию ~/Lab/digests/<дата>-<машина>.md")
     receive_parser = sub.add_parser("receive", help="сверить пакет с этой машиной; с --apply — принять")
     receive_parser.add_argument("package", help="имя пакета в transit_root или путь к нему")
     receive_parser.add_argument("--apply", action="store_true", help="выполнить план, если препятствий нет")
@@ -401,6 +575,9 @@ def main() -> int:
         config = read_config(args.config or root / "handoff.local.json")
         if args.command == "export":
             export(config, root, args.push)
+            return 0
+        if args.command == "digest":
+            digest(config, root, args.source, args.since, args.out)
             return 0
         return receive(config, root, args.package, args.apply)
     except HandoffError as error:
