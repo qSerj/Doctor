@@ -20,7 +20,11 @@ public sealed partial class App : Application
         {
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var window = new MainWindow();
-            desktop.MainWindow = window;
+            // Главное окно время жизни показывает на старте; автозапуск с --tray оставляет только значок — окно откроет трей.
+            if (desktop.Args?.Contains(Program.TrayKey) != true)
+            {
+                desktop.MainWindow = window;
+            }
             // Ошибка одного действия не роняет Doctor: трей живёт, строка ошибки — в app-errors.jsonl для инженера.
             Dispatcher.UIThread.UnhandledException += (_, args) =>
             {

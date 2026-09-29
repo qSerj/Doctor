@@ -158,6 +158,19 @@ public sealed class WatchDutyTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Сторож_передаёт_найденный_ProShow_ключом_program()
+    {
+        var ключ = Path.Combine(_каталог, "observer.key");
+        File.WriteAllText(ключ, "секрет");
+        var раскладка = new InstalledLayout(Path.Combine(_каталог, "settings.json"), ключ, Path.Combine(_каталог, "sessions"), Path.Combine(_каталог, "w.jsonl"));
+
+        var ключи = Watchdog.ObserverArguments(InstalledSettings.Default, раскладка, @"D:\ProShow\proshow.exe");
+
+        Assert.Equal(@"D:\ProShow\proshow.exe", ObserverOptions.Parse(ключи).Options!.ProgramPath);
+        Assert.DoesNotContain("--program", Watchdog.ObserverArguments(InstalledSettings.Default, раскладка));
+    }
+
+    [Fact]
     public async Task Health_показывает_дежурство()
     {
         await using var включено = ObserverHost.Build(new ObserverOptions(IPAddress.Loopback, 0, "test-key-0123456789", Path.Combine(_каталог, "a"), Watch: true), new FakeLauncher());

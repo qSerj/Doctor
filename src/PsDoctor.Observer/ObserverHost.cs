@@ -80,6 +80,10 @@ public static class ObserverHost
                 Activity = service.Activity(),
                 Watch = watch?.Status ?? new WatchStatus(false),
                 WindowsEvents = events?.Status,
+                // Есть ли файл — в момент запроса: инженер видит, что ProShow переустановили или удалили.
+                ProgramFile = OperatingSystem.IsWindows() && program is ProShowLauncher proshow
+                    ? new ProgramFile(proshow.ProgramPath, File.Exists(proshow.ProgramPath))
+                    : null,
             }, ObservationJson.Options));
 
         app.MapPost(ObserverRoutes.Scenarios, async (HttpContext context) =>
@@ -212,9 +216,10 @@ public static class ObserverHost
         return app;
     }
 
+    /// <summary>Сторож всегда передаёт <c>--program</c>; без него — тот же поиск, что у сторожа, но без настроек машины.</summary>
     private static IProgramLauncher DefaultLauncher(ObserverOptions options) =>
         OperatingSystem.IsWindows()
-            ? new ProShowLauncher(options.ProgramPath ?? ProShowLauncher.DefaultProgramPath)
+            ? new ProShowLauncher(options.ProgramPath ?? ProShowLocator.Resolve(null).Path)
             : new UnsupportedLauncher();
 
     /// <summary>Сырые события за UTC-отрезок из ограниченного кольца ETW.</summary>

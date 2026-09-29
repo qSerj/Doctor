@@ -81,4 +81,31 @@ public sealed class InstalledSettingsTests
         Assert.Null(ошибка);
         Assert.Equal("127.0.0.1:8100", настройки!.Listen);
     }
+
+    [Fact]
+    public void Путь_ProShow_из_файла_как_есть_а_пустой_значит_искать_самим()
+    {
+        Assert.Null(InstalledSettings.Default.ProgramPath);
+        Assert.Null(InstalledSettings.Parse("{}").Settings!.ProgramPath);
+        Assert.Null(InstalledSettings.Parse("""{ "programPath": "   " }""").Settings!.ProgramPath);
+        Assert.Equal(@"D:\ProShow\proshow.exe",
+            InstalledSettings.Parse("""{ "programPath": " D:\\ProShow\\proshow.exe " }""").Settings!.ProgramPath);
+    }
+
+    [Fact]
+    public void Шаблон_установщика_включает_дежурство_без_пути_ProShow()
+    {
+        var (настройки, ошибка) = InstalledSettings.Parse("""
+            {
+              "watch": true,
+              // "programPath": "C:\\Program Files (x86)\\Photodex\\ProShow Producer\\proshow.exe",
+              "retention": { "days": 30, "megabytes": 8192, "markedDays": 180 }
+            }
+            """);
+
+        Assert.Null(ошибка);
+        Assert.True(настройки!.Watch);
+        Assert.Null(настройки.ProgramPath);
+        Assert.Equal(8192L * 1024 * 1024, настройки.Retention.Bytes);
+    }
 }

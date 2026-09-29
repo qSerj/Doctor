@@ -16,6 +16,7 @@
 | как измеряется видео | `FfprobeVideoReader.cs` — внешний `ffprobe`, разбор его ответа отдельно от запуска; вызывает его `FileMediaProbe.cs` |
 | где установленный Doctor держит настройки, ключ и журналы | `Installation/InstalledLayout.cs` |
 | как запускается или находится чужая программа | `Observation/ProShowLauncher.cs`, затем `Observation/ProgramRun.cs` или `Observation/AttachedRun.cs` |
+| где на машине ProShow — один порядок у сторожа и App | `Observation/ProShowLocator.cs` |
 | как видно куст процессов | `Observation/Win32Job.cs` |
 | как читаются окна и диалоги | `Observation/WindowWatcher.cs`, нажатие — `Observation/UiAutomation.cs` |
 | что складывается в один сеанс | `Observation/ProgramRun.cs`, для пассивного сеанса `Observation/AttachedRun.cs` |

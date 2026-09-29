@@ -185,8 +185,15 @@ public sealed record ConfirmAccepted(string Session);
 /// <param name="Activity">Что наблюдатель делает сейчас; у наблюдателя до Э4.6 — <c>null</c>.</param>
 /// <param name="Watch">Дежурство; у наблюдателя до Э6.2 — <c>null</c>.</param>
 /// <param name="WindowsEvents">Опрос журнала Windows; <c>null</c> — журнала читать нечем (не Windows) или наблюдатель до Э6.2.</param>
+/// <param name="ProgramFile">ProShow, за которым следит наблюдатель; <c>null</c> — вне Windows или наблюдатель до Э6.2.</param>
 public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null, WatchStatus? Watch = null,
-    WindowsEventsStatus? WindowsEvents = null);
+    WindowsEventsStatus? WindowsEvents = null, ProgramFile? ProgramFile = null);
+
+/// <summary>
+/// ProShow в ответе <c>/health</c>: путь и есть ли файл в момент запроса. В первый вечер у монтажёра путь проверяется
+/// одним запросом, без чтения файлов на его машине.
+/// </summary>
+public sealed record ProgramFile(string Path, bool Exists);
 
 /// <summary>Дежурство в ответе <c>/health</c>: включено ли и чем кончилось последнее неудачное подключение.</summary>
 /// <param name="LastRefusal">Имя последнего отказа подключения, <see cref="ObserverErrors"/>; удачное подключение его не стирает.</param>

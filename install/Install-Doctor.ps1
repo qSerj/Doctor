@@ -59,20 +59,33 @@ function Resolve-TargetUser {
     return "$env:USERDOMAIN\$env:USERNAME"
 }
 
-function Get-UserLocalAppData([string] $account) {
+function Get-UserProfile([string] $account) {
     $sid = (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value
     $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
-    $profilePath = (Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath).ProfileImagePath
-    return Join-Path $profilePath 'AppData\Local'
+    return (Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath).ProfileImagePath
+}
+
+function Get-UserLocalAppData([string] $account) {
+    return Join-Path (Get-UserProfile $account) 'AppData\Local'
+}
+
+# Автозапуск App — ярлык в личной автозагрузке монтажёра: его запускает проводник, поэтому App и открытый из него
+# ProShow идут с обычным приоритетом, без задания планировщика и без повышения прав.
+function Get-UserStartupShortcut([string] $account) {
+    return Join-Path (Get-UserProfile $account) 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Doctor.lnk'
 }
 
 # Останавливаются задачи и процессы только из каталога установки, по пути: под тем же именем на стенде
 # работают наблюдатель конвейера и его помощник ETW из другого каталога. ProShow, запущенный наблюдателем,
-# остаётся жить: его задание не закрывает процессы вместе с наблюдателем.
+# остаётся жить: его задание не закрывает процессы вместе с наблюдателем. Задачи сначала выключаются: их повтор
+# раз в минуту поднял бы сторожа из каталога посреди копирования. Register-ScheduledTask -Force ставит их снова включёнными.
 function Stop-Doctor {
     foreach ($name in @($WatchdogTask, $EtwTask)) {
         $task = Get-ScheduledTask -TaskPath $TaskPath -TaskName $name -ErrorAction SilentlyContinue
-        if ($task) { Stop-ScheduledTask -InputObject $task }
+        if ($task) {
+            Disable-ScheduledTask -InputObject $task | Out-Null
+            Stop-ScheduledTask -InputObject $task
+        }
     }
     $prefix = $Root.TrimEnd('\') + '\'
     $processes = @(Get-CimInstance Win32_Process | Where-Object {
@@ -117,10 +130,11 @@ function Remove-LocalDumps {
     }
 }
 
-function New-Shortcut([string] $path, [string] $target) {
+function New-Shortcut([string] $path, [string] $target, [string] $arguments = '') {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($path)
     $shortcut.TargetPath = $target
+    $shortcut.Arguments = $arguments
     $shortcut.WorkingDirectory = Split-Path $target
     $shortcut.IconLocation = "$target,0"
     $shortcut.Save()
@@ -136,6 +150,8 @@ try {
         Remove-LocalDumps
         Remove-Item -LiteralPath $ShortcutFolder -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $DesktopShortcut -Force -ErrorAction SilentlyContinue
+        try { Remove-Item -LiteralPath (Get-UserStartupShortcut $account) -Force -ErrorAction SilentlyContinue }
+        catch { Write-Warning "Ярлык автозапуска не снят: $($_.Exception.Message)" }
         # Скрипт может лежать в удаляемом каталоге: PowerShell прочёл его целиком, файл не держится.
         Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $Root) { Write-Warning "Каталог $Root удалён не полностью: что-то его держит." }
@@ -200,17 +216,26 @@ try {
   "allowNetworks": [ "192.168.0.0/24" ],
   // Сторож опрашивает наблюдатель раз в pollSeconds; misses опросов подряд без ответа за timeoutSeconds — перезапуск.
   "watchdog": { "pollSeconds": 10, "timeoutSeconds": 5, "misses": 3 },
-  // Обычный сеанс живёт days дней; все сеансы вместе — не больше megabytes. Сеансы мастера и с эпизодом — markedDays.
-  "retention": { "days": 30, "megabytes": 2048, "markedDays": 180 }
+  // Дежурство: наблюдатель сам подключается к каждому запущенному ProShow и пишет, ничего не показывая.
+  "watch": true,
+  // ProShow, за которым следит Doctor. Нет поля — ассоциация .psh, затем Photodex\ProShow Producer в Program Files.
+  // "programPath": "C:\\Program Files (x86)\\Photodex\\ProShow Producer\\proshow.exe",
+  // Обычный сеанс живёт days дней; все сеансы вместе — не больше megabytes. Сеансы мастера, с меткой и с эпизодом — markedDays.
+  "retention": { "days": 30, "megabytes": 8192, "markedDays": 180 }
 }
 '@ | Set-Content -LiteralPath $SettingsFile -Encoding UTF8
     }
 
     # Две задачи при входе монтажёра. Сторож с обычными правами сам запускает наблюдатель и перезапускает его.
     # Помощник ETW — с наивысшими: права берутся здесь, один раз, и окна повышения во время сеанса нет.
+    # Повтор раз в минуту бессрочно: пока экземпляр жив, IgnoreNew его гасит, а упавшего сторожа или помощника
+    # поднимает не позже чем через минуту — перезапуск при сбое на выход процесса не срабатывал.
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $account
+    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
+    # Priority 5 — обычный класс, как у программ из проводника. По умолчанию у задачи 7 — ниже обычного, и его
+    # наследовали бы наблюдатель, помощник ETW и ProShow, запущенный наблюдателем.
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew `
-        -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -Priority 5
     $watchdogAction = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$Observer`" --watchdog"
     $etwAction = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless `"$Observer`" --etw-helper"
     $limited = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Limited
@@ -225,6 +250,13 @@ try {
     New-Item -ItemType Directory -Force -Path $ShortcutFolder | Out-Null
     New-Shortcut (Join-Path $ShortcutFolder 'Doctor.lnk') $App
     New-Shortcut $DesktopShortcut $App
+    # --tray: при входе только значок, без окна. Без профиля у учётной записи автозапуска нет, остальное ставится.
+    try {
+        $startup = Get-UserStartupShortcut $account
+        New-Item -ItemType Directory -Force -Path (Split-Path $startup) | Out-Null
+        New-Shortcut $startup $App '--tray'
+    }
+    catch { Write-Warning "Автозапуск Doctor не поставлен: $($_.Exception.Message)" }
 
     # Монтажёр уже вошёл — задачи запускаются сейчас, не дожидаясь следующего входа.
     Start-ScheduledTask -TaskPath $TaskPath -TaskName $EtwTask

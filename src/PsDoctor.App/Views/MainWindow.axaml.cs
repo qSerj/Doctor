@@ -19,7 +19,10 @@ namespace PsDoctor.App.Views;
 [SupportedOSPlatform("windows")]
 public sealed partial class MainWindow : Window
 {
-    private readonly ProShowCacheCleaner cleaner = new();
+    /// <summary>ProShow этой машины — тем же поиском, что у сторожа: путь из настроек, ассоциация <c>.psh</c>, обычные места.</summary>
+    private static readonly string ProgramPath = ProShowLocator.Resolve(InstalledLayout.Current.LoadSettings().Settings?.ProgramPath).Path;
+
+    private readonly ProShowCacheCleaner cleaner = new(ProgramPath);
     private readonly RepairHistory repairHistory = new();
     private string? showPath;
     private ProjectAnalysis? analysis;
@@ -692,7 +695,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Шаг мастера: <c>false</c> — оператор закрыл окно или нажал «Отмена», мастер дальше не идёт.</summary>
     private async Task<bool> ShowDiskCheckAsync(string? projectPath)
     {
-        var roots = new[] { projectPath is null ? null : Path.GetPathRoot(projectPath), Path.GetPathRoot(ProShowLauncher.DefaultProgramPath) }
+        var roots = new[] { projectPath is null ? null : Path.GetPathRoot(projectPath), Path.GetPathRoot(ProgramPath) }
             .Where(root => !string.IsNullOrWhiteSpace(root))
             .Distinct(StringComparer.OrdinalIgnoreCase);
         var lines = roots.Select(root =>

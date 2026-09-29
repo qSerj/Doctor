@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
 using PsDoctor.Infrastructure.Installation;
+using PsDoctor.Infrastructure.Observation;
 
 namespace PsDoctor.Observer;
 
@@ -49,7 +50,13 @@ public sealed class Watchdog
             return 2;
         }
         var key = layout.EnsureKey();
-        Write("watchdog-started", new { version = build.Version, commit = build.Commit, listen = settings.Listen });
+        Write("watchdog-started", new { version = build.Version, commit = build.Commit, listen = settings.Listen, watch = settings.Watch });
+        // Путь ищется один раз на жизнь сторожа: переустановленный ProShow подхватит следующий вход или перезапуск задачи.
+        var program = OperatingSystem.IsWindows() ? ProShowLocator.Resolve(settings.ProgramPath) : null;
+        if (program is not null)
+        {
+            Write("program-resolved", new { path = program.Path, source = program.Source, exists = program.Exists });
+        }
         StopOrphan();
 
         using var http = new HttpClient { BaseAddress = settings.LocalUrl, Timeout = settings.Watchdog.Timeout };
@@ -57,7 +64,7 @@ public sealed class Watchdog
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            using var observer = Start(settings);
+            using var observer = Start(settings, program?.Path);
             Write("observer-started", new { pid = observer.Id });
             var misses = 0;
             string reason;
@@ -139,10 +146,10 @@ public sealed class Watchdog
         }
     }
 
-    private Process Start(InstalledSettings settings)
+    private Process Start(InstalledSettings settings, string? programPath)
     {
         var start = new ProcessStartInfo(observerPath) { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var argument in ObserverArguments(settings, layout))
+        foreach (var argument in ObserverArguments(settings, layout, programPath))
         {
             start.ArgumentList.Add(argument);
         }
@@ -151,8 +158,9 @@ public sealed class Watchdog
         return process;
     }
 
-    /// <summary>Ключи наблюдателя из настроек: адрес, ключ, каталог сеансов, пределы хранения и дежурство.</summary>
-    public static IReadOnlyList<string> ObserverArguments(InstalledSettings settings, InstalledLayout layout)
+    /// <summary>Ключи наблюдателя из настроек: адрес, ключ, каталог сеансов, пределы хранения, дежурство и ProShow.</summary>
+    /// <param name="programPath">Найденный ProShow; сторож передаёт его всегда, чтобы наблюдатель не искал сам.</param>
+    public static IReadOnlyList<string> ObserverArguments(InstalledSettings settings, InstalledLayout layout, string? programPath = null)
     {
         var arguments = new List<string> { "--listen", settings.Listen };
         foreach (var network in settings.AllowNetworks)
@@ -169,6 +177,10 @@ public sealed class Watchdog
         if (settings.Watch)
         {
             arguments.Add("--watch");
+        }
+        if (programPath is not null)
+        {
+            arguments.AddRange(["--program", programPath]);
         }
         return arguments;
     }
