@@ -4,10 +4,42 @@ using PsDoctor.Core.Scenarios;
 namespace PsDoctor.Observer.Tests;
 
 /// <summary>Подменённый запуск: процессы — факты, которые пишет тест, выход — по команде теста.</summary>
-public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader
+public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IWindowsEventSource
 {
     private readonly Lock gate = new();
     private readonly List<FakeRun> runs = [];
+    private readonly Queue<WindowsEventsBatch> events = new();
+    private readonly List<(long? After, DateTimeOffset Since)> eventReads = [];
+
+    /// <summary>Следующий ответ журнала Windows; ответы кончились — журнал пуст.</summary>
+    public void QueueEvents(WindowsEventsBatch batch)
+    {
+        lock (gate)
+        {
+            events.Enqueue(batch);
+        }
+    }
+
+    /// <summary>С какой закладки и с какого времени журнал спрашивали, по порядку.</summary>
+    public IReadOnlyList<(long? After, DateTimeOffset Since)> EventReads
+    {
+        get
+        {
+            lock (gate)
+            {
+                return [.. eventReads];
+            }
+        }
+    }
+
+    public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since)
+    {
+        lock (gate)
+        {
+            eventReads.Add((after, since));
+            return events.TryDequeue(out var batch) ? batch : new WindowsEventsBatch([], null);
+        }
+    }
 
     /// <summary>Программа запущена мимо наблюдателя.</summary>
     public bool Foreign { get; set; }

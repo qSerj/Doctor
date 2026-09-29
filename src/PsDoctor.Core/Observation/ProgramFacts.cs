@@ -70,6 +70,12 @@ public static class ProgramFactKinds
     public const string WindowsEvents = "windows-events";
 
     /// <summary>
+    /// Событие журнала Windows о кусте ProShow, найденное опросом журнала (Э6.2, часть Г); данные — <see cref="WindowsEvent"/>.
+    /// Ложится в живой сеанс, если случилось не раньше его начала; все найденные события — в файле событий наблюдателя.
+    /// </summary>
+    public const string WindowsEvent = "windows-event";
+
+    /// <summary>
     /// Детектор узнал известное повторение. Детекторов пока нет (Э4.4), но имя закреплено уже сейчас:
     /// сеанс с таким фактом хранится дольше обычного, см. <see cref="Retention"/>.
     /// </summary>
@@ -278,11 +284,16 @@ public interface IProgramLauncher
 /// </summary>
 /// <param name="WindowsBuild">Сборка Windows с номером обновления, например <c>10.0.19045.4894</c>.</param>
 /// <param name="WindowsRelease">Выпуск, например <c>22H2</c>.</param>
-/// <param name="ProgramVersion">Версия файла программы.</param>
+/// <param name="ProgramVersion">Версия файла программы; у ProShow 9.0.3797 она «1, 0, 0, 1» (стенд 29.09.2026).</param>
 /// <param name="ProgramElevated">Процесс программы повышен; у запуска наблюдателем — <c>null</c>: процесса ещё нет.</param>
 /// <param name="EnableLua">UAC, значение <c>EnableLUA</c>.</param>
 /// <param name="Antivirus">Антивирусы из центра безопасности Windows; <c>null</c> — центр не ответил.</param>
 /// <param name="KLite">Установленные K-Lite Codec Pack по разделу удаления программ.</param>
+/// <param name="ProgramBuild">
+/// Сборка ProShow по версии соседнего модуля Photodex (<c>burn.dll</c>, иначе <c>pxplay.exe</c>), например «9,00,0,3797»:
+/// у самого <c>proshow.exe</c> версии файла и продукта — «1, 0, 0, 1» (стенд 29.09.2026). <c>null</c> — модулей нет или
+/// сеанс старше поля.
+/// </param>
 public sealed record EnvironmentFacts(
     string? WindowsBuild,
     string? WindowsRelease,
@@ -296,7 +307,8 @@ public sealed record EnvironmentFacts(
     long? MemoryTotalBytes,
     long? MemoryFreeBytes,
     DiskSpace? SystemDisk,
-    DiskSpace? TempDisk);
+    DiskSpace? TempDisk,
+    string? ProgramBuild = null);
 
 /// <param name="State">Слово состояния <c>productState</c> центра безопасности как есть.</param>
 public sealed record AntivirusProduct(string Name, int? State);
@@ -311,6 +323,19 @@ public interface IEnvironmentReader
     /// <param name="processId">Процесс программы, если он уже есть: по нему видно, повышен ли он.</param>
     /// <returns><c>null</c> — описывать нечего, факта не будет.</returns>
     EnvironmentFacts? ReadEnvironment(int? processId);
+}
+
+/// <summary>
+/// Кто умеет читать журнал Windows о программе для опроса наблюдателем (Э6.2, часть Г): запускатель на Windows — умеет,
+/// подмена в тестах — по желанию. Какие коды событий и чьи имена образов искать, решает источник.
+/// </summary>
+public interface IWindowsEventSource
+{
+    /// <summary>
+    /// События с номером записи после закладки <paramref name="after"/>; без закладки — не старше <paramref name="since"/>.
+    /// Не бросает: сбой — поле ответа.
+    /// </summary>
+    WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since);
 }
 
 /// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>

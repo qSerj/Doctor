@@ -37,6 +37,14 @@ $Observer = Join-Path $Root 'Observer\PsDoctor.Observer.exe'
 $App = Join-Path $Root 'App\PsDoctor.App.exe'
 $ShortcutFolder = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'PsDoctor'
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Doctor.lnk'
+# Минидампы ProShow пишет сама Windows по ключу LocalDumps; %LOCALAPPDATA% раскрывается у того, у кого упало, каталог
+# создаёт сторож. Ключ — в оба представления реестра: ProShow 32-битный, а какое из них Windows читает для процесса
+# WOW64, не проверено (Э6.2, критерий 7).
+$DumpImages = @('proshow.exe', 'fvideo.exe')
+$DumpRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+)
 
 function Finish([int] $code) {
     if (-not $NoPause) { Read-Host 'Нажмите Enter, чтобы закрыть окно' | Out-Null }
@@ -88,6 +96,27 @@ function Remove-Tasks {
     try { $service.GetFolder('\').DeleteFolder('PsDoctor', 0) } catch { }
 }
 
+# Только свои значения в своих ключах: существующий ключ не пересоздаётся, соседние ключи LocalDumps не трогаются.
+function Set-LocalDumps {
+    foreach ($root in $DumpRoots) {
+        foreach ($image in $DumpImages) {
+            $key = Join-Path $root $image
+            if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+            New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value '%LOCALAPPDATA%\PsDoctor\dumps' -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 5 -Force | Out-Null
+        }
+    }
+}
+
+function Remove-LocalDumps {
+    foreach ($root in $DumpRoots) {
+        foreach ($image in $DumpImages) {
+            Remove-Item -LiteralPath (Join-Path $root $image) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function New-Shortcut([string] $path, [string] $target) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($path)
@@ -104,6 +133,7 @@ try {
         Write-Output "Удаление Doctor для $account"
         Stop-Doctor
         Remove-Tasks
+        Remove-LocalDumps
         Remove-Item -LiteralPath $ShortcutFolder -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $DesktopShortcut -Force -ErrorAction SilentlyContinue
         # Скрипт может лежать в удаляемом каталоге: PowerShell прочёл его целиком, файл не держится.
@@ -189,6 +219,8 @@ try {
         -Principal $limited -Settings $settings -Force | Out-Null
     Register-ScheduledTask -TaskPath $TaskPath -TaskName $EtwTask -Action $etwAction -Trigger $trigger `
         -Principal $highest -Settings $settings -Force | Out-Null
+
+    Set-LocalDumps
 
     New-Item -ItemType Directory -Force -Path $ShortcutFolder | Out-Null
     New-Shortcut (Join-Path $ShortcutFolder 'Doctor.lnk') $App

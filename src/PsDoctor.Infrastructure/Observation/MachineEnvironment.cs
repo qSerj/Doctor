@@ -27,6 +27,13 @@ public static class MachineEnvironment
         @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
     ];
 
+    /// <summary>
+    /// Модули Photodex рядом с программой, чья версия — сборка ProShow. У самого <c>proshow.exe</c> версии файла и продукта —
+    /// «1, 0, 0, 1», у записи в разделе удаления программ — только 9 и 0, а <c>burn.dll</c> и <c>pxplay.exe</c> той же
+    /// установки несут «9,00,0,3797» (стенд 29.09.2026).
+    /// </summary>
+    private static readonly string[] BuildModules = ["burn.dll", "pxplay.exe"];
+
     public static EnvironmentFacts Read(string programPath, int? processId)
     {
         var (build, release) = WindowsVersion();
@@ -36,7 +43,7 @@ public static class MachineEnvironment
             release,
             programPath,
             File.Exists(programPath),
-            ProgramVersion(programPath),
+            FileVersion(programPath),
             processId is { } pid ? Elevated(pid) : null,
             EnableLua(),
             Antivirus(),
@@ -44,7 +51,8 @@ public static class MachineEnvironment
             total,
             free,
             Disk(Environment.SystemDirectory),
-            Disk(Path.GetTempPath()));
+            Disk(Path.GetTempPath()),
+            ProgramBuild(programPath));
     }
 
     private static (string? Build, string? Release) WindowsVersion()
@@ -78,7 +86,7 @@ public static class MachineEnvironment
         }
     }
 
-    private static string? ProgramVersion(string path)
+    private static string? FileVersion(string path)
     {
         try
         {
@@ -88,6 +96,19 @@ public static class MachineEnvironment
         {
             return null;
         }
+    }
+
+    /// <summary>Версия файла первого из <see cref="BuildModules"/>, что нашёлся в каталоге программы.</summary>
+    private static string? ProgramBuild(string programPath)
+    {
+        var directory = Path.GetDirectoryName(programPath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return null;
+        }
+        return BuildModules
+            .Select(module => FileVersion(Path.Combine(directory, module)))
+            .FirstOrDefault(version => !string.IsNullOrEmpty(version));
     }
 
     /// <summary>Токен процесса повышен; не открылся — <c>null</c>.</summary>

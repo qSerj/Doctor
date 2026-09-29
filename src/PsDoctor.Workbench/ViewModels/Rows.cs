@@ -67,6 +67,7 @@ public sealed class FactRow
         ProgramFactKinds.RenderArtifacts,
         ProgramFactKinds.Episode,
         ProgramFactKinds.Incident,
+        ProgramFactKinds.WindowsEvent,
         ScenarioFactKinds.ScenarioStarted,
         ScenarioFactKinds.StepStarted,
         ScenarioFactKinds.StepDone,

@@ -47,9 +47,10 @@ public static class ObserverHost
 
         var build = BuildInfo.Of(typeof(ObserverHost).Assembly);
         var health = new ObserverHealth(build.Version, build.Commit);
+        var program = launcher ?? DefaultLauncher(options);
         var service = new ObservationService(
             options.DataDirectory ?? ObserverOptions.DefaultDataDirectory,
-            launcher ?? DefaultLauncher(options),
+            program,
             health,
             actionTimeout,
             retention: options.Retention);
@@ -62,12 +63,24 @@ public static class ObserverHost
             // Дежурство встаёт раньше, чем закрывается сеанс: иначе оно подключилось бы снова к той же программе.
             app.Lifetime.ApplicationStopping.Register(watch.Dispose);
         }
+        // Журнал Windows читает запускатель, который это умеет, — на Windows всегда, не только при дежурстве (Э6.2, часть Г).
+        var events = program is IWindowsEventSource source ? new WindowsEventWatch(service, source) : null;
+        if (events is not null)
+        {
+            app.Lifetime.ApplicationStarted.Register(events.Start);
+            app.Lifetime.ApplicationStopping.Register(events.Dispose);
+        }
         var stopping = app.Lifetime.ApplicationStopping;
         // Остановка наблюдателя закрывает сеанс, но не программу.
         app.Lifetime.ApplicationStopped.Register(() => service.DisposeAsync().AsTask().GetAwaiter().GetResult());
 
         app.MapGet(ObserverRoutes.Health, () => Results.Json(
-            health with { Activity = service.Activity(), Watch = watch?.Status ?? new WatchStatus(false) }, ObservationJson.Options));
+            health with
+            {
+                Activity = service.Activity(),
+                Watch = watch?.Status ?? new WatchStatus(false),
+                WindowsEvents = events?.Status,
+            }, ObservationJson.Options));
 
         app.MapPost(ObserverRoutes.Scenarios, async (HttpContext context) =>
         {
@@ -143,6 +156,8 @@ public static class ObserverHost
         });
 
         app.MapGet(ObserverRoutes.Incidents, () => Results.Json(service.Incidents(), ObservationJson.Options));
+
+        app.MapGet(ObserverRoutes.WindowsEvents, () => Results.Json(events?.Events() ?? [], ObservationJson.Options));
 
         app.MapGet(ObserverRoutes.Sessions, () => Results.Json(service.Sessions(), ObservationJson.Options));
 

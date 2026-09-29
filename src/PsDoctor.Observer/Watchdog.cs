@@ -38,6 +38,7 @@ public sealed class Watchdog
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(layout.WatchdogLog)!);
+        CreateDumpsDirectory();
         var build = BuildInfo.Of(typeof(Watchdog).Assembly);
         var (settings, error) = layout.LoadSettings();
         if (settings is null)
@@ -103,6 +104,26 @@ public sealed class Watchdog
             Write("observer-restarted", new { reason, pid = observer.Id, exitCode, misses });
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Каталог минидампов из ключа <c>LocalDumps</c>: создаёт ли его Windows сама, не проверено, а у сторожа права
+    /// монтажёра — те же, с какими упавший ProShow пишет дамп.
+    /// </summary>
+    private void CreateDumpsDirectory()
+    {
+        if (layout.DumpsDirectory is not { } dumps)
+        {
+            return;
+        }
+        try
+        {
+            Directory.CreateDirectory(dumps);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Write("dumps-directory-failed", new { path = dumps, error = e.GetType().Name });
+        }
     }
 
     private static async Task<bool> AnswersAsync(HttpClient http, CancellationToken cancellationToken)

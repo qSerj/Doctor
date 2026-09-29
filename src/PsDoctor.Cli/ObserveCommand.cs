@@ -105,6 +105,7 @@ public static class ObserveCommand
                 "sessions" => output.Lines(await client.SessionsAsync(cancellationToken).ConfigureAwait(false)),
                 "incident" => output.Json(await client.MarkIncidentAsync(IncidentSources.Cli, options.Note, cancellationToken).ConfigureAwait(false)),
                 "incidents" => output.Lines(await client.IncidentsAsync(cancellationToken).ConfigureAwait(false)),
+                "windows-events" => output.Lines(await client.WindowsEventsAsync(cancellationToken).ConfigureAwait(false)),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "confirm" => output.Json(await client.ConfirmAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
@@ -295,6 +296,7 @@ public static class ObserveCommand
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");
         writer.WriteLine("  incident [--note <текст>]       поставить метку инцидента, как кнопка «Решить проблему»");
         writer.WriteLine("  incidents                       метки инцидентов, строка на метку");
+        writer.WriteLine("  windows-events                  падения и зависания ProShow из журнала Windows, строка на событие");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");
         writer.WriteLine($"  --key-file <файл>               ключ Bearer, иначе {KeyFileVariable}");

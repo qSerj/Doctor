@@ -97,6 +97,14 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<List<IncidentRecord>>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>События журнала Windows о кусте ProShow, найденные наблюдателем, в порядке находки.</summary>
+    public async Task<IReadOnlyList<WindowsEvent>> WindowsEventsAsync(CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        using var response = await http.GetAsync(ObserverRoutes.WindowsEvents, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<List<WindowsEvent>>(response, timeout.Token).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> SessionsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);

@@ -74,7 +74,29 @@ public static class ServiceFileComparison
 }
 
 /// <summary>Событие журнала Windows: поля из системной части и параметры события строками, без локализованного текста.</summary>
-public sealed record WindowsEvent(DateTimeOffset Time, string Log, string Provider, int Id, long? RecordId, IReadOnlyList<string> Properties);
+public sealed record WindowsEvent(DateTimeOffset Time, string Log, string Provider, int Id, long? RecordId, IReadOnlyList<string> Properties)
+{
+    /// <summary>
+    /// Событие о программе: имя одного из её образов есть в каком-нибудь параметре — имени приложения, пути, модуле,
+    /// без учёта регистра. Так <c>device-enc</c> находит и <c>device-encp.dll</c>, а падение Explorer в модуле из
+    /// каталога ProShow — тоже улика.
+    /// </summary>
+    public static bool Mentions(IEnumerable<string> properties, IReadOnlyList<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(properties);
+        ArgumentNullException.ThrowIfNull(names);
+        return properties.Any(value => names.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)));
+    }
+}
+
+/// <summary>Ответ опроса журнала Windows по закладке.</summary>
+/// <param name="Events">Найденные события в порядке записи.</param>
+/// <param name="Newest">
+/// Номер самой новой записи журнала на момент чтения — следующая закладка. Меньше прежней закладки — журнал очищен и
+/// нумерует записи заново. <c>null</c> — журнал пуст или не прочитан.
+/// </param>
+/// <param name="Error">Журнал не прочитался: имя исключения. Найденного до сбоя в ответе нет — придёт при следующем опросе.</param>
+public sealed record WindowsEventsBatch(IReadOnlyList<WindowsEvent> Events, long? Newest, string? Error = null);
 
 /// <summary>
 /// Факт <see cref="ProgramFactKinds.WindowsEvents"/>: события журнала за время сеанса, в параметрах которых есть имя

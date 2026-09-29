@@ -226,58 +226,27 @@ public sealed class ObservationService : IAsyncDisposable
     /// <summary>Все метки по порядку. Битая строка, в том числе недописанный хвост после обрыва, пропускается.</summary>
     public IReadOnlyList<IncidentRecord> Incidents()
     {
-        string[] lines;
         try
         {
             lock (incidents)
             {
-                var path = Path.Combine(directory, IncidentsFile);
-                lines = File.Exists(path) ? File.ReadAllLines(path, Encoding.UTF8) : [];
+                return JsonLinesFile.Read<IncidentRecord>(Path.Combine(directory, IncidentsFile),
+                    record => record is { Source: not null, Program: not null });
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return [];
         }
-        var result = new List<IncidentRecord>();
-        foreach (var line in lines)
-        {
-            try
-            {
-                if (JsonSerializer.Deserialize<IncidentRecord>(line, ObservationJson.Options) is { Source: not null, Program: not null } record)
-                {
-                    result.Add(record);
-                }
-            }
-            catch (JsonException)
-            {
-            }
-        }
-        return result;
     }
 
     private bool AppendIncident(IncidentRecord record)
     {
-        var line = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(record, ObservationJson.Options) + "\n");
         try
         {
             lock (incidents)
             {
-                Directory.CreateDirectory(directory);
-                using var stream = new FileStream(Path.Combine(directory, IncidentsFile), FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite, FileShare.Read);
-                if (stream.Length > 0)
-                {
-                    // Прошлая запись оборвана посередине строки: новая метка начинается с новой строки, а не склеивается с ней.
-                    stream.Seek(-1, SeekOrigin.End);
-                    if (stream.ReadByte() != '\n')
-                    {
-                        stream.WriteByte((byte)'\n');
-                    }
-                }
-                stream.Seek(0, SeekOrigin.End);
-                stream.Write(line);
-                stream.Flush(flushToDisk: true);
+                JsonLinesFile.Append(Path.Combine(directory, IncidentsFile), new[] { record });
             }
             return true;
         }
@@ -285,6 +254,26 @@ public sealed class ObservationService : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    /// <summary>Сколько раньше начала сеанса может стоять время его события: время события ставит Windows, начало — часы наблюдателя.</summary>
+    private static readonly TimeSpan EventSlack = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Событие журнала Windows — фактом <c>windows-event</c> в живой незакрывающийся сеанс, если оно случилось не раньше
+    /// его начала: прошлое падение, найденное опросом после старта наблюдателя, к новому сеансу не относится.
+    /// <c>null</c> — факт не лёг; событие и так записано в файл событий.
+    /// </summary>
+    /// <remarks>Без замка <c>gate</c>, как метка: опрос журнала не ждёт подключения.</remarks>
+    public Fact? RecordWindowsEvent(WindowsEvent windowsEvent)
+    {
+        ArgumentNullException.ThrowIfNull(windowsEvent);
+        var session = Volatile.Read(ref current);
+        return session is { Log.IsCompleted: false }
+            && SessionIds.StartedUtc(session.Id) is { } started
+            && windowsEvent.Time.UtcDateTime >= started - EventSlack
+            ? session.TryRecord(ProgramFactKinds.WindowsEvent, windowsEvent)
+            : null;
     }
 
     /// <summary>

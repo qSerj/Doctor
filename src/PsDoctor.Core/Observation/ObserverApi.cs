@@ -60,6 +60,12 @@ public static class ObserverRoutes
     /// <see cref="IncidentRecord"/>, в порядке записи.
     /// </summary>
     public const string Incidents = "/incidents";
+
+    /// <summary>
+    /// GET: события журнала Windows о кусте ProShow, <see cref="WindowsEvent"/>, в порядке находки — из файла событий
+    /// наблюдателя, начиная с ротированного.
+    /// </summary>
+    public const string WindowsEvents = "/windows-events";
 }
 
 /// <summary>Устойчивые имена отказов API, не фразы.</summary>
@@ -178,11 +184,21 @@ public sealed record ConfirmAccepted(string Session);
 /// <summary>Ответ <c>/health</c>.</summary>
 /// <param name="Activity">Что наблюдатель делает сейчас; у наблюдателя до Э4.6 — <c>null</c>.</param>
 /// <param name="Watch">Дежурство; у наблюдателя до Э6.2 — <c>null</c>.</param>
-public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null, WatchStatus? Watch = null);
+/// <param name="WindowsEvents">Опрос журнала Windows; <c>null</c> — журнала читать нечем (не Windows) или наблюдатель до Э6.2.</param>
+public sealed record ObserverHealth(string Version, string? Commit, ObserverActivity? Activity = null, WatchStatus? Watch = null,
+    WindowsEventsStatus? WindowsEvents = null);
 
 /// <summary>Дежурство в ответе <c>/health</c>: включено ли и чем кончилось последнее неудачное подключение.</summary>
 /// <param name="LastRefusal">Имя последнего отказа подключения, <see cref="ObserverErrors"/>; удачное подключение его не стирает.</param>
 public sealed record WatchStatus(bool Enabled, string? LastRefusal = null, DateTime? LastRefusalUtc = null);
+
+/// <summary>
+/// Опрос журнала Windows в ответе <c>/health</c>: без него «событий нет» на машине монтажёра не отличить от «журнал не
+/// читается».
+/// </summary>
+/// <param name="LastReadUtc">Последний опрос, прочитавший журнал; <c>null</c> — ещё ни одного.</param>
+/// <param name="LastError">Чем сорвался последний опрос; удачный опрос его стирает.</param>
+public sealed record WindowsEventsStatus(DateTime? LastReadUtc, string? LastError = null);
 
 /// <summary>
 /// Состояние наблюдателя в ответе <c>/health</c>: по нему пульт зажигает лампы, не читая журнал.

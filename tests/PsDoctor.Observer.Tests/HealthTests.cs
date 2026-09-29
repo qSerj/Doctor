@@ -10,13 +10,16 @@ namespace PsDoctor.Observer.Tests;
 public sealed class HealthTests : IAsyncLifetime
 {
     private const string Ключ = "test-key-0123456789";
+    // Свой каталог: на Windows наблюдатель с настоящим запускателем читает журнал Windows и пишет файлы событий, а
+    // каталог по умолчанию — журналы установленного Doctor, на стенде живые.
+    private readonly string _каталог = Directory.CreateTempSubdirectory("psdoctor-health-").FullName;
     private WebApplication _наблюдатель = null!;
     private HttpClient _клиент = null!;
 
     public async Task InitializeAsync()
     {
         // Настоящий Kestrel на свободном порту петли: проверяется тот же путь, что на стенде.
-        _наблюдатель = ObserverHost.Build(new ObserverOptions(IPAddress.Loopback, 0, Ключ));
+        _наблюдатель = ObserverHost.Build(new ObserverOptions(IPAddress.Loopback, 0, Ключ, _каталог));
         await _наблюдатель.StartAsync();
         _клиент = new HttpClient { BaseAddress = new Uri(_наблюдатель.Urls.Single()) };
     }
@@ -24,7 +27,9 @@ public sealed class HealthTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         _клиент.Dispose();
+        await _наблюдатель.StopAsync();
         await _наблюдатель.DisposeAsync();
+        Directory.Delete(_каталог, recursive: true);
     }
 
     [Fact]

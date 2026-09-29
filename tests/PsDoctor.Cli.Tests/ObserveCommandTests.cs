@@ -150,6 +150,23 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Windows_events_выводит_события_журнала_строкой_на_событие()
+    {
+        // Первый опрос журнала наблюдатель делает сразу после старта, в фоне: ждём его строки.
+        var (code, stdout, _) = await Observe("windows-events");
+        for (var попытка = 0; попытка < 100 && stdout.Length == 0; попытка++)
+        {
+            await Task.Delay(50);
+            (code, stdout, _) = await Observe("windows-events");
+        }
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        var событие = JsonSerializer.Deserialize<WindowsEvent>(Assert.Single(stdout), ObservationJson.Options)!;
+        Assert.Equal(Запуск.Падение.RecordId, событие.RecordId);
+        Assert.Equal(Запуск.Падение.Properties, событие.Properties);
+    }
+
+    [Fact]
     public async Task Чужой_ключ_сбой_окружения()
     {
         await File.WriteAllTextAsync(_файлКлюча, "wrong-key");
@@ -318,11 +335,22 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     /// <summary>Подменённый запуск: программа живёт, пока тест не скажет выйти.</summary>
-    private sealed class Запуск : IProgramLauncher, IProgramRun
+    private sealed class Запуск : IProgramLauncher, IProgramRun, IWindowsEventSource
     {
         private readonly TaskCompletionSource _запущен = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private IFactRecorder? _факты;
         private IProgramEvents? _события;
+        private int _опросов;
+
+        /// <summary>
+        /// Падение ProShow, которое журнал Windows отдаёт первому опросу. Оно давнее: раньше любого сеанса теста, и фактом
+        /// в сеанс не ляжет, когда бы опрос ни пришёлся.
+        /// </summary>
+        public static WindowsEvent Падение { get; } = new(new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero), "Application",
+            "Application Error", 1000, 42, ["proshow.exe", "9.0.3797.0", "c0000005"]);
+
+        public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since) =>
+            Interlocked.Increment(ref _опросов) == 1 ? new WindowsEventsBatch([Падение], 42) : new WindowsEventsBatch([], 42);
 
         /// <summary>Выполняется, когда сценарий дошёл до запуска программы.</summary>
         public Task Запущен => _запущен.Task;

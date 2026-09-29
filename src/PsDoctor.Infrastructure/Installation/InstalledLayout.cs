@@ -9,7 +9,12 @@ namespace PsDoctor.Infrastructure.Installation;
 /// администратора. Ключ и журналы — в профиле пользователя, их установщик не трогает вовсе: поэтому
 /// переустановка их не теряет, а установщику не нужно знать, чей это профиль.
 /// </summary>
-public sealed record InstalledLayout(string SettingsFile, string KeyFile, string DataDirectory, string WatchdogLog)
+/// <param name="DumpsDirectory">
+/// Куда Windows пишет минидампы ProShow: ключ <c>LocalDumps</c> с этим каталогом ставит установщик (Э6.2, часть Г),
+/// а сам каталог создаёт сторож — в профиле пользователя и с его правами. <c>null</c> — сторож каталога не создаёт.
+/// </param>
+public sealed record InstalledLayout(string SettingsFile, string KeyFile, string DataDirectory, string WatchdogLog,
+    string? DumpsDirectory = null)
 {
     public static InstalledLayout Current
     {
@@ -21,7 +26,8 @@ public sealed record InstalledLayout(string SettingsFile, string KeyFile, string
                 Path.Combine(machine, "settings.json"),
                 Path.Combine(user, "observer.key"),
                 Path.Combine(user, "observer", "sessions"),
-                Path.Combine(user, "observer", "watchdog.jsonl"));
+                Path.Combine(user, "observer", "watchdog.jsonl"),
+                Path.Combine(user, "dumps"));
         }
     }
 
