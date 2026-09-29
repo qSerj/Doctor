@@ -110,6 +110,20 @@ public sealed class ProShowHangWatchTests
     }
 
     [Fact]
+    public void Срок_ожидания_предел_состояния_но_не_раньше_тихой_минуты_окна()
+    {
+        var наблюдение = new ProShowHangWatch();
+        Кормить(наблюдение, ProShowState.Responding, 0, 9);
+        Кормить(наблюдение, ProShowState.Hung, 10, 50);
+
+        Assert.Equal(С(180), наблюдение.WaitLimit(opened: С(50)));
+        Assert.Equal(С(250), наблюдение.WaitLimit(opened: С(200)));
+
+        Кормить(наблюдение, ProShowState.NoWindow, 51, 60);
+        Assert.Equal(С(60), наблюдение.WaitLimit(opened: С(0)));
+    }
+
+    [Fact]
     public void Без_окна_завершать_после_минуты()
     {
         var наблюдение = new ProShowHangWatch();

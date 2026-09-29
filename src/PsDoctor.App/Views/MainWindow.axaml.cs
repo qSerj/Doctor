@@ -400,11 +400,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Окно ожидания, пока ProShow не отвечает или жив без окна. Раз в секунду — проба. Первые 60 с — только «не
-    /// закрывайте»; дальше «занят, подождите» или, в двух случаях из решения владельца, кнопка «Завершить ProShow»
+    /// Окно ожидания, пока ProShow не отвечает или жив без окна. Раз в секунду — проба. Пока ждём — «Ждём до 3 минут, может
+    /// оживёт» и таймер со сроком (<see cref="ProShowHangWatch.WaitLimit"/>); дальше «занят, подождите» или, в двух случаях из решения владельца, кнопка «Завершить ProShow»
     /// с подтверждением (<see cref="ProShowHangWatch"/>). Восстановление здесь не предлагается: оно требует закрытого ProShow.
     /// </summary>
-    /// <param name="recording">ProShow записывается — окно так и говорит.</param>
+    /// <param name="recording">ProShow записывается — окно говорит это, когда он закроется.</param>
     private async Task<HangOutcome> ShowNotRespondingAsync(bool recording)
     {
         var opened = Now;
@@ -443,11 +443,13 @@ public sealed partial class MainWindow : Window
                     "ProShow закрылся не до конца: он работает без окна. Его можно завершить.",
                 HangAdvice.OfferTerminate =>
                     "ProShow не отвечает уже несколько минут и ничего не делает. Если ждать больше нельзя, его можно завершить. Несохранённые изменения пропадут.",
-                _ when recording => "Doctor записывает, что происходит. Не закрывайте ProShow: иногда он оживает сам.",
-                _ => "Не закрывайте ProShow: иногда он оживает сам.",
+                _ => $"Ждём до {Minutes(hang.WaitLimit(opened))}, может оживёт.",
             };
-            var passed = now - opened;
-            elapsed.Text = $"Прошло: {(int)passed.TotalMinutes}:{passed.Seconds:00}";
+            var passed = hang.Duration(now);
+            var limit = hang.WaitLimit(opened);
+            elapsed.Text = advice == HangAdvice.Wait && passed < limit
+                ? $"Прошло: {Clock(passed)} из {Clock(limit)}"
+                : $"Прошло: {Clock(passed)}";
             terminate.IsVisible = advice == HangAdvice.OfferTerminate;
         }
 
@@ -478,6 +480,15 @@ public sealed partial class MainWindow : Window
         timer.Start();
         await dialog.ShowDialog(this);
         return outcome;
+    }
+
+    private static string Clock(TimeSpan span) => $"{(int)span.TotalMinutes}:{span.Seconds:00}";
+
+    /// <summary>«минуты», «3 минут» — целые минуты вверх, после «до».</summary>
+    private static string Minutes(TimeSpan span)
+    {
+        var minutes = (int)Math.Ceiling(span.TotalMinutes);
+        return minutes == 1 ? "минуты" : minutes % 10 == 1 && minutes % 100 != 11 ? $"{minutes} минуты" : $"{minutes} минут";
     }
 
     private async Task<bool> ConfirmTerminateAsync(Window owner)

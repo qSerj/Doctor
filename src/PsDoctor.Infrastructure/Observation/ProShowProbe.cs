@@ -68,9 +68,9 @@ public static class ProShowProbe
         var state = mainHandle == IntPtr.Zero ? ProShowState.NoWindow
             : IsHungAppWindow(mainHandle) ? ProShowState.Hung
             : ProShowState.Responding;
-        var rendering = renderWindow
-            || processes.Any(p => p.Role == ProShowRole.Encoder);
-        return new ProShowSnapshot(state, rendering, processes);
+        // Рендер — только по окну: device-enc (ffmpeg) ProShow запускает и для декодирования звука и видео при
+        // загрузке проекта — стенд 29.09.2026, e62-field-001-busy.
+        return new ProShowSnapshot(state, renderWindow, processes);
     }
 
     /// <summary>

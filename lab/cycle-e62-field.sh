@@ -169,6 +169,22 @@ for line in open(sys.argv[1], encoding='utf-8'):
 PY
 }
 
+# Самое долгое законченное «не отвечает» по window-timeline.txt, секунд.
+longest_hang() {
+  "$PYTHON" - "$out/window-timeline.txt" <<'PY'
+import sys
+rows = [l.split() for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+best, since = 0.0, None
+for r in rows:
+    t, hung = float(r[0]), r[3] == 'hung=True'
+    if hung and since is None:
+        since = t
+    if not hung and since is not None:
+        best, since = max(best, t - since), None
+print(round(best, 1))
+PY
+}
+
 case "$step" in
 watch)
   json="$(health_json)"
@@ -343,30 +359,19 @@ busy)
   done
   [ -n "$hung_since" ] || { echo "окно ProShow так и не перестало отвечать — проверка неприменима; запишите это в result.md"; finish; }
   say "окно не отвечает с $hung_since с после создания ProShow"
-  ask "Через 30 с нажмите «Решить проблему». Первую минуту окно ожидания просит не закрывать ProShow, потом должно сказать, что ProShow занят, но работает. Кнопки «Завершить ProShow» быть не должно. Окно не закрывайте, пока ProShow не оживёт."
+  ask "Когда главное окно Doctor пожелтеет — «ProShow не отвечает», — нажмите «Решить проблему»; короткие зависания до этого не в счёт. Сначала окно ожидания пишет «Ждём до 3 минут, может оживёт», потом должно сказать, что ProShow занят, но работает. Кнопки «Завершить ProShow» быть не должно. Окно не закрывайте, пока ProShow не оживёт."
 
   say "жду, пока ProShow снова ответит (до 15 минут)"
   for _ in $(seq 1 180); do
     facts_of "$session"
     window_timeline "$session" "$mark" > "$out/window-timeline.txt"
+    # Короткие «не отвечает» бывают и до долгого (стенд 29.09.2026): ждём оживления после зависания от 3 мин.
     [ "$(tail -n 1 "$out/window-timeline.txt" | awk '{ print $4 }')" = hung=False ] \
-      && [ "$(grep -c 'hung=True' "$out/window-timeline.txt")" -gt 0 ] && break
+      && "$PYTHON" -c "import sys; sys.exit(0 if float('$(longest_hang)') >= 180 else 1)" && break
     sleep 5
   done
   cat "$out/window-timeline.txt"
-  longest="$("$PYTHON" - "$out/window-timeline.txt" <<'PY'
-import sys
-rows = [l.split() for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
-best, since = 0.0, None
-for r in rows:
-    t, hung = float(r[0]), r[3] == 'hung=True'
-    if hung and since is None:
-        since = t
-    if not hung and since is not None:
-        best, since = max(best, t - since), None
-print(round(best, 1))
-PY
-)"
+  longest="$(longest_hang)"
   say "самое долгое «не отвечает»: $longest с"
   # Короче 3 мин кнопка не появилась бы и без учёта работы — тогда проверка ничего не доказывает.
   check "зависание не короче 3 мин ($longest с)" "$("$PYTHON" -c "print(1 if float('$longest') >= 180 else 0)")"

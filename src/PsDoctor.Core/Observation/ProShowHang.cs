@@ -25,7 +25,7 @@ public enum ProShowRole
     /// <summary>Воркер декодирования видео.</summary>
     Decoder,
 
-    /// <summary>Воркер кодирования: жив — идёт рендер.</summary>
+    /// <summary>Воркер <c>device-enc</c> (ffmpeg): кодирует при рендере, декодирует звук и видео при загрузке.</summary>
     Encoder,
 }
 
@@ -35,14 +35,14 @@ public enum ProShowRole
 public sealed record ProShowProcess(ProShowRole Role, int ProcessId, DateTime? StartedUtc, TimeSpan Cpu, long IoBytes);
 
 /// <summary>Один взгляд на куст ProShow.</summary>
-/// <param name="Rendering">Идёт рендер: жив воркер кодирования или открыто окно рендера.</param>
+/// <param name="Rendering">Идёт рендер: открыто окно рендера. Живой <c>device-enc</c> рендера не доказывает — он декодирует и при загрузке.</param>
 public sealed record ProShowSnapshot(ProShowState State, bool Rendering, IReadOnlyList<ProShowProcess> Processes)
 {
     public static ProShowSnapshot NotRunning { get; } = new(ProShowState.NotRunning, false, []);
 
     /// <summary>
     /// Что завершает кнопка «Завершить ProShow»: сам ProShow, а без него — оставшиеся воркеры декодирования.
-    /// Воркер кодирования не завершается никогда: он значит рендер. Процесс без времени создания не сверить — он не в списке.
+    /// Воркер <c>device-enc</c> не завершается никогда: он может кодировать рендер. Процесс без времени создания не сверить — он не в списке.
     /// </summary>
     public IReadOnlyList<ProShowProcess> Targets
     {
@@ -131,6 +131,19 @@ public sealed class ProShowHangWatch
 
     /// <summary>Сколько длится нынешнее состояние.</summary>
     public TimeSpan Duration(TimeSpan now) => samples.Count == 0 ? TimeSpan.Zero : now - since;
+
+    /// <summary>
+    /// До какой длительности нынешнего состояния мастер просит ждать, если ProShow так и будет молчать: предел
+    /// состояния, но не раньше конца первых <see cref="QuietStart"/> окна. Срок пишется монтажёру — таймер без конца
+    /// ничего не обещает (замечание владельца 29.09.2026).
+    /// </summary>
+    /// <param name="opened">Когда открыто окно ожидания.</param>
+    public TimeSpan WaitLimit(TimeSpan opened)
+    {
+        var limit = Last.State == ProShowState.NoWindow ? NoWindowLimit : HungLimit;
+        var quiet = opened + QuietStart - since;
+        return quiet > limit ? quiet : limit;
+    }
 
     /// <summary>Главное окно не отвечает непрерывно не меньше <see cref="StatusAfter"/>.</summary>
     public bool NotResponding(TimeSpan now) => Last.State == ProShowState.Hung && Duration(now) >= StatusAfter;
