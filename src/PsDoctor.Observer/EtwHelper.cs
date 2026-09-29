@@ -9,7 +9,12 @@ namespace PsDoctor.Observer;
 
 /// <summary>Команды повышенному помощнику лежат только в его каталоге; пути чужих файлов он из команды не принимает.</summary>
 public sealed record EtwCommand(string Id, string Session, string Action, int RootPid, int ObserverPid, string ProgramImage, int[]? InitialPids = null);
-public sealed record EtwStatus(string State, string? Error = null, long LostEvents = 0);
+/// <summary>Ответ помощника о записи сеанса.</summary>
+/// <param name="Command">
+/// Номер команды, на которую это ответ. Мост узнаёт свой ответ по нему, а не по времени записи файла: у Windows оно
+/// грубое, часы ВМ прыгают, а в файле сеанса может лежать ответ прежнему помощнику. Нет номера — не ответ ни на что.
+/// </param>
+public sealed record EtwStatus(string State, string? Error = null, long LostEvents = 0, string? Command = null);
 public sealed record EtwRawEvent(DateTime TimeUtc, int ProcessId, string Operation, string? File, long Bytes, int? Status);
 /// <param name="CommandLine">Командная строка процесса из события старта: у воркера ProShow она называет входной файл.</param>
 public sealed record EtwSummary(DateTime SecondUtc, int ProcessId, string? File, int Opens, int Reads, long ReadBytes,
@@ -123,19 +128,20 @@ public static class EtwHelper
                         {
                             capture = new EtwCapture(sessions, command);
                             capture.Start();
-                            EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session), new EtwStatus("ready"));
+                            EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session), new EtwStatus("ready", Command: command.Id));
                         }
                         catch (Exception error)
                         {
                             capture?.Dispose();
                             capture = null;
                             EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
-                                new EtwStatus("failed", error.ToString()));
+                                new EtwStatus("failed", error.ToString(), Command: command.Id));
                         }
                     }
                     else if (command.Action == "stop" && SessionIds.IsValid(command.Session))
                     {
-                        EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session), new EtwStatus("stopped", LostEvents: ReadLost(sessions, command.Session)));
+                        EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
+                            new EtwStatus("stopped", LostEvents: ReadLost(sessions, command.Session), Command: command.Id));
                     }
                 }
                 capture?.Flush();
@@ -326,7 +332,7 @@ internal sealed class EtwCapture : IDisposable
             catch (Exception error)
             {
                 EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
-                    new EtwStatus("failed", error.ToString()));
+                    new EtwStatus("failed", error.ToString(), Command: command.Id));
             }
         }) { IsBackground = true, Name = "psdoctor-etw" };
         reader.Start();
@@ -351,7 +357,8 @@ internal sealed class EtwCapture : IDisposable
             if (lost > lastLost)
             {
                 lastLost = lost;
-                EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session), new EtwStatus("degraded", LostEvents: lost));
+                EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
+                    new EtwStatus("degraded", LostEvents: lost, Command: command.Id));
             }
         }
     }
@@ -417,7 +424,7 @@ internal sealed class EtwCapture : IDisposable
             summary.Dispose();
         }
         EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
-            new EtwStatus("stopped", LostEvents: lastLost));
+            new EtwStatus("stopped", LostEvents: lastLost, Command: command.Id));
     }
 
     private sealed class MutableSummary

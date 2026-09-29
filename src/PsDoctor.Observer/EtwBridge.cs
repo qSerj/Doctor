@@ -25,20 +25,24 @@ public sealed class EtwBridge : IDisposable
     private readonly Task monitor;
     private long lostReported;
     private bool failedReported;
-    // Помощник подтвердил запись этого сеанса и с тех пор подаёт сердцебиение.
+    // Помощник подтвердил запись этого сеанса и с тех пор подаёт сердцебиение; номер команды, на которую он ответил.
     private bool linked;
-    // Когда послана команда start, на которую ещё нет ответа: по часам моста — для повтора, по часам Windows —
-    // для сравнения со временем записи статуса.
+    private string? linkedCommand;
+    // Когда послана команда start, на которую ещё нет ответа, по часам моста — для повтора, и её номер: ответом
+    // считается только статус с этим номером, время записи файла для этого не годится.
     private TimeSpan? requested;
-    private DateTime requestedUtc;
+    private string? requestedCommand;
+    // Команда stop, которой мост закрывается: ответ на неё несёт последний счёт потерь записи.
+    private string? stopCommand;
     // Последнее увиденное сердцебиение и когда оно сменилось — по монотонным часам моста: часы Windows
     // на стенде прыгают после паузы ВМ, а смена значения от этого не зависит.
     private DateTime? lastBeat;
     private TimeSpan? beatChanged;
     private bool disposed;
 
+    /// <param name="linkedCommand">Команда start, на которую помощник уже ответил; <c>null</c> — записи ещё нет.</param>
     private EtwBridge(string sessions, string id, IFactRecorder facts, Func<int> rootPid, string programImage,
-        Func<IReadOnlyCollection<int>?>? processes, bool linked, TimeSpan monitorInterval, TimeSpan helperTimeout)
+        Func<IReadOnlyCollection<int>?>? processes, string? linkedCommand, TimeSpan monitorInterval, TimeSpan helperTimeout)
     {
         this.sessions = sessions;
         this.id = id;
@@ -46,7 +50,8 @@ public sealed class EtwBridge : IDisposable
         this.rootPid = rootPid;
         this.programImage = programImage;
         this.processes = processes;
-        this.linked = linked;
+        this.linkedCommand = linkedCommand;
+        linked = linkedCommand is not null;
         this.helperTimeout = helperTimeout;
         // Сердцебиение, лежащее на диске до моста, — не признак жизни: после перезагрузки там старое значение.
         lastBeat = ReadHeartbeat(sessions)?.TimeUtc;
@@ -74,9 +79,9 @@ public sealed class EtwBridge : IDisposable
     public static EtwBridge Start(string sessions, string id, int rootPid, string programImage, IFactRecorder facts,
         IReadOnlyCollection<int>? initialPids = null, TimeSpan? readyTimeout = null)
     {
-        Request(sessions, id, rootPid, programImage, initialPids, readyTimeout ?? ReadyTimeout);
+        var command = Request(sessions, id, rootPid, programImage, initialPids, readyTimeout ?? ReadyTimeout);
         facts.Record(ProgramFactKinds.EtwState, new { state = "ready", lostEvents = 0 });
-        return new EtwBridge(sessions, id, facts, () => rootPid, programImage, null, true, MonitorInterval, HelperTimeout);
+        return new EtwBridge(sessions, id, facts, () => rootPid, programImage, null, command, MonitorInterval, HelperTimeout);
     }
 
     /// <summary>
@@ -89,23 +94,23 @@ public sealed class EtwBridge : IDisposable
         Func<IReadOnlyCollection<int>?>? processes = null, TimeSpan? readyTimeout = null,
         TimeSpan? monitorInterval = null, TimeSpan? helperTimeout = null)
     {
-        bool linked;
+        string? command;
         try
         {
-            Request(sessions, id, rootPid(), programImage, processes?.Invoke(), readyTimeout ?? ReadyTimeout);
+            command = Request(sessions, id, rootPid(), programImage, processes?.Invoke(), readyTimeout ?? ReadyTimeout);
             facts.Record(ProgramFactKinds.EtwState, new { state = "ready", lostEvents = 0 });
-            linked = true;
         }
         catch (EtwStartException error)
         {
             facts.Record(ProgramFactKinds.EtwState, new { state = "unavailable", error = error.Message });
-            linked = false;
+            command = null;
         }
-        return new EtwBridge(sessions, id, facts, rootPid, programImage, processes, linked,
+        return new EtwBridge(sessions, id, facts, rootPid, programImage, processes, command,
             monitorInterval ?? MonitorInterval, helperTimeout ?? HelperTimeout);
     }
 
-    private static void Request(string sessions, string id, int rootPid, string programImage,
+    /// <summary>Шлёт start и ждёт ответа на него; возвращает номер команды, на которую помощник ответил.</summary>
+    private static string Request(string sessions, string id, int rootPid, string programImage,
         IReadOnlyCollection<int>? initialPids, TimeSpan readyTimeout)
     {
         // Сердцебиение есть, но давно не обновлялось — помощника нет, десять секунд под замком сервиса ждать нечего.
@@ -121,11 +126,14 @@ public sealed class EtwBridge : IDisposable
         var wait = Stopwatch.StartNew();
         while (wait.Elapsed < readyTimeout)
         {
-            var status = ReadStatus(statusPath);
-            if (status?.State == "ready")
-                return;
-            if (status?.State == "failed")
-                throw new EtwStartException(status.Error ?? ObserverErrors.EtwUnavailable);
+            // Ответ прежнему помощнику или на прежнюю команду может лежать в файле сеанса: он не ответ.
+            if (ReadStatus(statusPath) is { } status && status.Command == command.Id)
+            {
+                if (status.State is "ready" or "degraded")
+                    return command.Id;
+                if (status.State == "failed")
+                    throw new EtwStartException(status.Error ?? ObserverErrors.EtwUnavailable);
+            }
             Thread.Sleep(100);
         }
         // Помощник не ответил — возможно, он не запущен. Команда «начать» осталась бы в файле, и помощник, запущенный
@@ -158,15 +166,18 @@ public sealed class EtwBridge : IDisposable
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 
-    private static void WriteStop(string sessions, string id)
+    /// <summary>Шлёт stop; номер команды или <c>null</c>, если она не записалась.</summary>
+    private static string? WriteStop(string sessions, string id)
     {
+        var command = new EtwCommand(Guid.NewGuid().ToString("N"), id, "stop", 0, Environment.ProcessId, "");
         try
         {
-            EtwFiles.WriteAtomically(EtwFiles.Command(sessions),
-                new EtwCommand(Guid.NewGuid().ToString("N"), id, "stop", 0, Environment.ProcessId, ""));
+            EtwFiles.WriteAtomically(EtwFiles.Command(sessions), command);
+            return command.Id;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            return null;
         }
     }
 
@@ -206,7 +217,9 @@ public sealed class EtwBridge : IDisposable
                 if (!alive)
                 {
                     linked = false;
+                    linkedCommand = null;
                     requested = null;
+                    requestedCommand = null;
                     Record(new { state = "failed", error = "helper-lost" });
                 }
                 return;
@@ -216,13 +229,15 @@ public sealed class EtwBridge : IDisposable
             var now = clock.Elapsed;
             if (requested is { } asked)
             {
-                var statusPath = EtwFiles.Status(sessions, id);
-                var status = ReadStatus(statusPath);
-                // Статус, записанный до команды, — от прежнего помощника: он не ответ.
-                if (status?.State is "ready" or "degraded" && File.GetLastWriteTimeUtc(statusPath) >= requestedUtc)
+                // Ответ узнаётся по номеру команды. Время записи файла для этого не годится: у Windows оно грубее
+                // часов моста, часы ВМ прыгают, а в файле сеанса может лежать ответ прежнему помощнику.
+                if (requestedCommand is not null && ReadStatus(EtwFiles.Status(sessions, id)) is { State: "ready" or "degraded" } status
+                    && status.Command == requestedCommand)
                 {
                     linked = true;
+                    linkedCommand = requestedCommand;
                     requested = null;
+                    requestedCommand = null;
                     lostReported = 0;
                     failedReported = false;
                     Record(new { state = "ready", lostEvents = 0 });
@@ -232,12 +247,13 @@ public sealed class EtwBridge : IDisposable
             }
 
             var pids = processes?.Invoke();
+            var command = new EtwCommand(Guid.NewGuid().ToString("N"), id, "start",
+                rootPid(), Environment.ProcessId, programImage, pids?.ToArray());
             try
             {
-                EtwFiles.WriteAtomically(EtwFiles.Command(sessions), new EtwCommand(Guid.NewGuid().ToString("N"), id, "start",
-                    rootPid(), Environment.ProcessId, programImage, pids?.ToArray()));
+                EtwFiles.WriteAtomically(EtwFiles.Command(sessions), command);
                 requested = now;
-                requestedUtc = DateTime.UtcNow;
+                requestedCommand = command.Id;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
@@ -300,7 +316,9 @@ public sealed class EtwBridge : IDisposable
         if (status is null) return;
         lock (gate)
         {
-            if (!linked) return;
+            // Статус другой команды — от прежней записи или прежнего помощника: о нынешней записи он не говорит.
+            // Ответ на stop этого моста — о ней: в нём последний счёт потерь.
+            if (!linked || status.Command is null || (status.Command != linkedCommand && status.Command != stopCommand)) return;
             if (status.LostEvents > lostReported)
             {
                 lostReported = status.LostEvents;
@@ -309,10 +327,11 @@ public sealed class EtwBridge : IDisposable
             if (status.State == "failed" && !failedReported)
             {
                 failedReported = true;
-                // Помощник жив, но запись у него сорвалась: мост попробует снова через RetryInterval.
+                // Помощник жив, но запись у него сорвалась: мост пошлёт новую команду через RetryInterval.
                 linked = false;
+                linkedCommand = null;
                 requested = clock.Elapsed;
-                requestedUtc = DateTime.UtcNow;
+                requestedCommand = null;
                 Record(new { state = "failed", error = status.Error });
             }
         }
@@ -329,15 +348,15 @@ public sealed class EtwBridge : IDisposable
         }
         try
         {
-            WriteStop(sessions, id);
+            var stop = WriteStop(sessions, id);
+            lock (gate) stopCommand = stop;
             // Ждать остановки есть смысл, только если помощник вёл запись: иначе закрытие сеанса простояло бы зря.
-            if (alive)
+            if (alive && stop is not null)
             {
                 var wait = Stopwatch.StartNew();
                 while (wait.Elapsed < TimeSpan.FromSeconds(5))
                 {
-                    var state = ReadStatus(EtwFiles.Status(sessions, id));
-                    if (state?.State == "stopped") break;
+                    if (ReadStatus(EtwFiles.Status(sessions, id)) is { State: "stopped" } state && state.Command == stop) break;
                     Thread.Sleep(100);
                 }
             }

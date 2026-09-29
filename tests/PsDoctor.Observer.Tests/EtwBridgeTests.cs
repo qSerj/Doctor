@@ -36,7 +36,7 @@ public sealed class EtwBridgeTests : IDisposable
 
         var команда = await Дождаться(() => Команда() is { Action: "start" } c && c.Session == Сеанс ? c : null);
         Assert.Equal(1000, команда.RootPid);
-        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready"));
+        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready", Command: команда.Id));
 
         await Дождаться(() => Состояния().Contains("ready") ? "да" : null);
         Assert.Equal(["unavailable", "ready"], Состояния());
@@ -51,8 +51,8 @@ public sealed class EtwBridgeTests : IDisposable
         using (var стоп = new CancellationTokenSource())
         {
             var сердце = Биться(стоп.Token);
-            await Дождаться(() => Команда() is { Action: "start" } ? "да" : null);
-            EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready"));
+            var первая = await Дождаться(() => Команда() is { Action: "start" } c ? c : null);
+            EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready", Command: первая.Id));
             await Дождаться(() => Состояния().Contains("ready") ? "да" : null);
             await стоп.CancelAsync();
             await сердце;
@@ -66,14 +66,90 @@ public sealed class EtwBridgeTests : IDisposable
         var прежняя = Команда()!.Id;
         using var снова = new CancellationTokenSource();
         var второе = Биться(снова.Token);
-        await Дождаться(() => Команда() is { Action: "start" } c && c.Id != прежняя ? c : null);
+        var новая = await Дождаться(() => Команда() is { Action: "start" } c && c.Id != прежняя ? c : null);
         await Task.Delay(300);
         Assert.Equal(["unavailable", "ready", "failed"], Состояния());
-        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready"));
+        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready", Command: новая.Id));
         await Дождаться(() => Состояния().Count == 4 ? "да" : null);
         Assert.Equal(["unavailable", "ready", "failed", "ready"], Состояния());
         await снова.CancelAsync();
         await второе;
+    }
+
+    [Fact]
+    public async Task Ответ_узнаётся_по_номеру_команды_а_не_по_времени_файла()
+    {
+        using var мост = Открыть();
+        using var стоп = new CancellationTokenSource();
+        var сердце = Биться(стоп.Token);
+        var команда = await Дождаться(() => Команда() is { Action: "start" } c ? c : null);
+        var путь = EtwFiles.Status(_каталог, Сеанс);
+
+        // Чужой ответ со свежим временем файла — не ответ.
+        EtwFiles.WriteAtomically(путь, new EtwStatus("ready", Command: "чужая"));
+        File.SetLastWriteTimeUtc(путь, DateTime.UtcNow.AddHours(1));
+        await Task.Delay(300);
+        Assert.Equal(["unavailable"], Состояния());
+
+        // Свой ответ со временем файла из прошлого — ответ: часы Windows грубые и прыгают, номер — нет.
+        EtwFiles.WriteAtomically(путь, new EtwStatus("ready", Command: команда.Id));
+        File.SetLastWriteTimeUtc(путь, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        await Дождаться(() => Состояния().Contains("ready") ? "да" : null);
+        Assert.Equal(["unavailable", "ready"], Состояния());
+        await стоп.CancelAsync();
+        await сердце;
+    }
+
+    [Fact]
+    public async Task Последний_счёт_потерь_берётся_из_ответа_на_stop()
+    {
+        using var стоп = new CancellationTokenSource();
+        var сердце = Биться(стоп.Token);
+        // Сторона помощника: отвечает на каждую новую команду её номером, на stop — со счётом потерь.
+        var помощник = Task.Run(async () =>
+        {
+            string? отвечено = null;
+            while (!стоп.IsCancellationRequested)
+            {
+                if (Команда() is { } команда && команда.Id != отвечено)
+                {
+                    try
+                    {
+                        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), команда.Action == "start"
+                            ? new EtwStatus("ready", Command: команда.Id)
+                            : new EtwStatus("stopped", LostEvents: 5, Command: команда.Id));
+                        отвечено = команда.Id;
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                }
+                try { await Task.Delay(20, стоп.Token); }
+                catch (OperationCanceledException) { }
+            }
+        });
+
+        using (Открыть())
+        {
+            Assert.Equal(["ready"], Состояния());
+        }
+
+        Assert.Equal(["ready", "degraded"], Состояния());
+        var итог = _журнал.After(0).Last(f => f.Kind == ProgramFactKinds.EtwState);
+        Assert.Equal(5, итог.Data.GetProperty("lostEvents").GetInt64());
+        await стоп.CancelAsync();
+        await сердце;
+        await помощник;
+    }
+
+    [Fact]
+    public void Прежний_ответ_на_диске_не_принимается_за_ответ_на_новый_старт()
+    {
+        // Помощник жив, а в файле сеанса лежит «ready» на прежнюю команду: старт сеанса не должен его принять.
+        EtwFiles.WriteAtomically(EtwFiles.Status(_каталог, Сеанс), new EtwStatus("ready", Command: "прежняя"));
+        EtwFiles.WriteAtomically(EtwFiles.Heartbeat(_каталог), new EtwHeartbeat(4242, DateTime.UtcNow));
+
+        using var мост = Открыть();
+
+        Assert.Equal(["unavailable"], Состояния());
     }
 
     [Fact]
