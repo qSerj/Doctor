@@ -229,9 +229,13 @@ try {
     # Две задачи при входе монтажёра. Сторож с обычными правами сам запускает наблюдатель и перезапускает его.
     # Помощник ETW — с наивысшими: права берутся здесь, один раз, и окна повышения во время сеанса нет.
     # Повтор раз в минуту бессрочно: пока экземпляр жив, IgnoreNew его гасит, а упавшего сторожа или помощника
-    # поднимает не позже чем через минуту — перезапуск при сбое на выход процесса не срабатывал.
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $account
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
+    # поднимает не позже чем через минуту — перезапуск при сбое на выход процесса не срабатывал. Повтор — отдельным
+    # триггером от момента установки: у триггера входа он начинается только со следующего входа, а ставят Doctor при
+    # вошедшем монтажёре (стенд 29.09.2026).
+    $trigger = @(
+        (New-ScheduledTaskTrigger -AtLogOn -User $account),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1))
+    )
     # Priority 5 — обычный класс, как у программ из проводника. По умолчанию у задачи 7 — ниже обычного, и его
     # наследовали бы наблюдатель, помощник ETW и ProShow, запущенный наблюдателем.
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew `

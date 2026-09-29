@@ -13,6 +13,12 @@
 #                                                  минутами, но ProShow работает — кнопки завершения нет
 #   lab/cycle-e62-field.sh crash [id пакета]     — критерий 7: 32-битный пробник fvideo.exe падает — событие 1000 в
 #                                                  observe windows-events не позже 2 мин и минидамп; без владельца
+#   lab/cycle-e62-field.sh helper|watchdog|no-helper — критерий 5 без владельца: помощник ETW снят посреди сеанса;
+#                                                  сторож и наблюдатель сняты; помощник выключен совсем
+#   lab/cycle-e62-field.sh logon|priority|update|uninstall — критерий 8: после перевхода владельца, после открытия
+#                                                  ProShow через App или «Запуск под наблюдением», обновление при открытом
+#                                                  ProShow, удаление
+#   lab/cycle-e62-field.sh reset-before|reset-after — критерий 6: до сброса ВМ и через 2 мин после входа, один пакет
 #
 # Каждая проверка печатает «совпало» или «РАСХОЖДЕНИЕ»; код выхода — 0, если расхождений нет, иначе 1. Что видно
 # только на экране — тексты Doctor и время появления кнопки, — владелец пишет в result.md пакета: машинного кода для
@@ -22,8 +28,11 @@
 set -uo pipefail
 . "$(dirname "$0")/portable.sh"
 
-step="${1:?укажите шаг: watch, incident, hang или busy}"
-package="${2:-e62-field-001-$step}"
+step="${1:?укажите шаг: watch, incident, hang, busy, crash, helper, watchdog, no-helper, logon, priority, update, reset-before, reset-after или uninstall}"
+case "$step" in
+  reset-before|reset-after) package="${2:-e62-field-001-reset}" ;;
+  *) package="${2:-e62-field-001-$step}" ;;
+esac
 host="${LAB_HOST:-192.168.56.5}"
 lab_key="${LAB_KEY:-$HOME/.ssh/lab_ed25519}"
 exchange="${LAB_EXCHANGE:-$HOME/Lab/exchange}"
@@ -186,6 +195,71 @@ for r in rows:
 print(round(best, 1))
 PY
 }
+
+# Номера фактов сеанса после $3, подходящих под условие на Python: f — факт, d — его data.
+match_facts() {
+  facts_of "$1"
+  "$PYTHON" - "$out/facts-$1.jsonl" "$2" "${3:-0}" <<'PY'
+import json, sys
+for line in open(sys.argv[1], encoding='utf-8'):
+    if not line.strip():
+        continue
+    f = json.loads(line); d = f.get('data') or {}
+    if f['number'] > int(sys.argv[3]) and eval(sys.argv[2]):
+        print(f['number'])
+PY
+}
+
+# Первый такой факт за $4 с (по умолчанию 60): печатает номер или ничего.
+wait_fact() {
+  local n
+  for _ in $(seq 1 $(( ${4:-60} / 2 ))); do
+    n="$(match_facts "$1" "$2" "${3:-0}" | head -n 1)"
+    [ -n "$n" ] && { echo "$n"; return 0; }
+    sleep 2
+  done
+  return 1
+}
+
+# Процессы PsDoctor.Observer.exe с таким ключом в командной строке: pid через запятую.
+observer_pids() {
+  guest_ps "(@(Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -like '*$1*' }).ProcessId) -join ','"
+}
+
+# ProShow под наблюдением с проектом p8: 1a.psh пересохранён в 9.0.3797 и открывается без диалогов, а открытый проект
+# сам перечитывает картинки — file-io идут без человека. Печатает сеанс.
+launch_p8() {
+  "${psdoctor[@]}" observe run --step 'launch "C:\lab\p8\1a.psh"' > "$out/launch.jsonl" 2> "$out/launch.err"
+  field "$(health_json)" activity.session
+}
+
+# Вес и sha256 файлов ETW сеанса @SESSION@; @LIMITS@ — сколько байтов хэшировать у каждого (пусто — весь файл).
+# Строка: имя, сколько хэшировано, вес сейчас, хэш, сколько недочитано до предела.
+etw_hash_script="$(cat <<'PS'
+$dir = Join-Path $env:LOCALAPPDATA 'PsDoctor\observer\sessions\etw'
+$limits = @{ @LIMITS@ }
+foreach ($name in '@SESSION@.summary.jsonl', '@SESSION@.raw.0.jsonl') {
+    $path = Join-Path $dir $name
+    if (-not (Test-Path -LiteralPath $path)) { "$name нет"; continue }
+    $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    try {
+        $length = if ($limits.ContainsKey($name)) { [long]$limits[$name] } else { $stream.Length }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $buffer = New-Object byte[] 1048576
+        $left = $length
+        while ($left -gt 0) {
+            $read = $stream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $left))
+            if ($read -le 0) { break }
+            [void]$sha.TransformBlock($buffer, 0, $read, $null, 0)
+            $left -= $read
+        }
+        [void]$sha.TransformFinalBlock($buffer, 0, 0)
+        "$name $length $($stream.Length) $([Convert]::ToHexString($sha.Hash)) $left"
+    }
+    finally { $stream.Dispose() }
+}
+PS
+)"
 
 case "$step" in
 watch)
@@ -431,6 +505,185 @@ for line in sys.stdin:
   dumps="$(guest_ps "(@(Get-ChildItem -LiteralPath (Join-Path \$env:LOCALAPPDATA 'PsDoctor\dumps') -Filter 'fvideo.exe.*.dmp' -ErrorAction SilentlyContinue | ForEach-Object { \$_.Name + ' ' + \$_.Length }) -join '; ')")"
   say "минидампы fvideo.exe: ${dumps:-нет}"
   check "минидамп в %LOCALAPPDATA%\\PsDoctor\\dumps" "$([ -n "$dumps" ] && echo 1 || echo 0)"
+  ;;
+
+helper)
+  # Критерий 5: помощник ETW снят посреди сеанса — failed helper-lost, новый помощник не позже 70 с (повтор задачи раз
+  # в минуту), снова ready и file-io, сеанс не прерывался.
+  [ -z "$(proshow_pids)" ] || { echo "шаг прерван: ProShow уже запущен — закройте его"; exit 3; }
+  session="$(launch_p8)"
+  [ -n "$session" ] || { echo "шаг прерван: сеанс не начат"; cat "$out/launch.err"; finish; }
+  say "сеанс $session; жду etw-state ready и file-io"
+  ready="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="ready"' 0 120)"
+  io="$(wait_fact "$session" 'f["kind"]=="file-io"' "${ready:-0}" 180)"
+  check "до снятия помощника: ready и file-io" "$([ -n "$ready" ] && [ -n "$io" ] && echo 1 || echo 0)"
+  kill_helper="$(cat <<'PS'
+$helper = @(Get-CimInstance Win32_Process -Filter "Name='PsDoctor.Observer.exe'" | Where-Object { $_.CommandLine -like '*--etw-helper*' })
+if ($helper.Count -ne 1) { "помощников: $($helper.Count)"; exit 3 }
+$killed = Get-Date
+Stop-Process -Id $helper[0].ProcessId -Force
+for ($i = 0; $i -lt 50; $i++) {
+    Start-Sleep 2
+    $new = @(Get-CimInstance Win32_Process -Filter "Name='PsDoctor.Observer.exe'" | Where-Object { $_.CommandLine -like '*--etw-helper*' })
+    if ($new.Count -gt 0) { ([math]::Round(($new[0].CreationDate - $killed).TotalSeconds, 1)).ToString([Globalization.CultureInfo]::InvariantCulture); exit 0 }
+}
+'нет'
+PS
+)"
+  delay="$(guest_ps "$kill_helper" | tail -n 1)"
+  say "новый помощник через $delay с после снятия (часы гостя)"
+  check "новый помощник не позже 70 с" "$("$PYTHON" -c "import sys; print(1 if float(sys.argv[1]) <= 70 else 0)" "$delay" 2>/dev/null || echo 0)"
+  lost="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="failed" and d.get("error")=="helper-lost"' "$io" 30)"
+  check "в журнале etw-state failed helper-lost" "$([ -n "$lost" ] && echo 1 || echo 0)"
+  back="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="ready"' "${lost:-0}" 90)"
+  again="$([ -n "$back" ] && wait_fact "$session" 'f["kind"]=="file-io"' "$back" 90)"
+  check "снова etw-state ready, затем file-io" "$([ -n "$back" ] && [ -n "$again" ] && echo 1 || echo 0)"
+  check "сеанс не прерывался" "$(is "$(summary "$session")" 'true false')"
+  ;;
+
+watchdog)
+  # Критерий 5: сторож и наблюдатель сняты — /health 200 не позже 90 с без ручного запуска: сторожа поднимает повтор
+  # задачи, наблюдатель — сторож.
+  pids="$(guest_ps "(@(Get-CimInstance Win32_Process -Filter \"Name='PsDoctor.Observer.exe'\" | Where-Object { \$_.CommandLine -notlike '*--etw-helper*' }).ProcessId) -join ','")"
+  [ -n "$pids" ] || { echo "шаг прерван: сторожа и наблюдателя нет"; exit 3; }
+  say "снимаю сторожа и наблюдатель: $pids"
+  guest_ps "Stop-Process -Id $pids -Force"
+  started=$SECONDS
+  sleep 3
+  json=""
+  while [ $((SECONDS - started)) -le 150 ]; do
+    json="$(health_json)"
+    [ -n "$json" ] && break
+    sleep 2
+  done
+  waited=$((SECONDS - started))
+  say "/health снова отвечает через $waited с (часы хоста): $(observer_pids --watchdog) — сторож, $(observer_pids --listen) — наблюдатель"
+  check "/health 200 не позже 90 с без ручного запуска" "$([ -n "$json" ] && [ "$waited" -le 90 ] && echo 1 || echo 0)"
+  ;;
+
+no-helper)
+  # Критерий 5: помощник выключен совсем — запуск и подключение проходят с etw-state unavailable. Задача etw
+  # выключается и в конце шага возвращается; открытый ProShow закрывается принудительно, до и после шага.
+  guest_ps "Get-Process proshow -ErrorAction SilentlyContinue | Stop-Process -Force; Disable-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName etw | Out-Null; Stop-Process -Id ($(observer_pids --etw-helper | sed 's/^$/0/')) -Force -ErrorAction SilentlyContinue; 'помощник выключен'"
+  say "жду 15 с: сердцебиение помощника устаревает"
+  sleep 15
+  launched="$(launch_p8)"
+  check "запуск без помощника принят (сеанс ${launched:-нет})" "$([ -n "$launched" ] && echo 1 || echo 0)"
+  check "запуск: etw-state unavailable" "$([ -n "$launched" ] && [ -n "$(match_facts "$launched" 'f["kind"]=="etw-state" and d.get("state")=="unavailable"')" ] && echo 1 || echo 0)"
+  "${psdoctor[@]}" observe stop "$launched" >/dev/null 2>&1
+  wait_inactive "$launched" 30 || true
+  "${psdoctor[@]}" observe attach > "$out/attach.json" 2> "$out/attach.err"
+  attached="$(field "$(cat "$out/attach.json")" session)"
+  check "подключение без помощника принято (сеанс ${attached:-нет})" "$([ -n "$attached" ] && echo 1 || echo 0)"
+  check "подключение: etw-state unavailable" "$([ -n "$attached" ] && [ -n "$(match_facts "$attached" 'f["kind"]=="etw-state" and d.get("state")=="unavailable"')" ] && echo 1 || echo 0)"
+  [ -n "$attached" ] && "${psdoctor[@]}" observe stop "$attached" >/dev/null 2>&1
+  guest_ps "Enable-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName etw | Out-Null; Start-ScheduledTask -TaskPath '\\PsDoctor\\' -TaskName etw; Get-Process proshow -ErrorAction SilentlyContinue | Stop-Process -Force; 'помощник включён, ProShow закрыт'"
+  ;;
+
+logon)
+  # Критерий 8 после перевхода владельца: App с --tray без повышения, приоритет Normal у App и процессов наблюдателя,
+  # ярлык автозагрузки, задачи с приоритетом 5 и повтором. Что окна Doctor нет, а значок есть, — говорит владелец.
+  state="$(cat <<'PS'
+Add-Type -Namespace Lab -Name Token -MemberDefinition @'
+[DllImport("advapi32.dll")] public static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+[DllImport("advapi32.dll")] public static extern bool GetTokenInformation(IntPtr token, int cls, out uint info, uint length, out uint returned);
+'@
+foreach ($p in @(Get-Process PsDoctor.App, PsDoctor.Observer -ErrorAction SilentlyContinue)) {
+    $token = [IntPtr]::Zero; $elevation = 0; $returned = 0; $elevated = '?'
+    try {
+        if ([Lab.Token]::OpenProcessToken($p.Handle, 8, [ref] $token) -and [Lab.Token]::GetTokenInformation($token, 20, [ref] $elevation, 4, [ref] $returned)) { $elevated = [bool]$elevation }
+    }
+    catch { }
+    $line = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").CommandLine
+    "$($p.ProcessName) $($p.Id) сеанс=$($p.SessionId) приоритет=$($p.PriorityClass) повышен=$elevated :: $line"
+}
+$lnk = 'C:\Users\user\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Doctor.lnk'
+if (Test-Path -LiteralPath $lnk) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); "ярлык: $($s.TargetPath) $($s.Arguments)" } else { 'ярлык: нет' }
+Get-ScheduledTask -TaskPath '\PsDoctor\' | ForEach-Object { "задача $($_.TaskName): $($_.State), приоритет $($_.Settings.Priority), повтор $(@($_.Triggers | ForEach-Object { $_.Repetition.Interval } | Where-Object { $_ }) -join ','), следующий $(($_ | Get-ScheduledTaskInfo).NextRunTime)" }
+PS
+)"
+  guest_ps "$state" | tee "$out/logon.txt"
+  check "App после входа: с --tray, без повышения, приоритет Normal" "$(grep -qE '^PsDoctor\.App .*приоритет=Normal повышен=False .*--tray' "$out/logon.txt" && echo 1 || echo 0)"
+  check "процессы наблюдателя — приоритет Normal" "$([ "$(grep -c '^PsDoctor\.Observer ' "$out/logon.txt")" -ge 3 ] && ! grep '^PsDoctor\.Observer ' "$out/logon.txt" | grep -qv 'приоритет=Normal' && echo 1 || echo 0)"
+  check "ярлык автозагрузки на App с --tray" "$(grep -qE '^ярлык: .*PsDoctor\.App\.exe --tray$' "$out/logon.txt" && echo 1 || echo 0)"
+  check "обе задачи: приоритет 5, повтор раз в минуту" "$(is "$(grep -cE '^задача .*приоритет 5, повтор PT1M' "$out/logon.txt")" 2)"
+  ;;
+
+priority)
+  # Критерий 8: у proshow.exe, открытого через App («Открыть проект…») или «Запуском под наблюдением», приоритет Normal.
+  # Какой путь — видно по родителю: App или наблюдатель.
+  guest_ps "Get-Process proshow -ErrorAction SilentlyContinue | ForEach-Object { \$parent = (Get-CimInstance Win32_Process -Filter \"ProcessId=\$(\$_.Id)\").ParentProcessId; \"proshow \$(\$_.Id) приоритет=\$(\$_.PriorityClass) родитель=\$((Get-Process -Id \$parent -ErrorAction SilentlyContinue).ProcessName)\" }" | tee "$out/priority.txt"
+  check "ProShow открыт" "$([ -s "$out/priority.txt" ] && echo 1 || echo 0)"
+  check "proshow.exe — приоритет Normal" "$([ -s "$out/priority.txt" ] && ! grep -qv 'приоритет=Normal' "$out/priority.txt" && echo 1 || echo 0)"
+  ;;
+
+update)
+  # Критерий 8: обновление при открытом ProShow — код 0, задачи включены, ProShow жив. Ставится последний пакет,
+  # уехавший на стенд. Обновление гасит и App — это известно (chores): инженер запускает его ярлыком.
+  pid="$(proshow_pids)"
+  [ -n "$pid" ] || { echo "шаг прерван: откройте ProShow"; exit 3; }
+  name="$(basename "$(ls -1d "$exchange"/doctor/PsDoctor-* | tail -n 1)")"
+  say "обновление пакетом $name при открытом ProShow $pid"
+  update_script="$(cat <<'PS'
+& pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "\\VBoxSvr\exchange\doctor\@PACKAGE@\Install-Doctor.ps1" -User user -NoPause | Select-Object -Last 2
+"код установщика: $LASTEXITCODE"
+Get-ScheduledTask -TaskPath '\PsDoctor\' | ForEach-Object { "задача $($_.TaskName): $($_.State)" }
+PS
+)"
+  guest_ps "${update_script//@PACKAGE@/$name}" | tee "$out/update.txt"
+  check "код установщика 0" "$(grep -q '^код установщика: 0$' "$out/update.txt" && echo 1 || echo 0)"
+  check "обе задачи включены" "$(is "$(grep -cE '^задача .*: (Ready|Running)$' "$out/update.txt")" 2)"
+  check "ProShow жив" "$(alive "$pid")"
+  ;;
+
+reset-before)
+  # Критерий 6 до сброса: сеанс дежурства над ProShow, открытым владельцем, пишет ETW; вес и sha256 summary и raw.0 —
+  # в etw-before.txt. Потом владелец сбрасывает ВМ и входит — шаг reset-after.
+  require_watch_session
+  ready="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="ready"' 0 120)"
+  io="$(wait_fact "$session" 'f["kind"]=="file-io"' "${ready:-0}" 120)"
+  check "сеанс дежурства пишет ETW (ready, file-io)" "$([ -n "$io" ] && echo 1 || echo 0)"
+  echo "$session" > "$out/session.txt"
+  script="${etw_hash_script//@SESSION@/$session}"
+  guest_ps "${script//@LIMITS@/}" | tee "$out/etw-before.txt"
+  ask "Сбросьте ВМ — в окне VirtualBox «Машина → Сброс» — и войдите в Windows."
+  ;;
+
+reset-after)
+  # Критерий 6 после сброса и входа: те же байты summary и raw.0, что до сброса, — помощник, поднятый при входе,
+  # файлы оборванного сеанса не затёр. Хвост, не дошедший до диска при сбросе, пропасть может: сверяется префикс.
+  session="$(cat "$out/session.txt")"
+  say "жду помощника ETW после входа, затем 2 мин"
+  helper_pid=""
+  for _ in $(seq 1 100); do helper_pid="$(observer_pids --etw-helper 2>/dev/null)"; [ -n "$helper_pid" ] && break; sleep 6; done
+  [ -n "$helper_pid" ] || { echo "шаг прерван: помощник ETW так и не поднялся"; finish; }
+  sleep 120
+  limits="$(awk '$5 == 0 { printf "\x27%s\x27 = %s; ", $1, $2 }' "$out/etw-before.txt")"
+  script="${etw_hash_script//@SESSION@/$session}"
+  guest_ps "${script//@LIMITS@/$limits}" | tee "$out/etw-after.txt"
+  for file in summary.jsonl raw.0.jsonl; do
+    before="$(awk -v f="$session.$file" '$1 == f { print $2, $4 }' "$out/etw-before.txt")"
+    after="$(awk -v f="$session.$file" '$1 == f && $5 == 0 { print $2, $4 }' "$out/etw-after.txt")"
+    check "$file: те же $before" "$([ -n "$before" ] && [ "$before" = "$after" ] && echo 1 || echo 0)"
+  done
+  ;;
+
+uninstall)
+  # Критерий 8: удаление снимает ярлык автозагрузки, задачи и ключи минидампов, журналы оставляет. Стенд после
+  # шага ставится заново: lab/observer.sh --no-tests --watch.
+  uninstall_script="$(cat <<'PS'
+& pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 'C:\Program Files\PsDoctor\Install-Doctor.ps1' -Uninstall -User user -RemoveData no -NoPause | Select-Object -Last 2
+"код удаления: $LASTEXITCODE"
+"ярлык: $(Test-Path -LiteralPath 'C:\Users\user\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Doctor.lnk')"
+"задач: $(@(Get-ScheduledTask -TaskPath '\PsDoctor\' -ErrorAction SilentlyContinue).Count)"
+"ключ дампов: $(Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\proshow.exe')"
+PS
+)"
+  guest_ps "$uninstall_script" | tee "$out/uninstall.txt"
+  check "код удаления 0" "$(grep -q '^код удаления: 0$' "$out/uninstall.txt" && echo 1 || echo 0)"
+  check "ярлыка автозагрузки нет" "$(grep -q '^ярлык: False$' "$out/uninstall.txt" && echo 1 || echo 0)"
+  check "задач нет" "$(grep -q '^задач: 0$' "$out/uninstall.txt" && echo 1 || echo 0)"
+  check "ключа минидампов нет" "$(grep -q '^ключ дампов: False$' "$out/uninstall.txt" && echo 1 || echo 0)"
   ;;
 
 *)
