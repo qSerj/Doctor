@@ -1,6 +1,6 @@
 #!/bin/bash
 # Цикл опыта. Не часть продукта, см. lab/README.md.
-# Критерии 2–4 Э6.2 «Полевой минимум» на стенде, поставленном с дежурством (lab/observer.sh --watch). Один шаг за
+# Критерии 2–4 и 7 Э6.2 «Полевой минимум» на стенде, поставленном с дежурством (lab/observer.sh --watch). Один шаг за
 # запуск; ручные действия владельца — по подсказкам «>>>», время для них скрипт печатает сам.
 #   lab/cycle-e62-field.sh watch [id пакета]     — критерий 2: ProShow открыт ярлыком — сеанс дежурства и environment;
 #                                                  закрыт — сеанс кончается program-exited
@@ -11,6 +11,8 @@
 #                                                  завершение по кнопке
 #   lab/cycle-e62-field.sh busy [id пакета]      — критерий 4, вторая часть: медленный проект держит ProShow «не отвечает»
 #                                                  минутами, но ProShow работает — кнопки завершения нет
+#   lab/cycle-e62-field.sh crash [id пакета]     — критерий 7: 32-битный пробник fvideo.exe падает — событие 1000 в
+#                                                  observe windows-events не позже 2 мин и минидамп; без владельца
 #
 # Каждая проверка печатает «совпало» или «РАСХОЖДЕНИЕ»; код выхода — 0, если расхождений нет, иначе 1. Что видно
 # только на экране — тексты Doctor и время появления кнопки, — владелец пишет в result.md пакета: машинного кода для
@@ -382,6 +384,53 @@ busy)
   check "завершения не было" "$(is "$(grep -c terminate "$out/incidents-since.tsv")" 0)"
   check "ProShow жив" "$(alive "$pid")"
   ask "Запишите в result.md, какие тексты показывало окно ожидания и была ли хоть на миг кнопка «Завершить ProShow». Потом закройте окно «Понятно» и ProShow — крестиком; при вопросе о сохранении — «Нет»."
+  ;;
+
+crash)
+  # Пробник — программа .NET Framework x86 под именем fvideo.exe: на неё действует ключ LocalDumps установщика, а отбор
+  # наблюдателя узнаёт её по имени. Собирает её csc самой Windows, ProShow не нужен. Падает в нулевом сеансе SSH —
+  # без окна Windows «прекращена работа»; дамп пишется тем же механизмом, что и в сеансе пользователя.
+  json="$(health_json)"
+  check "/health: журнал Windows прочитан, сбоя нет" \
+    "$([ -n "$(field "$json" windowsEvents.lastReadUtc)" ] && [ -z "$(field "$json" windowsEvents.lastError)" ] && echo 1 || echo 0)"
+  "${psdoctor[@]}" observe windows-events > "$out/events-before.jsonl" 2>/dev/null
+  before="$(wc -l < "$out/events-before.jsonl" | tr -d ' ')"
+  say "событий журнала Windows у наблюдателя до падения: $before"
+  probe="$(cat <<'PS'
+$dir = 'C:\lab\crash-probe'
+New-Item -ItemType Directory -Force $dir | Out-Null
+Set-Content -LiteralPath "$dir\Probe.cs" -Value 'static class Probe { static void Main() { throw new System.InvalidOperationException("psdoctor crash probe"); } }'
+& 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe' /nologo /platform:x86 /target:exe "/out:$dir\fvideo.exe" "$dir\Probe.cs" | Out-Null
+if ($LASTEXITCODE) { "csc: код $LASTEXITCODE"; exit 3 }
+foreach ($root in 'HKLM:\SOFTWARE\Microsoft', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft') {
+    "ключ ${root}: $(Test-Path "$root\Windows\Windows Error Reporting\LocalDumps\fvideo.exe")"
+}
+$process = Start-Process -FilePath "$dir\fvideo.exe" -PassThru -WindowStyle Hidden
+$null = $process.WaitForExit(120000)
+'код выхода пробника: 0x{0:X8}' -f $process.ExitCode
+PS
+)"
+  started=$SECONDS
+  guest_ps "$probe" | tee "$out/probe.txt"
+  say "жду событие 1000 о fvideo.exe у наблюдателя: опрос журнала раз в минуту, предел 2 мин"
+  found=""
+  while [ $((SECONDS - started)) -le 150 ]; do
+    "${psdoctor[@]}" observe windows-events > "$out/events.jsonl" 2>/dev/null
+    found="$(tail -n +$((before + 1)) "$out/events.jsonl" | "$PYTHON" -c "
+import json,sys
+for line in sys.stdin:
+    e=json.loads(line)
+    if e.get('id')==1000 and any('fvideo.exe' in p.lower() for p in e.get('properties') or []):
+        print(e.get('recordId'), e.get('time')); break")"
+    [ -n "$found" ] && break
+    sleep 5
+  done
+  waited=$((SECONDS - started))
+  say "событие: ${found:-нет} — через $waited с после запуска пробника (часы хоста)"
+  check "событие 1000 о fvideo.exe в observe windows-events не позже 2 мин" "$([ -n "$found" ] && [ "$waited" -le 120 ] && echo 1 || echo 0)"
+  dumps="$(guest_ps "(@(Get-ChildItem -LiteralPath (Join-Path \$env:LOCALAPPDATA 'PsDoctor\dumps') -Filter 'fvideo.exe.*.dmp' -ErrorAction SilentlyContinue | ForEach-Object { \$_.Name + ' ' + \$_.Length }) -join '; ')")"
+  say "минидампы fvideo.exe: ${dumps:-нет}"
+  check "минидамп в %LOCALAPPDATA%\\PsDoctor\\dumps" "$([ -n "$dumps" ] && echo 1 || echo 0)"
   ;;
 
 *)
