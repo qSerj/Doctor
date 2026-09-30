@@ -305,26 +305,13 @@ public static class EnvironmentSnapshotReader
         }
     }
 
-    /// <summary>Файл: есть ли, версия, размер и время записи. Недоступный файл записан как отсутствующий.</summary>
+    /// <summary>Описание файла, один раз на путь за снятие: один модуль регистрируют многие фильтры.</summary>
     private static EnvironmentFile Describe(string path, Dictionary<string, EnvironmentFile> files)
     {
-        if (files.TryGetValue(path, out var known))
+        if (!files.TryGetValue(path, out var described))
         {
-            return known;
+            files[path] = described = FileDescription.Describe(path);
         }
-        EnvironmentFile described;
-        try
-        {
-            var info = new FileInfo(path);
-            described = info.Exists
-                ? new EnvironmentFile(path, true, MachineEnvironment.FileVersion(path), info.Length, new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero))
-                : new EnvironmentFile(path, false, null, null, null);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            described = new EnvironmentFile(path, false, null, null, null);
-        }
-        files[path] = described;
         return described;
     }
 

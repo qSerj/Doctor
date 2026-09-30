@@ -176,6 +176,53 @@ public sealed class EtwBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task Загрузка_модуля_один_факт_на_процесс_и_путь_версия_один_раз_на_путь()
+    {
+        var описано = new List<string>();
+        using var мост = Открыть(путь =>
+        {
+            описано.Add(путь);
+            return new EnvironmentFile(путь, true, "6.6.19041.1", 1000, null);
+        });
+        const string кварц = @"C:\Windows\SysWOW64\quartz.dll";
+        await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс),
+        [
+            Загрузка(2000, кварц),
+            // Та же пара иначе написанная и повторная загрузка той же библиотеки — не новая.
+            Загрузка(2000, @"C:\WINDOWS\SysWOW64\QUARTZ.DLL"),
+            Загрузка(2001, кварц),
+            Загрузка(2000, @"C:\ProShow\devicec.dll"),
+        ]);
+
+        await Дождаться(() => Модули().Count == 3 ? "да" : null);
+        await Task.Delay(300);
+
+        var модули = Модули();
+        Assert.Equal([(2000, кварц), (2001, кварц), (2000, @"C:\ProShow\devicec.dll")],
+            модули.Select(f => (f.ProcessId!.Value, f.Data.GetProperty("file").GetProperty("path").GetString()!)));
+        Assert.Equal("fvideo.exe", модули[0].Data.GetProperty("image").GetString());
+        Assert.Equal("6.6.19041.1", модули[1].Data.GetProperty("file").GetProperty("version").GetString());
+        Assert.Equal([кварц, @"C:\ProShow\devicec.dll"], описано);
+    }
+
+    [Fact]
+    public async Task Новый_процесс_с_прежним_номером_снова_называет_модули()
+    {
+        using var мост = Открыть(путь => new EnvironmentFile(путь, false, null, null, null));
+        const string кварц = @"C:\Windows\SysWOW64\quartz.dll";
+        var старт = JsonSerializer.Serialize(new EtwSummary(DateTime.UtcNow, 2000, null, 0, 0, 0, 0, 0, 0,
+            "fvideo.exe", 1000, "fvideo.exe"), ObservationJson.Options);
+        await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс), [Загрузка(2000, кварц), старт, Загрузка(2000, кварц)]);
+
+        await Дождаться(() => Модули().Count == 2 ? "да" : null);
+    }
+
+    private static string Загрузка(int процесс, string модуль) => JsonSerializer.Serialize(
+        new EtwSummary(DateTime.UtcNow, процесс, null, 0, 0, 0, 0, 0, 0, Module: модуль, Image: "fvideo.exe"), ObservationJson.Options);
+
+    private List<Fact> Модули() => [.. _журнал.After(0).Where(f => f.Kind == ProgramFactKinds.EtwImageLoaded)];
+
+    [Fact]
     public void Помощник_дописывает_файлы_сеанса_а_не_укорачивает()
     {
         var путь = EtwFiles.Raw(_каталог, Сеанс);
@@ -240,9 +287,9 @@ public sealed class EtwBridgeTests : IDisposable
         Assert.Null(EtwHelper.CurrentCommandId(Path.Combine(_каталог, "пусто")));
     }
 
-    private EtwBridge Открыть() => EtwBridge.Open(_каталог, Сеанс, () => 1000, "proshow.exe", _журнал,
-        readyTimeout: TimeSpan.FromMilliseconds(200), monitorInterval: TimeSpan.FromMilliseconds(50),
-        helperTimeout: TimeSpan.FromMilliseconds(500));
+    private EtwBridge Открыть(Func<string, EnvironmentFile>? описать = null) => EtwBridge.Open(_каталог, Сеанс, () => 1000,
+        "proshow.exe", _журнал, readyTimeout: TimeSpan.FromMilliseconds(200), monitorInterval: TimeSpan.FromMilliseconds(50),
+        helperTimeout: TimeSpan.FromMilliseconds(500), describeModule: описать);
 
     /// <summary>Сторона помощника: новое сердцебиение раз в 50 мс, пока не отменят.</summary>
     private Task Биться(CancellationToken стоп) => Task.Run(async () =>

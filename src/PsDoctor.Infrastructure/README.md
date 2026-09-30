@@ -20,6 +20,7 @@
 | как видно куст процессов | `Observation/Win32Job.cs` |
 | как читаются окна и диалоги | `Observation/WindowWatcher.cs`, нажатие — `Observation/UiAutomation.cs` |
 | что складывается в один сеанс | `Observation/ProgramRun.cs`, для пассивного сеанса `Observation/AttachedRun.cs` |
+| что за машина: факт `environment` и слепок окружения | `Observation/MachineEnvironment.cs`, `Observation/EnvironmentSnapshotReader.cs`; файл и его версия — `Observation/FileDescription.cs` |
 
 ## Чего здесь нет
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
+using PsDoctor.Infrastructure.Observation;
 
 namespace PsDoctor.Observer;
 
@@ -18,6 +19,10 @@ public sealed class EtwBridge : IDisposable
     private readonly string programImage;
     private readonly Func<IReadOnlyCollection<int>?>? processes;
     private readonly TimeSpan helperTimeout;
+    private readonly Func<string, EnvironmentFile> describeModule;
+    // Загрузки модулей: одна на пару процесс и путь за сеанс, описание файла — одно на путь. Только поток чтения сводки.
+    private readonly ModuleLoads modules = new();
+    private readonly Dictionary<string, EnvironmentFile> moduleFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource cancellation = new();
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly Lock gate = new();
@@ -42,7 +47,8 @@ public sealed class EtwBridge : IDisposable
 
     /// <param name="linkedCommand">Команда start, на которую помощник уже ответил; <c>null</c> — записи ещё нет.</param>
     private EtwBridge(string sessions, string id, IFactRecorder facts, Func<int> rootPid, string programImage,
-        Func<IReadOnlyCollection<int>?>? processes, string? linkedCommand, TimeSpan monitorInterval, TimeSpan helperTimeout)
+        Func<IReadOnlyCollection<int>?>? processes, string? linkedCommand, TimeSpan monitorInterval, TimeSpan helperTimeout,
+        Func<string, EnvironmentFile>? describeModule)
     {
         this.sessions = sessions;
         this.id = id;
@@ -53,6 +59,7 @@ public sealed class EtwBridge : IDisposable
         this.linkedCommand = linkedCommand;
         linked = linkedCommand is not null;
         this.helperTimeout = helperTimeout;
+        this.describeModule = describeModule ?? FileDescription.Describe;
         // Сердцебиение, лежащее на диске до моста, — не признак жизни: после перезагрузки там старое значение.
         lastBeat = ReadHeartbeat(sessions)?.TimeUtc;
         beatChanged = linked ? TimeSpan.Zero : null;
@@ -81,7 +88,7 @@ public sealed class EtwBridge : IDisposable
     {
         var command = Request(sessions, id, rootPid, programImage, initialPids, readyTimeout ?? ReadyTimeout);
         facts.Record(ProgramFactKinds.EtwState, new { state = "ready", lostEvents = 0 });
-        return new EtwBridge(sessions, id, facts, () => rootPid, programImage, null, command, MonitorInterval, HelperTimeout);
+        return new EtwBridge(sessions, id, facts, () => rootPid, programImage, null, command, MonitorInterval, HelperTimeout, null);
     }
 
     /// <summary>
@@ -90,9 +97,10 @@ public sealed class EtwBridge : IDisposable
     /// </summary>
     /// <param name="rootPid">Основной процесс программы на момент (пере)подключения записи; 0 — ещё не запущен.</param>
     /// <param name="processes">Процессы куста на момент (пере)подключения записи.</param>
+    /// <param name="describeModule">Описание файла загруженного модуля; по умолчанию <see cref="FileDescription.Describe"/>.</param>
     public static EtwBridge Open(string sessions, string id, Func<int> rootPid, string programImage, IFactRecorder facts,
         Func<IReadOnlyCollection<int>?>? processes = null, TimeSpan? readyTimeout = null,
-        TimeSpan? monitorInterval = null, TimeSpan? helperTimeout = null)
+        TimeSpan? monitorInterval = null, TimeSpan? helperTimeout = null, Func<string, EnvironmentFile>? describeModule = null)
     {
         string? command;
         try
@@ -106,7 +114,7 @@ public sealed class EtwBridge : IDisposable
             command = null;
         }
         return new EtwBridge(sessions, id, facts, rootPid, programImage, processes, command,
-            monitorInterval ?? MonitorInterval, helperTimeout ?? HelperTimeout);
+            monitorInterval ?? MonitorInterval, helperTimeout ?? HelperTimeout, describeModule);
     }
 
     /// <summary>Шлёт start и ждёт ответа на него; возвращает номер команды, на которую помощник ответил.</summary>
@@ -293,10 +301,16 @@ public sealed class EtwBridge : IDisposable
                 if (value is null) continue;
                 try
                 {
-                    if (value.ProcessStart is not null)
+                    if (value.Module is not null)
+                        RecordModule(value);
+                    else if (value.ProcessStart is not null)
+                    {
+                        // Номер процесса занят новым: его загрузки снова новые.
+                        modules.Forget(value.ProcessId);
                         facts.Record(ProgramFactKinds.EtwProcessStarted,
                             new { image = value.ProcessStart, commandLine = value.CommandLine,
                                 parentProcessId = value.ParentProcessId, timeUtc = value.SecondUtc }, value.ProcessId);
+                    }
                     else
                         facts.Record(ProgramFactKinds.FileIo, value, value.ProcessId);
                 }
@@ -308,6 +322,18 @@ public sealed class EtwBridge : IDisposable
         {
             Record(new { state = "failed", error = "summary-io" });
         }
+    }
+
+    /// <summary>
+    /// Факт <c>etw-image-loaded</c>: файл описан так же, как в слепке окружения, — по нему видно, какой фильтр или
+    /// библиотека из слепка пошли в дело. Помощник, поднятый заново, присылает загрузки повторно; факт остаётся один.
+    /// </summary>
+    private void RecordModule(EtwSummary value)
+    {
+        if (!modules.Add(value.ProcessId, value.Module!)) return;
+        if (!moduleFiles.TryGetValue(value.Module!, out var file))
+            moduleFiles[value.Module!] = file = describeModule(value.Module!);
+        facts.Record(ProgramFactKinds.EtwImageLoaded, new { image = value.Image, timeUtc = value.SecondUtc, file }, value.ProcessId);
     }
 
     private void ReportStatus()

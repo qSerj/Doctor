@@ -18,6 +18,12 @@ public static class ProgramFactKinds
     public const string EtwState = "etw-state";
     public const string EtwProcessStarted = "etw-process-started";
 
+    /// <summary>
+    /// Процесс куста загрузил модуль — по ETW, один раз на пару процесс и путь (Э6.3, часть Г). Данные: имя образа
+    /// процесса, время и описание файла модуля, как в слепке окружения. Процесс факта — загрузивший.
+    /// </summary>
+    public const string EtwImageLoaded = "etw-image-loaded";
+
     /// <summary>Процесс программы не создан или не посажен в задание.</summary>
     public const string LaunchFailed = "launch-failed";
 

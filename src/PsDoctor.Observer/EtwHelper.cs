@@ -17,9 +17,11 @@ public sealed record EtwCommand(string Id, string Session, string Action, int Ro
 public sealed record EtwStatus(string State, string? Error = null, long LostEvents = 0, string? Command = null);
 public sealed record EtwRawEvent(DateTime TimeUtc, int ProcessId, string Operation, string? File, long Bytes, int? Status);
 /// <param name="CommandLine">Командная строка процесса из события старта: у воркера ProShow она называет входной файл.</param>
+/// <param name="Module">Процесс загрузил этот модуль (Э6.3, часть Г); время в <paramref name="SecondUtc"/> — точное.</param>
+/// <param name="Image">Имя образа процесса, загрузившего <paramref name="Module"/>.</param>
 public sealed record EtwSummary(DateTime SecondUtc, int ProcessId, string? File, int Opens, int Reads, long ReadBytes,
     int Writes, long WriteBytes, int SharingViolations, string? ProcessStart = null, int? ParentProcessId = null,
-    string? CommandLine = null);
+    string? CommandLine = null, string? Module = null, string? Image = null);
 
 /// <summary>Сердцебиение помощника: раз в секунду новое время. По его смене мост знает, что помощник жив.</summary>
 public sealed record EtwHeartbeat(int Pid, DateTime TimeUtc);
@@ -214,7 +216,7 @@ public static class EtwHelper
     }
 }
 
-/// <summary>Сырые файловые события и секундные агрегаты одного сеанса.</summary>
+/// <summary>Сырые файловые события и секундные агрегаты одного сеанса; загрузки модулей процессами куста.</summary>
 internal sealed class EtwCapture : IDisposable
 {
     public const string SessionPrefix = "PsDoctor-";
@@ -225,6 +227,8 @@ internal sealed class EtwCapture : IDisposable
     private readonly Dictionary<string, (int Pid, string? File)> pending = [];
     private readonly Dictionary<string, string> fileObjects = [];
     private readonly Dictionary<(DateTime Second, int Pid, string? File), MutableSummary> totals = [];
+    private readonly Dictionary<int, string> images = [];
+    private readonly ModuleLoads modules = new();
     private readonly Lock gate = new();
     private readonly StreamWriter summary;
     private StreamWriter raw;
@@ -250,7 +254,7 @@ internal sealed class EtwCapture : IDisposable
     public void Start()
     {
         session = new TraceEventSession(SessionPrefix + command.Session) { StopOnDispose = true };
-        session.EnableKernelProvider(KernelTraceEventParser.Keywords.Process |
+        session.EnableKernelProvider(KernelTraceEventParser.Keywords.Process | KernelTraceEventParser.Keywords.ImageLoad |
             KernelTraceEventParser.Keywords.FileIO | KernelTraceEventParser.Keywords.FileIOInit);
         var kernel = session.Source.Kernel;
         kernel.ProcessStart += data =>
@@ -262,11 +266,40 @@ internal sealed class EtwCapture : IDisposable
                     processes.Add(data.ProcessID);
                 else if (!processes.Contains(data.ParentID)) return;
                 processes.Add(data.ProcessID);
+                images[data.ProcessID] = Path.GetFileName(data.ImageFileName);
+                modules.Forget(data.ProcessID);
                 WriteSummary(new EtwSummary(data.TimeStamp.ToUniversalTime(), data.ProcessID, null, 0, 0, 0, 0, 0, 0,
                     data.ImageFileName, data.ParentID, data.CommandLine));
             }
         };
-        kernel.ProcessStop += data => { lock (gate) processes.Remove(data.ProcessID); };
+        kernel.ProcessStop += data =>
+        {
+            lock (gate)
+            {
+                processes.Remove(data.ProcessID);
+                images.Remove(data.ProcessID);
+                modules.Forget(data.ProcessID);
+            }
+        };
+        // Процессы, живые до начала записи, приходят перечислением; имя образа нужно их загрузкам модулей.
+        kernel.ProcessDCStart += data =>
+        {
+            lock (gate)
+            {
+                if (processes.Contains(data.ProcessID)) images[data.ProcessID] = Path.GetFileName(data.ImageFileName);
+            }
+        };
+        // Загрузка после начала записи и перечисление уже загруженных при подключении к живой программе.
+        kernel.ImageLoadGroup += data =>
+        {
+            lock (gate)
+            {
+                if (disposed || !processes.Contains(data.ProcessID) || string.IsNullOrEmpty(data.FileName)
+                    || !modules.Add(data.ProcessID, data.FileName)) return;
+                WriteSummary(new EtwSummary(data.TimeStamp.ToUniversalTime(), data.ProcessID, null, 0, 0, 0, 0, 0, 0,
+                    Module: data.FileName, Image: images.GetValueOrDefault(data.ProcessID) ?? data.ProcessName));
+            }
+        };
         kernel.FileIOName += data =>
         {
             lock (gate)

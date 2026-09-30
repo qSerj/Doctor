@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -11,8 +10,8 @@ namespace PsDoctor.Infrastructure.Observation;
 /// <summary>
 /// Окружение машины для факта <c>environment</c>. Каждый вопрос задаётся отдельно, и незнание — <c>null</c>: сеанс не
 /// ждёт центр безопасности дольше <see cref="AntivirusTimeout"/> и не падает из-за закрытого раздела реестра.
-/// Версию Windows, версию файла, сборку ProShow и список программ берёт и слепок окружения
-/// (<see cref="EnvironmentSnapshotReader"/>): один код на оба, ошибка в нём чинится в одном месте.
+/// Версию Windows, сборку ProShow и список программ берёт и слепок окружения (<see cref="EnvironmentSnapshotReader"/>),
+/// версию файла оба берут у <see cref="FileDescription"/>: один код на оба, ошибка в нём чинится в одном месте.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class MachineEnvironment
@@ -45,7 +44,7 @@ public static class MachineEnvironment
             release,
             programPath,
             File.Exists(programPath),
-            FileVersion(programPath),
+            FileDescription.Version(programPath),
             processId is { } pid ? Elevated(pid) : null,
             EnableLua(),
             Antivirus(),
@@ -88,18 +87,6 @@ public static class MachineEnvironment
         }
     }
 
-    internal static string? FileVersion(string path)
-    {
-        try
-        {
-            return File.Exists(path) ? FileVersionInfo.GetVersionInfo(path).FileVersion : null;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     /// <summary>Версия файла первого из <see cref="BuildModules"/>, что нашёлся в каталоге программы.</summary>
     internal static string? ProgramBuild(string programPath)
     {
@@ -109,7 +96,7 @@ public static class MachineEnvironment
             return null;
         }
         return BuildModules
-            .Select(module => FileVersion(Path.Combine(directory, module)))
+            .Select(module => FileDescription.Version(Path.Combine(directory, module)))
             .FirstOrDefault(version => !string.IsNullOrEmpty(version));
     }
 
