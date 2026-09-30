@@ -294,6 +294,10 @@ public interface IProgramLauncher
 /// у самого <c>proshow.exe</c> версии файла и продукта — «1, 0, 0, 1» (стенд 29.09.2026). <c>null</c> — модулей нет или
 /// сеанс старше поля.
 /// </param>
+/// <param name="Snapshot">
+/// Идентификатор слепка окружения (Э6.3), сохранённого наблюдателем рядом с журналами; <c>null</c> — слепок не снят или
+/// сеанс старше поля.
+/// </param>
 public sealed record EnvironmentFacts(
     string? WindowsBuild,
     string? WindowsRelease,
@@ -308,7 +312,8 @@ public sealed record EnvironmentFacts(
     long? MemoryFreeBytes,
     DiskSpace? SystemDisk,
     DiskSpace? TempDisk,
-    string? ProgramBuild = null);
+    string? ProgramBuild = null,
+    string? Snapshot = null);
 
 /// <param name="State">Слово состояния <c>productState</c> центра безопасности как есть.</param>
 public sealed record AntivirusProduct(string Name, int? State);
@@ -323,6 +328,13 @@ public interface IEnvironmentReader
     /// <param name="processId">Процесс программы, если он уже есть: по нему видно, повышен ли он.</param>
     /// <returns><c>null</c> — описывать нечего, факта не будет.</returns>
     EnvironmentFacts? ReadEnvironment(int? processId);
+}
+
+/// <summary>Кто умеет снять слепок окружения (Э6.3): запускатель на Windows — умеет, подмена в тестах — по желанию.</summary>
+public interface IEnvironmentSnapshotReader
+{
+    /// <returns><c>null</c> — снимать нечего.</returns>
+    EnvironmentSnapshot? ReadSnapshot();
 }
 
 /// <summary>

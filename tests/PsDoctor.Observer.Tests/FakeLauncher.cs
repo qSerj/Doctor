@@ -4,7 +4,7 @@ using PsDoctor.Core.Scenarios;
 namespace PsDoctor.Observer.Tests;
 
 /// <summary>Подменённый запуск: процессы — факты, которые пишет тест, выход — по команде теста.</summary>
-public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IWindowsEventSource
+public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IEnvironmentSnapshotReader, IWindowsEventSource
 {
     private readonly Lock gate = new();
     private readonly List<FakeRun> runs = [];
@@ -80,6 +80,11 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironm
     public EnvironmentFacts? Environment { get; set; }
 
     public EnvironmentFacts? ReadEnvironment(int? processId) => Environment;
+
+    /// <summary>Слепок окружения (Э6.3); <c>null</c> — слепка нет, как у прежних сеансов тестов.</summary>
+    public EnvironmentSnapshot? Snapshot { get; set; }
+
+    public EnvironmentSnapshot? ReadSnapshot() => Snapshot;
 
     public bool IsProgramRunning() => Foreign;
 

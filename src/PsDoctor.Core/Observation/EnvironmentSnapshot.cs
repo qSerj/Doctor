@@ -313,3 +313,41 @@ public static class CodecProducts
         return NamePatterns.Any(pattern => displayName.Contains(pattern, StringComparison.OrdinalIgnoreCase));
     }
 }
+
+/// <summary>Разбор значения <c>FilterData</c> фильтра DirectShow: сериализованная <c>REGFILTER2</c>.</summary>
+public static class DirectShowFilterData
+{
+    /// <summary>
+    /// Merit — второе двойное слово: первое — версия структуры. Короче восьми байт — <c>null</c>: запись испорчена или
+    /// фильтр зарегистрирован без данных.
+    /// </summary>
+    public static uint? Merit(byte[]? data) =>
+        data is { Length: >= 8 } ? BitConverter.ToUInt32(data, 4) : null;
+}
+
+/// <summary>Полное имя пакета Store: <c>Имя_Версия_Архитектура_Ресурс_Издатель</c>.</summary>
+public sealed record StorePackage(string Name, string Version, string Architecture, string FullName)
+{
+    /// <summary>
+    /// Образцы имён пакетов с декодерами — данные: расширения видео, картинок и звука от Microsoft и производителей.
+    /// </summary>
+    public static IReadOnlyList<string> CodecPatterns { get; } =
+    [
+        "VideoExtension",
+        "ImageExtension",
+        "WebMediaExtensions",
+        "AudioExtension",
+    ];
+
+    /// <summary>Имя пакета без подчёркиваний, частей пять; иначе — не имя пакета, <c>null</c>.</summary>
+    public static StorePackage? Parse(string fullName)
+    {
+        ArgumentNullException.ThrowIfNull(fullName);
+        var parts = fullName.Split('_');
+        return parts.Length == 5 && parts[0].Length > 0 && parts[1].Length > 0
+            ? new StorePackage(parts[0], parts[1], parts[2], fullName)
+            : null;
+    }
+
+    public bool IsCodec => CodecPatterns.Any(pattern => Name.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+}

@@ -11,6 +11,8 @@ namespace PsDoctor.Infrastructure.Observation;
 /// <summary>
 /// Окружение машины для факта <c>environment</c>. Каждый вопрос задаётся отдельно, и незнание — <c>null</c>: сеанс не
 /// ждёт центр безопасности дольше <see cref="AntivirusTimeout"/> и не падает из-за закрытого раздела реестра.
+/// Версию Windows, версию файла, сборку ProShow и список программ берёт и слепок окружения
+/// (<see cref="EnvironmentSnapshotReader"/>): один код на оба, ошибка в нём чинится в одном месте.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class MachineEnvironment
@@ -55,7 +57,7 @@ public static class MachineEnvironment
             ProgramBuild(programPath));
     }
 
-    private static (string? Build, string? Release) WindowsVersion()
+    internal static (string? Build, string? Release) WindowsVersion()
     {
         try
         {
@@ -86,7 +88,7 @@ public static class MachineEnvironment
         }
     }
 
-    private static string? FileVersion(string path)
+    internal static string? FileVersion(string path)
     {
         try
         {
@@ -99,7 +101,7 @@ public static class MachineEnvironment
     }
 
     /// <summary>Версия файла первого из <see cref="BuildModules"/>, что нашёлся в каталоге программы.</summary>
-    private static string? ProgramBuild(string programPath)
+    internal static string? ProgramBuild(string programPath)
     {
         var directory = Path.GetDirectoryName(programPath);
         if (string.IsNullOrEmpty(directory))
@@ -164,10 +166,27 @@ public static class MachineEnvironment
     }
 
     /// <summary>K-Lite по разделу удаления программ: машины и пользователя, 64- и 32-битному.</summary>
-    private static IReadOnlyList<InstalledProduct> KLite()
+    private static IReadOnlyList<InstalledProduct> KLite() =>
+        InstalledPrograms()
+            .Where(program => program.Name.Contains("K-Lite", StringComparison.OrdinalIgnoreCase))
+            .Select(program => new InstalledProduct(program.Name, program.Version))
+            .Distinct()
+            .ToList();
+
+    /// <summary>Программа из раздела удаления.</summary>
+    /// <param name="Hive">Чей раздел: <c>HKLM</c> или <c>HKCU</c>.</param>
+    /// <param name="Key">Имя подраздела удаления.</param>
+    /// <param name="View">Вид: 32 — раздел <c>WOW6432Node</c>, иначе 64.</param>
+    internal sealed record InstalledProgram(string Hive, string Key, int View, string Name, string? Version, string? Publisher);
+
+    /// <summary>
+    /// Программы из раздела удаления машины и пользователя, 64- и 32-битного; без имени — не программа, а служебная
+    /// запись установщика. Закрытый раздел пропускается.
+    /// </summary>
+    internal static IReadOnlyList<InstalledProgram> InstalledPrograms()
     {
-        var found = new List<InstalledProduct>();
-        foreach (var root in new[] { Registry.LocalMachine, Registry.CurrentUser })
+        var found = new List<InstalledProgram>();
+        foreach (var (hive, root) in new[] { ("HKLM", Registry.LocalMachine), ("HKCU", Registry.CurrentUser) })
         {
             foreach (var path in UninstallKeys)
             {
@@ -178,13 +197,15 @@ public static class MachineEnvironment
                     {
                         continue;
                     }
+                    // На 32-битной Windows раздела WOW6432Node нет, а единственный вид — 32-битный.
+                    var view = !Environment.Is64BitOperatingSystem || path.Contains("WOW6432Node", StringComparison.OrdinalIgnoreCase) ? 32 : 64;
                     foreach (var name in uninstall.GetSubKeyNames())
                     {
                         using var product = uninstall.OpenSubKey(name);
-                        if (product?.GetValue("DisplayName") is string display
-                            && display.Contains("K-Lite", StringComparison.OrdinalIgnoreCase))
+                        if (product?.GetValue("DisplayName") is string display && display.Length > 0)
                         {
-                            found.Add(new InstalledProduct(display, product.GetValue("DisplayVersion") as string));
+                            found.Add(new InstalledProgram(hive, name, view, display,
+                                product.GetValue("DisplayVersion") as string, product.GetValue("Publisher") as string));
                         }
                     }
                 }
@@ -193,7 +214,7 @@ public static class MachineEnvironment
                 }
             }
         }
-        return found.Distinct().ToList();
+        return found;
     }
 
     private static (long? Total, long? Free) Memory()

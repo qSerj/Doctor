@@ -202,6 +202,42 @@ public sealed class EnvironmentSnapshotTests
         Assert.Contains(new EnvironmentFieldChange("file.version", null, "1.0"), изменение.Fields);
     }
 
+    [Fact]
+    public void Merit_фильтра_второе_двойное_слово_FilterData()
+    {
+        // Версия структуры 2, merit 0x00600000 (MERIT_NORMAL), дальше число контактов — как пишет регистрация фильтра.
+        byte[] данные = [0x02, 0, 0, 0, 0x00, 0x00, 0x60, 0x00, 0x01, 0, 0, 0];
+
+        Assert.Equal(0x00600000u, DirectShowFilterData.Merit(данные));
+        Assert.Null(DirectShowFilterData.Merit([0x02, 0, 0, 0]));
+        Assert.Null(DirectShowFilterData.Merit(null));
+    }
+
+    [Fact]
+    public void Пакет_Store_разбирается_по_полному_имени()
+    {
+        var пакет = StorePackage.Parse("Microsoft.HEVCVideoExtension_2.0.61931.0_x64__8wekyb3d8bbwe");
+
+        Assert.Equal(new StorePackage("Microsoft.HEVCVideoExtension", "2.0.61931.0", "x64", "Microsoft.HEVCVideoExtension_2.0.61931.0_x64__8wekyb3d8bbwe"), пакет);
+        Assert.True(пакет!.IsCodec);
+        Assert.False(StorePackage.Parse("Microsoft.WindowsCalculator_11.2307.4.0_x64__8wekyb3d8bbwe")!.IsCodec);
+        Assert.Null(StorePackage.Parse("не пакет"));
+    }
+
+    [Fact]
+    public void Факт_environment_без_поля_snapshot_из_старого_журнала_читается()
+    {
+        var прежний = new EnvironmentFacts("10.0.19045.4894", "22H2", @"C:\ProShow\proshow.exe", true, "1, 0, 0, 1", false, 1,
+            null, [], 16L << 30, 8L << 30, null, null, "9,00,0,3797");
+        var json = JsonSerializer.SerializeToNode(прежний, ObservationJson.Options)!.AsObject();
+        json.Remove("snapshot");
+
+        var прочитан = JsonSerializer.Deserialize<EnvironmentFacts>(json.ToJsonString(), ObservationJson.Options)!;
+
+        Assert.Null(прочитан.Snapshot);
+        Assert.Equal("9,00,0,3797", прочитан.ProgramBuild);
+    }
+
     [Theory]
     [InlineData("K-Lite Codec Pack 17.8.0 Mega", true)]
     [InlineData("LAV Filters 0.79.2", true)]

@@ -7,7 +7,7 @@ namespace PsDoctor.Infrastructure.Observation;
 
 /// <summary>Запуск ProShow с файлом шоу под заданием — так же, как в опытах: программа и путь в кавычках.</summary>
 [SupportedOSPlatform("windows")]
-public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IWindowsEventSource
+public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IEnvironmentSnapshotReader, IWindowsEventSource
 {
     public const string DefaultProgramPath = @"C:\Program Files (x86)\Photodex\ProShow Producer\proshow.exe";
 
@@ -75,6 +75,8 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvir
     }
 
     public EnvironmentFacts ReadEnvironment(int? processId) => MachineEnvironment.Read(ProgramPath, processId);
+
+    public EnvironmentSnapshot ReadSnapshot() => EnvironmentSnapshotReader.Read(ProgramPath);
 
     /// <summary>Падения, отчёты и зависания куста ProShow в журнале Application — для опроса наблюдателем (Э6.2, часть Г).</summary>
     public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since) =>

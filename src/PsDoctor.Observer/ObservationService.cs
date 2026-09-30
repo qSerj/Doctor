@@ -593,10 +593,18 @@ public sealed class ObservationService : IAsyncDisposable
 
     /// <summary>
     /// Окружение машины для факта <c>environment</c>. Читается под замком, до открытия сеанса: центр безопасности Windows
-    /// отвечает до пяти секунд — меньше, чем ждёт старт ETW.
+    /// отвечает до пяти секунд — меньше, чем ждёт старт ETW. Слепок (Э6.3) снимается тут же и ложится рядом с журналами;
+    /// факт несёт его идентификатор. Слепок не лёг — факт без идентификатора, сеанс от этого не страдает.
     /// </summary>
-    private EnvironmentFacts? ReadEnvironment(int? processId) =>
-        launcher is IEnvironmentReader reader ? reader.ReadEnvironment(processId) : null;
+    private EnvironmentFacts? ReadEnvironment(int? processId)
+    {
+        var facts = launcher is IEnvironmentReader reader ? reader.ReadEnvironment(processId) : null;
+        if (facts is null || launcher is not IEnvironmentSnapshotReader snapshots || snapshots.ReadSnapshot() is not { } snapshot)
+        {
+            return facts;
+        }
+        return EnvironmentFiles.Save(directory, snapshot) ? facts with { Snapshot = snapshot.Id } : facts;
+    }
 
     /// <summary>Окружение — вторым фактом, сразу за <c>session-started</c>.</summary>
     private static void RecordEnvironment(ObservationSession session, EnvironmentFacts? environment)
