@@ -163,6 +163,10 @@ public static class ObserverHost
 
         app.MapGet(ObserverRoutes.WindowsEvents, () => Results.Json(events?.Events() ?? [], ObservationJson.Options));
 
+        app.MapGet(ObserverRoutes.Environment, () => EnvironmentResult(service.TakeEnvironment()));
+
+        app.MapGet("/environment/{id}", (string id) => EnvironmentResult(service.StoredEnvironment(id)));
+
         app.MapGet(ObserverRoutes.Sessions, () => Results.Json(service.Sessions(), ObservationJson.Options));
 
         app.MapPost("/sessions/{id}/stop", async (string id) =>
@@ -215,6 +219,12 @@ public static class ObserverHost
 
         return app;
     }
+
+    /// <summary>Слепок окружения или отказ <see cref="ObserverErrors.NoEnvironment"/>, 404.</summary>
+    private static IResult EnvironmentResult(EnvironmentSnapshot? snapshot) =>
+        snapshot is not null
+            ? Results.Json(snapshot, ObservationJson.Options)
+            : Results.Json(new ObserverError(ObserverErrors.NoEnvironment), ObservationJson.Options, statusCode: StatusCodes.Status404NotFound);
 
     /// <summary>Сторож всегда передаёт <c>--program</c>; без него — тот же поиск, что у сторожа, но без настроек машины.</summary>
     private static IProgramLauncher DefaultLauncher(ObserverOptions options) =>

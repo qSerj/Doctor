@@ -606,6 +606,23 @@ public sealed class ObservationService : IAsyncDisposable
         return EnvironmentFiles.Save(directory, snapshot) ? facts with { Snapshot = snapshot.Id } : facts;
     }
 
+    /// <summary>
+    /// Слепок окружения сейчас (Э6.3), для инженера по запросу; ложится рядом с журналами, как слепок сеанса. Замка
+    /// сеансов не берёт: реестр и файлы читаются без сеанса. <c>null</c> — запускатель снимать не умеет.
+    /// </summary>
+    public EnvironmentSnapshot? TakeEnvironment()
+    {
+        if (launcher is not IEnvironmentSnapshotReader reader || reader.ReadSnapshot() is not { } snapshot)
+        {
+            return null;
+        }
+        EnvironmentFiles.Save(directory, snapshot);
+        return snapshot;
+    }
+
+    /// <summary>Сохранённый слепок; <c>null</c> — идентификатор негодный или незнакомый.</summary>
+    public EnvironmentSnapshot? StoredEnvironment(string id) => EnvironmentFiles.Load(directory, id);
+
     /// <summary>Окружение — вторым фактом, сразу за <c>session-started</c>.</summary>
     private static void RecordEnvironment(ObservationSession session, EnvironmentFacts? environment)
     {

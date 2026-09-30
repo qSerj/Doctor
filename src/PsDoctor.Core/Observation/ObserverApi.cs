@@ -66,6 +66,15 @@ public static class ObserverRoutes
     /// наблюдателя, начиная с ротированного.
     /// </summary>
     public const string WindowsEvents = "/windows-events";
+
+    /// <summary>
+    /// GET: слепок окружения машины наблюдателя (Э6.3), снятый сейчас; он же сохраняется рядом с журналами.
+    /// Не умеет снимать — <see cref="ObserverErrors.NoEnvironment"/>.
+    /// </summary>
+    public const string Environment = "/environment";
+
+    /// <summary>GET: сохранённый слепок по идентификатору из факта <c>environment</c>; незнакомый — <see cref="ObserverErrors.NoEnvironment"/>.</summary>
+    public static string StoredEnvironment(string id) => $"/environment/{Uri.EscapeDataString(id)}";
 }
 
 /// <summary>Устойчивые имена отказов API, не фразы.</summary>
@@ -91,6 +100,9 @@ public static class ObserverErrors
     public const string NothingRunning = "nothing-running";
 
     public const string NoRaw = "no-raw";
+
+    /// <summary>Слепка окружения нет: наблюдатель не умеет его снимать или такой идентификатор ему незнаком.</summary>
+    public const string NoEnvironment = "no-environment";
     public const string NoArtifacts = "no-artifacts";
     public const string ProgramNotRunning = "program-not-running";
     public const string AmbiguousProgram = "ambiguous-program";

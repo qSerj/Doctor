@@ -9,8 +9,6 @@ namespace PsDoctor.Observer;
 /// </summary>
 public static class EnvironmentFiles
 {
-    private static readonly JsonSerializerOptions Indented = new(ObservationJson.Options) { WriteIndented = true };
-
     public static string Directory(string sessions) => Path.Combine(sessions, "environment");
 
     public static string Snapshot(string sessions, string id) => Path.Combine(Directory(sessions), id + ".json");
@@ -40,7 +38,7 @@ public static class EnvironmentFiles
         try
         {
             System.IO.Directory.CreateDirectory(Directory(sessions));
-            File.WriteAllText(temporary, JsonSerializer.Serialize(snapshot, Indented));
+            File.WriteAllText(temporary, EnvironmentSnapshotJson.Serialize(snapshot));
             File.Move(temporary, path, overwrite: false);
             return true;
         }
@@ -61,7 +59,7 @@ public static class EnvironmentFiles
         }
         try
         {
-            return JsonSerializer.Deserialize<EnvironmentSnapshot>(File.ReadAllText(Snapshot(sessions, id)), ObservationJson.Options);
+            return EnvironmentSnapshotJson.Deserialize(File.ReadAllText(Snapshot(sessions, id)));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {

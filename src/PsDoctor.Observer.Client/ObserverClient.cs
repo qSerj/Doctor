@@ -105,6 +105,18 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<List<WindowsEvent>>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Слепок окружения машины наблюдателя (Э6.3): снятый сейчас, если <paramref name="id"/> не задан, иначе сохранённый —
+    /// по идентификатору из факта <c>environment</c>.
+    /// </summary>
+    public async Task<EnvironmentSnapshot> EnvironmentAsync(string? id = null, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        var path = id is null ? ObserverRoutes.Environment : ObserverRoutes.StoredEnvironment(id);
+        using var response = await http.GetAsync(path, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<EnvironmentSnapshot>(response, timeout.Token).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> SessionsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);

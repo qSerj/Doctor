@@ -21,6 +21,11 @@ internal static class Program
             return await ObserveCommand.RunAsync(args[1..], Console.In, Console.Out, Console.Error, Environment.GetEnvironmentVariable, cancellation.Token);
         }
 
+        if (args.Length > 0 && args[0] == "environment")
+        {
+            return EnvironmentCommand.Run(args[1..], Console.Out, Console.Error);
+        }
+
         return Runner.Run(args, Console.Out, Console.Error, DateTimeOffset.UtcNow);
     }
 }

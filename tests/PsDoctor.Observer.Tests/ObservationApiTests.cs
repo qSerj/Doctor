@@ -305,6 +305,37 @@ public sealed class ObservationApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Слепок_окружения_по_запросу_снимается_ложится_и_отдаётся_по_идентификатору()
+    {
+        _запуск.Snapshot = EnvironmentSnapshot.Create(new DateTimeOffset(2026, 9, 30, 18, 0, 0, TimeSpan.Zero), 1.5,
+        [
+            new EnvironmentEntry(EnvironmentSections.VideoForWindows, 32, "vidc.xvid",
+                new Dictionary<string, string?> { ["driver"] = "xvidvfw.dll" }, null),
+        ]);
+
+        var снятый = await _клиент.EnvironmentAsync();
+        var сохранённый = await _клиент.EnvironmentAsync(снятый.Id);
+
+        Assert.Equal(_запуск.Snapshot.Id, снятый.Id);
+        Assert.Equal(снятый.Id, сохранённый.Id);
+        Assert.True(File.Exists(EnvironmentFiles.Snapshot(_каталог, снятый.Id)));
+    }
+
+    [Fact]
+    public async Task Без_слепка_и_с_незнакомым_идентификатором_отказ_no_environment()
+    {
+        var без = await Assert.ThrowsAsync<ObserverException>(() => _клиент.EnvironmentAsync());
+        var незнакомый = await Assert.ThrowsAsync<ObserverException>(() => _клиент.EnvironmentAsync("0123456789abcdef"));
+        var негодный = await Assert.ThrowsAsync<ObserverException>(() => _клиент.EnvironmentAsync("../observer.key"));
+
+        Assert.All(new[] { без, незнакомый, негодный }, отказ =>
+        {
+            Assert.Equal(HttpStatusCode.NotFound, отказ.Status);
+            Assert.Equal(ObserverErrors.NoEnvironment, отказ.Error?.Error);
+        });
+    }
+
+    [Fact]
     public async Task Без_ключа_отказ_на_каждом_маршруте()
     {
         using var голый = new HttpClient { BaseAddress = new Uri(_наблюдатель.Urls.Single()) };
@@ -321,6 +352,8 @@ public sealed class ObservationApiTests : IAsyncLifetime
                      (HttpMethod.Get, ObserverRoutes.Dialogs("20260917-000000-000")),
                      (HttpMethod.Post, ObserverRoutes.Incidents),
                      (HttpMethod.Get, ObserverRoutes.Incidents),
+                     (HttpMethod.Get, ObserverRoutes.Environment),
+                     (HttpMethod.Get, ObserverRoutes.StoredEnvironment("0123456789abcdef")),
                  })
         {
             using var запрос = new HttpRequestMessage(метод, путь) { Content = new StringContent("{\"text\":\"launch x\"}", Encoding.UTF8, "application/json") };

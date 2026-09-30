@@ -167,6 +167,44 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Environment_выводит_снятый_слепок_строкой_и_отдаёт_сохранённый_по_идентификатору()
+    {
+        var (code, stdout, _) = await Observe("environment");
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        var снятый = JsonSerializer.Deserialize<EnvironmentSnapshot>(Assert.Single(stdout), ObservationJson.Options)!;
+        Assert.Equal(Запуск.Слепок.Id, снятый.Id);
+
+        (code, stdout, _) = await Observe("environment", Запуск.Слепок.Id);
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        Assert.Equal(Запуск.Слепок.Id, JsonSerializer.Deserialize<EnvironmentSnapshot>(Assert.Single(stdout), ObservationJson.Options)!.Id);
+    }
+
+    [Fact]
+    public async Task Environment_с_out_пишет_файл_который_читает_diff()
+    {
+        var файл = Path.Combine(_каталог, "стенд.json");
+
+        var (code, stdout, stderr) = await Observe("environment", "--out", файл);
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        Assert.Empty(stdout);
+        Assert.Contains(Запуск.Слепок.Id, stderr, StringComparison.Ordinal);
+        Assert.Equal(Запуск.Слепок.Id, EnvironmentSnapshotJson.Deserialize(await File.ReadAllTextAsync(файл)).Id);
+        Assert.Equal(EnvironmentExitCodes.Same, EnvironmentCommand.Run(["diff", файл, файл], new StringWriter(), new StringWriter()));
+    }
+
+    [Fact]
+    public async Task Незнакомый_слепок_отказ_no_environment()
+    {
+        var (code, stdout, _) = await Observe("environment", "0123456789abcdef");
+
+        Assert.Equal(ObserveExitCodes.Refused, code);
+        Assert.Contains(ObserverErrors.NoEnvironment, Assert.Single(stdout), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Чужой_ключ_сбой_окружения()
     {
         await File.WriteAllTextAsync(_файлКлюча, "wrong-key");
@@ -335,8 +373,19 @@ public sealed class ObserveCommandTests : IAsyncLifetime
     }
 
     /// <summary>Подменённый запуск: программа живёт, пока тест не скажет выйти.</summary>
-    private sealed class Запуск : IProgramLauncher, IProgramRun, IWindowsEventSource
+    private sealed class Запуск : IProgramLauncher, IProgramRun, IWindowsEventSource, IEnvironmentSnapshotReader
     {
+        /// <summary>Слепок окружения, который «снимает» наблюдатель по запросу.</summary>
+        public static EnvironmentSnapshot Слепок { get; } = EnvironmentSnapshot.Create(
+            new DateTimeOffset(2026, 9, 30, 18, 0, 0, TimeSpan.Zero), 1.5,
+            [
+                new EnvironmentEntry(EnvironmentSections.DirectShow, 32, "{CAT}/{AAA}",
+                    new Dictionary<string, string?> { ["name"] = "LAV Video Decoder", ["merit"] = "0x00800003" },
+                    new EnvironmentFile(@"C:\Windows\SysWOW64\lav.ax", true, "0.79.2.0", 1000, null)),
+            ]);
+
+        public EnvironmentSnapshot ReadSnapshot() => Слепок;
+
         private readonly TaskCompletionSource _запущен = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private IFactRecorder? _факты;
         private IProgramEvents? _события;

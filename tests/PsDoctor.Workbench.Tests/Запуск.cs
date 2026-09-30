@@ -8,9 +8,19 @@ namespace PsDoctor.Workbench.Tests;
 /// теста. Программу, открытую мимо наблюдателя, можно подключить — без диалога. ProShow для этих тестов не
 /// нужен: пульт проверяется на настоящих маршрутах наблюдателя.
 /// </summary>
-internal sealed class Запуск : IProgramLauncher, IProgramAttacher
+internal sealed class Запуск : IProgramLauncher, IProgramAttacher, IEnvironmentReader, IEnvironmentSnapshotReader
 {
     private readonly Lock замок = new();
+
+    /// <summary>Окружение для факта <c>environment</c>; <c>null</c> — факта нет.</summary>
+    public EnvironmentFacts? Окружение { get; set; }
+
+    /// <summary>Слепок окружения (Э6.3); <c>null</c> — слепка нет.</summary>
+    public EnvironmentSnapshot? Слепок { get; set; }
+
+    public EnvironmentFacts? ReadEnvironment(int? processId) => Окружение;
+
+    public EnvironmentSnapshot? ReadSnapshot() => Слепок;
 
     public Прогон? Последний { get; private set; }
 

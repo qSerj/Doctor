@@ -351,3 +351,19 @@ public sealed record StorePackage(string Name, string Version, string Architectu
 
     public bool IsCodec => CodecPatterns.Any(pattern => Name.Contains(pattern, StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>
+/// Слепок в файле: с отступами, чтобы его можно было прочесть глазами, по тем же правилам JSON, что журнал. Одно место
+/// для наблюдателя, CLI и Workbench.
+/// </summary>
+public static class EnvironmentSnapshotJson
+{
+    private static readonly JsonSerializerOptions Indented = new(ObservationJson.Options) { WriteIndented = true };
+
+    public static string Serialize(EnvironmentSnapshot snapshot) => JsonSerializer.Serialize(snapshot, Indented);
+
+    /// <exception cref="JsonException">Не слепок.</exception>
+    public static EnvironmentSnapshot Deserialize(string json) =>
+        JsonSerializer.Deserialize<EnvironmentSnapshot>(json, ObservationJson.Options)
+        ?? throw new JsonException("пустой слепок");
+}

@@ -49,6 +49,8 @@ public sealed class LabPackageExporter
             {
                 await client.DownloadFactsAsync(session, facts, cancellationToken).ConfigureAwait(false);
             }
+            var environment = await SaveEnvironmentAsync(client, factsPath, Path.Combine(building, "results"), cancellationToken)
+                .ConfigureAwait(false);
 
             if (artifact is not null)
             {
@@ -78,7 +80,7 @@ public sealed class LabPackageExporter
                 }
             }
 
-            metadata = metadata with { Raw = rawState };
+            metadata = metadata with { Raw = rawState, Environment = environment };
             await WriteJsonAsync(Path.Combine(building, "run.json"), metadata, cancellationToken).ConfigureAwait(false);
             var manifest = await ManifestAsync(building, metadata, cancellationToken).ConfigureAwait(false);
             await WriteJsonAsync(Path.Combine(building, "manifest.json"), manifest, cancellationToken).ConfigureAwait(false);
@@ -91,6 +93,48 @@ public sealed class LabPackageExporter
             try { await File.WriteAllTextAsync(Path.Combine(building, "FAILED.json"), "{\"status\":\"failed\"}\n"); }
             catch (IOException) { }
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Слепок окружения сеанса (Э6.3) по идентификатору из факта <c>environment</c> — файлом
+    /// <c>environment-&lt;идентификатор&gt;.json</c>. Состояние для <c>run.json</c>: <c>saved</c>; <c>none</c> — сеанс без
+    /// слепка; <c>unavailable</c> — наблюдатель его не отдал.
+    /// </summary>
+    private static async Task<string> SaveEnvironmentAsync(ObserverClient client, string factsPath, string results,
+        CancellationToken cancellationToken)
+    {
+        string? id = null;
+        // Окружение — второй факт сеанса: весь журнал рендера ради него читать незачем.
+        foreach (var line in File.ReadLines(factsPath))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+            var fact = JsonSerializer.Deserialize<Fact>(line, ObservationJson.Options);
+            if (fact?.Kind == ProgramFactKinds.Environment)
+            {
+                id = fact.Data.TryGetProperty("snapshot", out var snapshot) && snapshot.ValueKind == JsonValueKind.String
+                    ? snapshot.GetString()
+                    : null;
+                break;
+            }
+        }
+        if (id is null)
+        {
+            return "none";
+        }
+        try
+        {
+            var environment = await client.EnvironmentAsync(id, cancellationToken).ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(results, $"environment-{environment.Id}.json"),
+                EnvironmentSnapshotJson.Serialize(environment), cancellationToken).ConfigureAwait(false);
+            return "saved";
+        }
+        catch (ObserverException e) when (e.Error?.Error == ObserverErrors.NoEnvironment)
+        {
+            return "unavailable";
         }
     }
 
@@ -131,7 +175,7 @@ public sealed class LabPackageExporter
     }
 
     private sealed record PackageMetadata(string Id, string Session, string ShowPath, string Scenario,
-        DateTimeOffset ExportedAtUtc, string Artifact, bool RawRequested, string Raw = "not-requested");
+        DateTimeOffset ExportedAtUtc, string Artifact, bool RawRequested, string Raw = "not-requested", string Environment = "none");
 
     private sealed record Manifest(PackageMetadata Package, IReadOnlyList<ManifestFile> Files);
 

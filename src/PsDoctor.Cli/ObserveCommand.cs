@@ -106,6 +106,7 @@ public static class ObserveCommand
                 "incident" => output.Json(await client.MarkIncidentAsync(IncidentSources.Cli, options.Note, cancellationToken).ConfigureAwait(false)),
                 "incidents" => output.Lines(await client.IncidentsAsync(cancellationToken).ConfigureAwait(false)),
                 "windows-events" => output.Lines(await client.WindowsEventsAsync(cancellationToken).ConfigureAwait(false)),
+                "environment" => await EnvironmentAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "confirm" => output.Json(await client.ConfirmAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
@@ -244,6 +245,35 @@ public static class ObserveCommand
             await stdout.WriteLineAsync(line).ConfigureAwait(false);
         return ObserveExitCodes.Done;
     }
+    /// <summary>
+    /// Слепок окружения: снятый сейчас или сохранённый по идентификатору. С <c>--out</c> — файлом с отступами, как его
+    /// кладёт наблюдатель, и строкой в stderr; без — одной строкой JSON в stdout.
+    /// </summary>
+    private static async Task<int> EnvironmentAsync(ObserverClient client, Options options, Output output, TextWriter stderr,
+        CancellationToken cancellationToken)
+    {
+        if (options.Arguments.Count > 1)
+        {
+            throw new ArgumentException("environment: не больше одного идентификатора слепка.");
+        }
+        var snapshot = await client.EnvironmentAsync(options.Arguments.FirstOrDefault(), cancellationToken).ConfigureAwait(false);
+        if (options.Out is null)
+        {
+            return output.Json(snapshot);
+        }
+        try
+        {
+            await File.WriteAllTextAsync(options.Out, EnvironmentSnapshotJson.Serialize(snapshot), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            stderr.WriteLine($"Не удалось записать {options.Out}: {e.Message}");
+            return ObserveExitCodes.Environment;
+        }
+        stderr.WriteLine($"слепок {snapshot.Id}: {snapshot.Entries.Count.ToString(CultureInfo.InvariantCulture)} записей → {options.Out}");
+        return ObserveExitCodes.Done;
+    }
+
     private static async Task<int> StopAsync(ObserverClient client, Options options, Output output, TextWriter stderr, CancellationToken cancellationToken)
     {
         var session = await SessionAsync(client, options, cancellationToken).ConfigureAwait(false);
@@ -297,6 +327,7 @@ public static class ObserveCommand
         writer.WriteLine("  incident [--note <текст>]       поставить метку инцидента, как кнопка «Решить проблему»");
         writer.WriteLine("  incidents                       метки инцидентов, строка на метку");
         writer.WriteLine("  windows-events                  падения и зависания ProShow из журнала Windows, строка на событие");
+        writer.WriteLine("  environment [<слепок>]          слепок окружения машины наблюдателя: снятый сейчас или сохранённый");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");
         writer.WriteLine($"  --key-file <файл>               ключ Bearer, иначе {KeyFileVariable}");
@@ -304,6 +335,7 @@ public static class ObserveCommand
         writer.WriteLine("  --after <номер>                 facts: только после этого номера");
         writer.WriteLine("  --kind <вид,вид>                facts: только эти виды");
         writer.WriteLine("  --note <текст>                  incident: пояснение к метке");
+        writer.WriteLine("  --out <файл>                    environment: слепок в файл, с отступами");
         writer.WriteLine();
         writer.WriteLine($"Коды возврата: {ObserveExitCodes.Done} — выполнено; {ObserveExitCodes.ScenarioNotCompleted} — сценарий не выполнен; "
             + $"{ObserveExitCodes.Refused} — отказ наблюдателя; {ObserveExitCodes.Environment} — сбой окружения.");
@@ -357,6 +389,8 @@ public static class ObserveCommand
 
         public string? Note { get; private set; }
 
+        public string? Out { get; private set; }
+
         public static Options Parse(IReadOnlyList<string> args)
         {
             var options = new Options();
@@ -388,6 +422,9 @@ public static class ObserveCommand
                         break;
                     case "--note":
                         options.Note = Value();
+                        break;
+                    case "--out":
+                        options.Out = Value();
                         break;
                     case "--help" or "-h":
                         options.Command = "help";
