@@ -143,7 +143,7 @@ def fresh_sessions(chats: Path, since: dt.datetime) -> list[Path]:
                   key=lambda path: path.stat().st_mtime)
 
 
-SERVICE_BLOCK = re.compile(r"<(system-reminder|local-command-stdout|local-command-stderr|local-command-caveat)>.*?</\1>", re.S)
+SERVICE_BLOCK = re.compile(r"<(system-reminder|task-notification|local-command-stdout|local-command-stderr|local-command-caveat)>.*?</\1>", re.S)
 
 
 def owner_text(content: object) -> str:
@@ -173,7 +173,7 @@ def read_session(path: Path, since: dt.datetime) -> dict:
             if kind == "custom-title":
                 session["title"] = record.get("customTitle") or session["title"]
                 continue
-            if record.get("isSidechain") or record.get("isMeta"):
+            if record.get("isSidechain") or record.get("isMeta") or record.get("isCompactSummary"):
                 continue
             message = record.get("message") or {}
             speaker, text = None, ""
@@ -209,7 +209,7 @@ def render_digest(machine: str, since: dt.datetime, sessions: list[dict]) -> str
         if not session["turns"]:
             continue
         first, last = session["turns"][0][1], session["turns"][-1][1]
-        span = f"{first.astimezone():%d.%m %H:%M}–{last.astimezone():%H:%M}" if first and last else ""
+        span = f"{first.astimezone():%d.%m %H:%M}–{last.astimezone():%d.%m %H:%M}" if first and last else ""
         mark = ", чат переноса" if session["transfer"] else ""
         lines += [f"## {session['title'] or 'без заголовка'} — `{session['id'][:8]}`, {span}{mark}", ""]
         for speaker, moment, text in session["turns"]:
