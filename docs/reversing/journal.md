@@ -8,6 +8,28 @@
 
 ---
 
+## 30.09.2026 — галка «Avoid using DirectShow» выбирает между FFmpeg и QuickTime; хранится как `prefDShowUseFFMPEG` в `proshow.cfg`
+
+**Вопрос.** Каким путём ProShow декодирует видео при отмеченной и снятой «Avoid using DirectShow when possible» (Preferences → Playback → Video Importing) и где программа хранит эту настройку. Критерий 4 [Э6.3](../plan.md).
+
+**Как проверяли.** Стенд, программа 9.0.3797 без повышения, наблюдатель `5331708-dirty` (часть Г Э6.3: факты `etw-image-loaded` с версиями файлов, правка категорий DirectShow `be263ca`), на стенде K-Lite 19.9.5 Standard, QuickTime нет. Видео — MP4 H.264 High 1280×720, 30 кадров/с, 62 с. Пассивное наблюдение за запущенной программой; владелец создавал новое шоу и добавлял в него этот файл, сначала с отмеченной галкой, потом, после перезапуска программы, со снятой. Настройка — сравнением файлов программы, изменившихся за 15 минут, в состояниях «снята» и «отмечена». Факты — `~/Lab/exchange/e63-path/`, вне репозитория.
+
+**Что увидели.**
+
+Галка отмечена. `proshow.exe` запускает `fvideo.exe -z "<файл>"` и два рабочих `fvideo.exe PhotodexDShowFileMap<pid>-N`. Декодируют дочерние процессы FFmpeg: `device-encp.dll -show_format -show_streams`, `device-enc.dll -filter:v idet -frames:v 11 -an -f null -` (проверка чересстрочности), затем `device-enc.dll -y -noautorotate -i "<файл>" -f rawvideo -pix_fmt bgra -r 30.000000 \\.\pipe\PXVideoImporterVideo-<pid fvideo>-0` и `device-enc.dll -y -i "<файл>" -f s16le -ar 48000 -ac 2 \\.\pipe\PXVideoImporterAudio-<pid fvideo>-0`. Кадры и звук `fvideo` получает по именованным каналам. У `fvideo.exe` 20–24 модуля, все системные: ни `quartz.dll`, ни фильтров DirectShow, ни Media Foundation. За импорт и предпросмотр — 41 процесс, файл читают только `device-enc*` и немного сам `proshow.exe`.
+
+Галка снята. Вместо `fvideo.exe` запускается `qtime.exe PhotodexDShowFileMap<pid>-N` из каталога программы. Он ищет `QuickTime.qts` в каталоге программы и в `SysWOW64`, не находит и больше ничего не загружает (25–26 системных модулей). FFmpeg не вызывается. Программа отвечает окном «There was an error trying to load '<файл>'. The file will be skipped», при перетаскивании — «Unrecognized File Selected … require that you have special drivers or 'codecs' installed». Тот же файл, который с галкой добавлялся без вопросов, не добавляется.
+
+Настройка — строка `prefDShowUseFFMPEG` в `proshow.cfg`: `1` — отмечена, `0` — снята. Файл — пары «имя\0значение\0» с ключами `pref…`, 44 КБ. Программа пишет его рядом с `proshow.exe`; у пользователя без прав на Program Files Windows уводит запись в `%LOCALAPPDATA%\VirtualStore\Program Files (x86)\Photodex\ProShow Producer\proshow.cfg`. Ветка реестра `HKCU\Software\Photodex` от галки не меняется. Попутно тем же файлом меняются `prefDocTitleCounter` (счётчик новых шоу) и `prefPixzillaBenchmarkScore`.
+
+Музыка (MP3) при открытии проекта декодируется тем же FFmpeg: `device-encp.dll -show_frames -show_entries frame=pkt_pts_time` и `device-enc.dll -i "<mp3>" -f s16le -ar 44100 -ac 2 -`.
+
+**Вывод.** Название галки обманчиво: DirectShow в обоих случаях не загружался. Отмеченная — встроенный FFmpeg 2017 года через `fvideo.exe` и `device-enc.dll`; снятая — QuickTime через `qtime.exe`, и без установленного QuickTime MP4 H.264 не импортируется вовсе. Дойдёт ли `qtime` или `fvideo` до DirectShow при другом формате или с установленным QuickTime — не видно. Для диагностики: снятая галка при отсутствии QuickTime — готовая причина «видео не добавляется»; её видно по `proshow.cfg` и слепку окружения (QuickTime ищется в разделе `codec-products`).
+
+**Доверие:** факт — выбор процесса (`fvideo` против `qtime`) по галке, отказ импорта без QuickTime, место и имя настройки; наблюдение — что DirectShow не участвует ни в одном случае (один файл, один формат, K-Lite Standard на машине).
+
+---
+
 ## 24.09.2026 — ProShow держит один экземпляр; второй при зависшем первом висит невидимым; окно «New Slide Show»
 
 **Вопрос.** Попутно к проверке Э4.3 (задание `e43-attach-001`): можно ли получить два процесса `proshow.exe`, и что программа показывает при запуске без проекта.
