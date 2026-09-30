@@ -15,8 +15,11 @@ namespace PsDoctor.Infrastructure.Observation;
 [SupportedOSPlatform("windows")]
 public static class EnvironmentSnapshotReader
 {
-    /// <summary>Категории фильтров DirectShow: <c>ActiveMovie Filter Class Manager</c>.</summary>
-    private const string FilterCategories = "{083863F1-70DE-11d0-BD40-00A0C911CE86}";
+    /// <summary>
+    /// Список категорий фильтров DirectShow (<c>CLSID_ActiveMovieCategories</c>). Не путать с <c>{083863F1-…}</c>: это
+    /// одна из категорий, «DirectShow Filters», и под её <c>Instance</c> лежат фильтры, а не категории (стенд, 30.09.2026).
+    /// </summary>
+    private const string FilterCategories = "{DA4E3DA0-D07D-11d0-BD50-00A0C911CE86}";
 
     /// <summary>Категория декодеров картинок WIC.</summary>
     private const string WicDecoders = "{7ED96837-96F0-4812-B211-F13C24117ED3}";
