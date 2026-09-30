@@ -267,7 +267,6 @@ internal sealed class EtwCapture : IDisposable
                 else if (!processes.Contains(data.ParentID)) return;
                 processes.Add(data.ProcessID);
                 images[data.ProcessID] = Path.GetFileName(data.ImageFileName);
-                modules.Forget(data.ProcessID);
                 WriteSummary(new EtwSummary(data.TimeStamp.ToUniversalTime(), data.ProcessID, null, 0, 0, 0, 0, 0, 0,
                     data.ImageFileName, data.ParentID, data.CommandLine));
             }
@@ -278,7 +277,6 @@ internal sealed class EtwCapture : IDisposable
             {
                 processes.Remove(data.ProcessID);
                 images.Remove(data.ProcessID);
-                modules.Forget(data.ProcessID);
             }
         };
         // Процессы, живые до начала записи, приходят перечислением; имя образа нужно их загрузкам модулей.
@@ -294,10 +292,11 @@ internal sealed class EtwCapture : IDisposable
         {
             lock (gate)
             {
-                if (disposed || !processes.Contains(data.ProcessID) || string.IsNullOrEmpty(data.FileName)
-                    || !modules.Add(data.ProcessID, data.FileName)) return;
+                if (disposed || !processes.Contains(data.ProcessID) || string.IsNullOrEmpty(data.FileName)) return;
+                var image = images.GetValueOrDefault(data.ProcessID) ?? data.ProcessName;
+                if (!modules.Add(image, data.ProcessID, data.FileName)) return;
                 WriteSummary(new EtwSummary(data.TimeStamp.ToUniversalTime(), data.ProcessID, null, 0, 0, 0, 0, 0, 0,
-                    Module: data.FileName, Image: images.GetValueOrDefault(data.ProcessID) ?? data.ProcessName));
+                    Module: data.FileName, Image: image));
             }
         };
         kernel.FileIOName += data =>

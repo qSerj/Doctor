@@ -304,13 +304,9 @@ public sealed class EtwBridge : IDisposable
                     if (value.Module is not null)
                         RecordModule(value);
                     else if (value.ProcessStart is not null)
-                    {
-                        // Номер процесса занят новым: его загрузки снова новые.
-                        modules.Forget(value.ProcessId);
                         facts.Record(ProgramFactKinds.EtwProcessStarted,
                             new { image = value.ProcessStart, commandLine = value.CommandLine,
                                 parentProcessId = value.ParentProcessId, timeUtc = value.SecondUtc }, value.ProcessId);
-                    }
                     else
                         facts.Record(ProgramFactKinds.FileIo, value, value.ProcessId);
                 }
@@ -326,11 +322,12 @@ public sealed class EtwBridge : IDisposable
 
     /// <summary>
     /// Факт <c>etw-image-loaded</c>: файл описан так же, как в слепке окружения, — по нему видно, какой фильтр или
-    /// библиотека из слепка пошли в дело. Помощник, поднятый заново, присылает загрузки повторно; факт остаётся один.
+    /// библиотека из слепка пошли в дело. Один на образ процесса и путь за сеанс, процесс факта — первый загрузивший;
+    /// помощник, поднятый заново, присылает загрузки повторно, факт остаётся один.
     /// </summary>
     private void RecordModule(EtwSummary value)
     {
-        if (!modules.Add(value.ProcessId, value.Module!)) return;
+        if (!modules.Add(value.Image, value.ProcessId, value.Module!)) return;
         if (!moduleFiles.TryGetValue(value.Module!, out var file))
             moduleFiles[value.Module!] = file = describeModule(value.Module!);
         facts.Record(ProgramFactKinds.EtwImageLoaded, new { image = value.Image, timeUtc = value.SecondUtc, file }, value.ProcessId);

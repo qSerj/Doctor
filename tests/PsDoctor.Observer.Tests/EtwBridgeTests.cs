@@ -176,7 +176,7 @@ public sealed class EtwBridgeTests : IDisposable
     }
 
     [Fact]
-    public async Task Загрузка_модуля_один_факт_на_процесс_и_путь_версия_один_раз_на_путь()
+    public async Task Загрузка_модуля_один_факт_на_образ_и_путь_версия_один_раз_на_путь()
     {
         var описано = new List<string>();
         using var мост = Открыть(путь =>
@@ -188,9 +188,11 @@ public sealed class EtwBridgeTests : IDisposable
         await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс),
         [
             Загрузка(2000, кварц),
-            // Та же пара иначе написанная и повторная загрузка той же библиотеки — не новая.
+            // Та же пара иначе написанная, второй процесс того же образа (ETW называет его и без расширения) — не новая.
             Загрузка(2000, @"C:\WINDOWS\SysWOW64\QUARTZ.DLL"),
-            Загрузка(2001, кварц),
+            Загрузка(2001, кварц, "fvideo"),
+            // Другой образ с той же библиотекой и новая библиотека знакомого образа — новые.
+            Загрузка(2002, кварц, "device-enc.dll"),
             Загрузка(2000, @"C:\ProShow\devicec.dll"),
         ]);
 
@@ -198,27 +200,30 @@ public sealed class EtwBridgeTests : IDisposable
         await Task.Delay(300);
 
         var модули = Модули();
-        Assert.Equal([(2000, кварц), (2001, кварц), (2000, @"C:\ProShow\devicec.dll")],
+        Assert.Equal([(2000, кварц), (2002, кварц), (2000, @"C:\ProShow\devicec.dll")],
             модули.Select(f => (f.ProcessId!.Value, f.Data.GetProperty("file").GetProperty("path").GetString()!)));
         Assert.Equal("fvideo.exe", модули[0].Data.GetProperty("image").GetString());
+        Assert.Equal("device-enc.dll", модули[1].Data.GetProperty("image").GetString());
         Assert.Equal("6.6.19041.1", модули[1].Data.GetProperty("file").GetProperty("version").GetString());
         Assert.Equal([кварц, @"C:\ProShow\devicec.dll"], описано);
     }
 
     [Fact]
-    public async Task Новый_процесс_с_прежним_номером_снова_называет_модули()
+    public async Task Образ_неизвестен_модули_различаются_по_номеру_процесса()
     {
         using var мост = Открыть(путь => new EnvironmentFile(путь, false, null, null, null));
         const string кварц = @"C:\Windows\SysWOW64\quartz.dll";
-        var старт = JsonSerializer.Serialize(new EtwSummary(DateTime.UtcNow, 2000, null, 0, 0, 0, 0, 0, 0,
-            "fvideo.exe", 1000, "fvideo.exe"), ObservationJson.Options);
-        await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс), [Загрузка(2000, кварц), старт, Загрузка(2000, кварц)]);
+        await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс),
+            [Загрузка(3000, кварц, null), Загрузка(3001, кварц, null), Загрузка(3000, кварц, null)]);
 
         await Дождаться(() => Модули().Count == 2 ? "да" : null);
+        await Task.Delay(300);
+
+        Assert.Equal([3000, 3001], Модули().Select(f => f.ProcessId!.Value));
     }
 
-    private static string Загрузка(int процесс, string модуль) => JsonSerializer.Serialize(
-        new EtwSummary(DateTime.UtcNow, процесс, null, 0, 0, 0, 0, 0, 0, Module: модуль, Image: "fvideo.exe"), ObservationJson.Options);
+    private static string Загрузка(int процесс, string модуль, string? образ = "fvideo.exe") => JsonSerializer.Serialize(
+        new EtwSummary(DateTime.UtcNow, процесс, null, 0, 0, 0, 0, 0, 0, Module: модуль, Image: образ), ObservationJson.Options);
 
     private List<Fact> Модули() => [.. _журнал.After(0).Where(f => f.Kind == ProgramFactKinds.EtwImageLoaded)];
 
