@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using PsDoctor.Core.Observation;
 using Xunit;
@@ -200,6 +201,26 @@ public sealed class EnvironmentSnapshotTests
         var изменение = Assert.Single(разница.Changed);
         Assert.Contains(new EnvironmentFieldChange("file.exists", null, "true"), изменение.Fields);
         Assert.Contains(new EnvironmentFieldChange("file.version", null, "1.0"), изменение.Fields);
+    }
+
+    [Fact]
+    public void Настройка_ProShow_ищется_по_имени_целиком_а_не_парами()
+    {
+        // Как в proshow.cfg программы 9.0: два байта заголовка, строки через ноль, посреди — список, ломающий пары.
+        byte[] файл =
+        [
+            0x95, 0x07,
+            .. Encoding.ASCII.GetBytes("cpicName\0ProShow Producer\0cpicDefPath\0%programfiles%\\Photodex\0"),
+            .. Encoding.ASCII.GetBytes("0\02\0BUILD\0DESIGN\0PUBLISH\0"),
+            .. Encoding.ASCII.GetBytes("prefDShowUseFFMPEG\01\0prefMemHeadroom\03099648\0"),
+        ];
+
+        Assert.Equal("1", ProShowConfig.Value(файл, ProShowConfig.DShowUseFfmpeg));
+        Assert.Equal("3099648", ProShowConfig.Value(файл, "prefMemHeadroom"));
+        Assert.Equal("ProShow Producer", ProShowConfig.Value(файл, "cpicName"));
+        Assert.Null(ProShowConfig.Value(файл, "prefDShowUse"));
+        Assert.Null(ProShowConfig.Value(файл[..^1], "prefMemHeadroom"));
+        Assert.Null(ProShowConfig.Value([], ProShowConfig.DShowUseFfmpeg));
     }
 
     [Fact]

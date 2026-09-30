@@ -89,10 +89,53 @@ public static class EnvironmentSnapshotReader
             ("culture", CultureInfo.CurrentCulture.Name)), null);
     }
 
-    private static EnvironmentEntry ProShowEntry(string programPath, Dictionary<string, EnvironmentFile> files) =>
-        new(EnvironmentSections.ProShow, null, "program",
-            Values(("build", MachineEnvironment.ProgramBuild(programPath))),
+    /// <summary>
+    /// Программа, её сборка и настройки, от которых зависит путь декодирования: галка «Avoid using DirectShow» выбирает
+    /// между встроенным FFmpeg и QuickTime.
+    /// </summary>
+    private static EnvironmentEntry ProShowEntry(string programPath, Dictionary<string, EnvironmentFile> files)
+    {
+        var config = ProShowConfigFile(programPath);
+        string? useFfmpeg = null;
+        if (config is not null)
+        {
+            try
+            {
+                useFfmpeg = ProShowConfig.Value(File.ReadAllBytes(config), ProShowConfig.DShowUseFfmpeg);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Программа держит файл или его нет — настройка неизвестна, снятие не падает.
+            }
+        }
+        return new(EnvironmentSections.ProShow, null, "program",
+            Values(("build", MachineEnvironment.ProgramBuild(programPath)), ("config", config),
+                (ProShowConfig.DShowUseFfmpeg, useFfmpeg)),
             Describe(programPath, files));
+    }
+
+    /// <summary>
+    /// <c>proshow.cfg</c>, который видит программа. Она пишет его рядом с собой, но у пользователя без прав на Program Files
+    /// Windows уводит запись в <c>%LOCALAPPDATA%\VirtualStore</c>, и тогда программа читает оттуда. Нет ни там, ни там —
+    /// <c>null</c>.
+    /// </summary>
+    internal static string? ProShowConfigFile(string programPath)
+    {
+        var directory = Path.GetDirectoryName(programPath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return null;
+        }
+        var root = Path.GetPathRoot(directory);
+        var candidates = new List<string>();
+        if (!string.IsNullOrEmpty(root))
+        {
+            candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VirtualStore",
+                directory[root.Length..], ProShowConfig.FileName));
+        }
+        candidates.Add(Path.Combine(directory, ProShowConfig.FileName));
+        return candidates.FirstOrDefault(File.Exists);
+    }
 
     /// <summary>Кодеки VfW и ACM: значения <c>vidc.*</c> и <c>msacm.*</c> раздела <c>Drivers32</c>.</summary>
     private static void VideoForWindows(List<EnvironmentEntry> entries, RegistryView view, int bits, Dictionary<string, EnvironmentFile> files)

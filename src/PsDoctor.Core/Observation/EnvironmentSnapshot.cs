@@ -325,6 +325,46 @@ public static class DirectShowFilterData
         data is { Length: >= 8 } ? BitConverter.ToUInt32(data, 4) : null;
 }
 
+/// <summary>
+/// Файл настроек ProShow <c>proshow.cfg</c>: два байта заголовка, дальше строки через ноль — имя настройки, её значение.
+/// Сплошь парами файл не читается: внутри встречаются списки, поэтому значение ищется по имени целиком — следующая строка
+/// за ним (журнал реверсинга, 30.09.2026).
+/// </summary>
+public static class ProShowConfig
+{
+    public const string FileName = "proshow.cfg";
+
+    /// <summary>Галка «Avoid using DirectShow when possible»: <c>1</c> — видео через встроенный FFmpeg, <c>0</c> — через QuickTime.</summary>
+    public const string DShowUseFfmpeg = "prefDShowUseFFMPEG";
+
+    private const int HeaderLength = 2;
+
+    /// <summary>Значение настройки; нет её или файл оборван на ней — <c>null</c>. Значения — байты как есть, по Latin-1.</summary>
+    public static string? Value(ReadOnlySpan<byte> content, string name)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        var key = Encoding.ASCII.GetBytes(name);
+        var position = Math.Min(HeaderLength, content.Length);
+        var matched = false;
+        while (position < content.Length)
+        {
+            var end = content[position..].IndexOf((byte)0);
+            if (end < 0)
+            {
+                return null;
+            }
+            var token = content.Slice(position, end);
+            if (matched)
+            {
+                return Encoding.Latin1.GetString(token);
+            }
+            matched = token.SequenceEqual(key);
+            position += end + 1;
+        }
+        return null;
+    }
+}
+
 /// <summary>Полное имя пакета Store: <c>Имя_Версия_Архитектура_Ресурс_Издатель</c>.</summary>
 public sealed record StorePackage(string Name, string Version, string Architecture, string FullName)
 {
