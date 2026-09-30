@@ -18,6 +18,7 @@
 | что выходит в stdout | `Reporting/ReportBuilder.cs` |
 | что такое факт наблюдения | `Observation/Fact.cs` и `Observation/FactLog.cs` |
 | как выполняется сценарий | `Scenarios/ScenarioExecutor.cs` |
+| чем машины различаются для программы (Э6.3) | `Observation/EnvironmentSnapshot.cs`: слепок, его идентификатор и сравнение |
 | когда мастер App просит ждать, а когда предлагает завершить ProShow | `Observation/ProShowHang.cs`; его пороги — решение владельца для мастера, а не правило приёмки |
 
 ## Чего здесь нет
