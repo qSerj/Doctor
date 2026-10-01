@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Threading.Channels;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PsDoctor.Core.Observation;
 using PsDoctor.Core.Scenarios;
@@ -17,7 +18,8 @@ namespace PsDoctor.Workbench.ViewModels;
 /// <remarks>
 /// <para><b>Один поток.</b> Все методы вызываются с потока интерфейса и <c>ConfigureAwait(false)</c> не
 /// делают нарочно: продолжения возвращаются туда же, и списки меняются только там. Иначе пришлось бы
-/// заводить диспетчер, а с ним — вторую истину о том, где живёт состояние.</para>
+/// заводить диспетчер, а с ним — вторую истину о том, где живёт состояние. Исключение одно — чтение потока
+/// фактов (<see cref="ReadStreamAsync"/>): оно трогает только клиент и очередь, а не состояние пульта.</para>
 /// <para><b>Пульт ничего не толкует.</b> Вид факта, имя отказа, причина срыва показываются как пришли:
 /// вердикты — не его дело, а слова для Ольги живут в окне оператора, а не здесь. Лампы называют состояние,
 /// которое сообщил наблюдатель, а не выводят его.</para>
@@ -28,6 +30,12 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
 {
     /// <summary>Сколько последних фактов держит лента. За рендер их тысячи, и держать всё пульту незачем.</summary>
     public const int TapeLimit = 2000;
+
+    /// <summary>Сколько фактов пульт разбирает подряд, пока догоняет журнал, прежде чем отдать поток окну.</summary>
+    private const int CatchUpSlice = 5000;
+
+    /// <summary>Сколько фактов ждёт между чтением потока и пультом; больше — чтение ждёт пульт, память не растёт.</summary>
+    private const int QueueLimit = 10_000;
 
     /// <summary>Каталог сценариев опытов рядом с пультом: файл <c>*.txt</c> на опыт.</summary>
     public const string ExperimentsFolder = "Experiments";
@@ -56,6 +64,10 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? beatCancel;
     private Task beat = Task.CompletedTask;
     private int misses;
+    // Факты, разобранные, но ещё не показанные лентой (Flush), и признак, что диалоги надо спросить заново.
+    private readonly List<Fact> pendingFacts = [];
+    private readonly List<Fact> pendingMilestones = [];
+    private bool dialogsChanged;
     // Живой сеанс, о котором наблюдатель сообщил последним: новый сеанс пульт выбирает сам, старый — не трогает.
     private string? seenSession;
     private string? exportedSession;
@@ -526,8 +538,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         misses = 0;
         seenSession = null;
         Sessions.Clear();
-        Facts.Clear();
-        Milestones.Clear();
+        ClearTape();
         Dialogs.Clear();
         Artifacts.Clear();
         SelectedArtifact = null;
@@ -569,8 +580,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     {
         await StopPumpAsync();
         SelectedSession = session;
-        Facts.Clear();
-        Milestones.Clear();
+        ClearTape();
         SelectedFact = null;
         Dialogs.Clear();
         // Лента пойдёт с начала журнала и снова назначит инструкцию и ожидание подтверждения.
@@ -946,6 +956,12 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
     /// обрывов ни было, — рендер идёт часами. Конец сеанса — только факт <c>session-finished</c>: поток, закрытый
     /// остановкой наблюдателя, кончается без него.
     /// </summary>
+    /// <remarks>
+    /// Поток читается в фоне (<see cref="ReadStreamAsync"/>) в очередь: разбор сотен тысяч фактов в потоке интерфейса
+    /// и сдвиг ленты по одной строке вешали окно на журнале дня у монтажёра (владелец, 01.10.2026). Пока очередь не
+    /// пуста, журнал догоняется: факты копятся в буферах ленты, а окно получает поток между порциями; догнали —
+    /// лента показывается одним разом, дальше живые факты идут по одному.
+    /// </remarks>
     private async Task PumpAsync(string session, CancellationToken cancellationToken)
     {
         var after = 0L;
@@ -956,13 +972,42 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             string? reason;
             try
             {
-                await foreach (var fact in client!.StreamAsync(session, after, null, cancellationToken))
+                var queue = Channel.CreateBounded<Fact>(new BoundedChannelOptions(QueueLimit)
                 {
-                    after = fact.Number;
-                    attempts = 0;
-                    finished = fact.Kind == ProgramFactKinds.SessionFinished;
-                    Apply(fact);
+                    SingleReader = true,
+                    SingleWriter = true,
+                    FullMode = BoundedChannelFullMode.Wait,
+                });
+                // Клиент и номер — копиями: фоновое чтение не должно видеть, как пульт их меняет.
+                var source = client!;
+                var start = after;
+                var reading = Task.Run(() => ReadStreamAsync(source, session, start, queue.Writer, cancellationToken), cancellationToken);
+                var catchingUp = false;
+                while (await queue.Reader.WaitToReadAsync(cancellationToken))
+                {
+                    for (var taken = 0; taken < CatchUpSlice && queue.Reader.TryRead(out var fact); taken++)
+                    {
+                        after = fact.Number;
+                        attempts = 0;
+                        finished = fact.Kind == ProgramFactKinds.SessionFinished;
+                        Take(fact);
+                    }
+                    if (queue.Reader.TryPeek(out _))
+                    {
+                        catchingUp = true;
+                        Status = $"журнал сеанса {session}: прочитано {after.ToString(CultureInfo.InvariantCulture)}";
+                        await Task.Delay(1, cancellationToken);
+                        continue;
+                    }
+                    Flush();
+                    if (catchingUp)
+                    {
+                        catchingUp = false;
+                        Status = $"журнал сеанса {session}: {after.ToString(CultureInfo.InvariantCulture)} фактов";
+                    }
                 }
+                // Сбой чтения — после всего, что успело прийти: лента не теряет хвост перед обрывом.
+                await reading;
                 // Оборванный сеанс — наблюдатель сняли посреди него — тоже кончается без session-finished, но он уже
                 // не живой, и ждать его продолжения нечего.
                 if (finished || await IsClosedAsync(session))
@@ -1021,23 +1066,94 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void Apply(Fact fact)
+    /// <summary>Фоновое чтение потока в очередь. Очередь закрывается всегда; сбой чтения уходит задаче.</summary>
+    private static async Task ReadStreamAsync(ObserverClient client, string session, long after, ChannelWriter<Fact> queue,
+        CancellationToken cancellationToken)
     {
-        var row = new FactRow(fact);
-        Facts.Add(row);
-        while (Facts.Count > TapeLimit)
+        try
         {
-            Facts.RemoveAt(0);
-        }
-        if (row.IsMilestone)
-        {
-            Milestones.Add(row);
-            while (Milestones.Count > TapeLimit)
+            await foreach (var fact in client.StreamAsync(session, after, null, cancellationToken).ConfigureAwait(false))
             {
-                Milestones.RemoveAt(0);
+                await queue.WriteAsync(fact, cancellationToken).ConfigureAwait(false);
             }
         }
+        finally
+        {
+            queue.TryComplete();
+        }
+    }
 
+    private void ClearTape()
+    {
+        Facts.Clear();
+        Milestones.Clear();
+        pendingFacts.Clear();
+        pendingMilestones.Clear();
+        dialogsChanged = false;
+    }
+
+    /// <summary>Факт — в буфер ленты и в состояние пульта; в списки окна он попадёт при <see cref="Flush"/>.</summary>
+    private void Take(Fact fact)
+    {
+        Keep(pendingFacts, fact);
+        if (FactRow.Milestones.Contains(fact.Kind))
+        {
+            Keep(pendingMilestones, fact);
+        }
+        Track(fact);
+    }
+
+    /// <summary>Буфер не растёт дальше двух лент: из него всё равно покажутся последние <see cref="TapeLimit"/>.</summary>
+    private static void Keep(List<Fact> pending, Fact fact)
+    {
+        pending.Add(fact);
+        if (pending.Count >= 2 * TapeLimit)
+        {
+            pending.RemoveRange(0, pending.Count - TapeLimit);
+        }
+    }
+
+    /// <summary>Буферы — в списки окна; диалоги спрашиваются один раз на сброс, а не на каждый их факт.</summary>
+    private void Flush()
+    {
+        Show(Facts, pendingFacts);
+        Show(Milestones, pendingMilestones);
+        if (dialogsChanged)
+        {
+            dialogsChanged = false;
+            // Диалоги пульт не собирает из фактов, а спрашивает: в ответе они такие, какие сейчас на экране.
+            _ = RefreshDialogsAsync();
+        }
+    }
+
+    /// <summary>
+    /// Новые строки — в конец списка, лишние — из начала. Буфер не меньше ленты заменяет список целиком: одно
+    /// обновление вместо тысяч сдвигов по строке.
+    /// </summary>
+    private static void Show(ObservableCollection<FactRow> list, List<Fact> pending)
+    {
+        if (pending.Count == 0)
+        {
+            return;
+        }
+        if (pending.Count >= TapeLimit)
+        {
+            list.Clear();
+        }
+        for (var i = Math.Max(0, pending.Count - TapeLimit); i < pending.Count; i++)
+        {
+            list.Add(new FactRow(pending[i]));
+        }
+        while (list.Count > TapeLimit)
+        {
+            list.RemoveAt(0);
+        }
+        pending.Clear();
+    }
+
+    /// <summary>Что факт меняет в пульте, кроме ленты: шаги, инструкция, исход сценария, диалоги.</summary>
+    private void Track(Fact fact)
+    {
         switch (fact.Kind)
         {
             case ScenarioFactKinds.ScenarioStarted:
@@ -1089,8 +1205,7 @@ public sealed class WorkbenchViewModel : ObservableObject, IDisposable
             case ProgramFactKinds.DialogClosed:
             case ProgramFactKinds.DialogPressed:
             case ScenarioFactKinds.UnexpectedDialog:
-                // Диалоги пульт не собирает из фактов, а спрашивает: в ответе они такие, какие сейчас на экране.
-                _ = RefreshDialogsAsync();
+                dialogsChanged = true;
                 break;
             default:
                 break;

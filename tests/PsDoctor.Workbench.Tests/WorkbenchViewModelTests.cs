@@ -211,6 +211,30 @@ public sealed class WorkbenchViewModelTests : IAsyncLifetime
     });
 
     [Fact]
+    public void Длинный_журнал_догоняется_и_лента_показывает_его_хвост() => ОдинПоток.Выполнить(async () =>
+    {
+        using var пульт = await ПодключённыйAsync();
+        пульт.ScenarioText = $"launch {Проект}";
+        await пульт.RunAsync();
+        await ОдинПоток.ЖдатьAsync(() => !пульт.ScenarioRunning, "конца сценария");
+        запуск.Последний!.Отсчёты(3 * WorkbenchViewModel.TapeLimit);
+        запуск.Последний.Выйти();
+        await ОдинПоток.ЖдатьAsync(() => пульт.Sessions.Count == 1 && !пульт.Sessions[0].Active, "закрытия сеанса");
+
+        // Закрытый сеанс заново: журнал больше трёх лент читается с начала, а в ленту уходит его хвост, номера подряд.
+        await пульт.SelectAsync(пульт.Sessions[0]);
+        await ОдинПоток.ЖдатьAsync(
+            () => пульт.Facts.Count > 0 && пульт.Facts[^1].Kind == ProgramFactKinds.SessionFinished, "конца журнала в ленте");
+
+        Assert.Equal(WorkbenchViewModel.TapeLimit, пульт.Facts.Count);
+        var последний = пульт.Facts[^1].Number;
+        Assert.Equal(Enumerable.Range(1, WorkbenchViewModel.TapeLimit).Select(n => последний - WorkbenchViewModel.TapeLimit + n),
+            пульт.Facts.Select(факт => факт.Number));
+        Assert.Equal(ProgramFactKinds.SessionStarted, пульт.Milestones[0].Kind);
+        Assert.Equal(ProgramFactKinds.SessionFinished, пульт.Milestones[^1].Kind);
+    });
+
+    [Fact]
     public void Лампы_идут_за_программой_и_прогоном() => ОдинПоток.Выполнить(async () =>
     {
         using var пульт = await ПодключённыйAsync(частоОпрашивать: true);
