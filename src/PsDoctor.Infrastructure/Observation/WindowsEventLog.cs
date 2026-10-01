@@ -14,8 +14,24 @@ public static class WindowsEventLog
 {
     public const string Application = "Application";
 
+    /// <summary>Журнал System. Член не назван <c>System</c>: такое имя заслонило бы пространство имён.</summary>
+    public const string SystemLog = "System";
+
     /// <summary>Падение приложения, отчёт Windows Error Reporting, зависание приложения — как в опытах 08 и 09.</summary>
     public static readonly IReadOnlyList<int> CrashIds = [1000, 1001, 1002];
+
+    /// <summary>
+    /// Сбои машины в журнале System (Э6.5), условие XPath на системную часть события. Любая запись WHEA — аппаратная
+    /// ошибка процессора, памяти или шины, исправленная или нет. Kernel-Power 41 — загрузка после выключения без
+    /// завершения работы: первый параметр — код синего экрана (0 — его не было), седьмой — время нажатия кнопки питания.
+    /// EventLog 6008 — последняя отметка «жив» перед неожиданным выключением: на клиентской Windows она редкая и бывает
+    /// временем загрузки, а не сбоя. 1001 от WER-SystemErrorReporting — отчёт о синем экране.
+    /// </summary>
+    public const string MachineSelector =
+        "Provider[@Name='Microsoft-Windows-WHEA-Logger']"
+        + " or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41)"
+        + " or (Provider[@Name='EventLog'] and EventID=6008)"
+        + " or (Provider[@Name='Microsoft-Windows-WER-SystemErrorReporting'] and EventID=1001)";
 
     /// <summary>События за отрезок времени — итог сеанса запуска.</summary>
     public static WindowsEventsRead Read(string log, IReadOnlyList<int> ids, IReadOnlyList<string> names, DateTimeOffset from, DateTimeOffset to)
@@ -58,9 +74,18 @@ public static class WindowsEventLog
     /// </summary>
     public static WindowsEventsBatch ReadAfter(string log, IReadOnlyList<int> ids, IReadOnlyList<string> names, long? after, DateTimeOffset since)
     {
-        ArgumentException.ThrowIfNullOrEmpty(log);
         ArgumentNullException.ThrowIfNull(ids);
         ArgumentNullException.ThrowIfNull(names);
+        return ReadAfter(log, IdFilter(ids), names, after, since);
+    }
+
+    /// <summary>То же с готовым условием на системную часть события (<see cref="MachineSelector"/>).</summary>
+    /// <param name="selector">Условие XPath внутри <c>System[…]</c>: коды, поставщики.</param>
+    /// <param name="names">Имена образов, одно из которых должно быть в параметрах; <c>null</c> — без отбора по имени.</param>
+    public static WindowsEventsBatch ReadAfter(string log, string selector, IReadOnlyList<string>? names, long? after, DateTimeOffset since)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(log);
+        ArgumentException.ThrowIfNullOrEmpty(selector);
         try
         {
             var newest = Newest(log);
@@ -73,7 +98,7 @@ public static class WindowsEventLog
                 ? $"EventRecordID>{bookmark.ToString(CultureInfo.InvariantCulture)}"
                 : $"TimeCreated[@SystemTime>='{Xml(since)}']";
             var query = new EventLogQuery(log, PathType.LogName,
-                $"*[System[({IdFilter(ids)}) and {range} and EventRecordID<={last.ToString(CultureInfo.InvariantCulture)}]]");
+                $"*[System[({selector}) and {range} and EventRecordID<={last.ToString(CultureInfo.InvariantCulture)}]]");
             var found = new List<WindowsEvent>();
             using var reader = new EventLogReader(query);
             for (var record = reader.ReadEvent(); record is not null; record = reader.ReadEvent())
@@ -102,11 +127,11 @@ public static class WindowsEventLog
         return record?.RecordId;
     }
 
-    /// <summary>Событие, в параметрах которого есть имя одного из образов; иначе <c>null</c>.</summary>
-    private static WindowsEvent? Matching(EventRecord record, string log, IReadOnlyList<string> names)
+    /// <summary>Событие, в параметрах которого есть имя одного из образов; без имён — любое; иначе <c>null</c>.</summary>
+    private static WindowsEvent? Matching(EventRecord record, string log, IReadOnlyList<string>? names)
     {
         var properties = record.Properties.Select(p => Convert.ToString(p.Value, CultureInfo.InvariantCulture) ?? "").ToList();
-        return WindowsEvent.Mentions(properties, names)
+        return names is null || WindowsEvent.Mentions(properties, names)
             ? new WindowsEvent(
                 record.TimeCreated is { } time ? new DateTimeOffset(time.ToUniversalTime(), TimeSpan.Zero) : default,
                 log,

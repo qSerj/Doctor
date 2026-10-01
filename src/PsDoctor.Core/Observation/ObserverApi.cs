@@ -212,11 +212,14 @@ public sealed record ProgramFile(string Path, bool Exists);
 public sealed record WatchStatus(bool Enabled, string? LastRefusal = null, DateTime? LastRefusalUtc = null);
 
 /// <summary>
-/// Опрос журнала Windows в ответе <c>/health</c>: без него «событий нет» на машине монтажёра не отличить от «журнал не
+/// Опрос журналов Windows в ответе <c>/health</c>: без него «событий нет» на машине монтажёра не отличить от «журнал не
 /// читается».
 /// </summary>
-/// <param name="LastReadUtc">Последний опрос, прочитавший журнал; <c>null</c> — ещё ни одного.</param>
-/// <param name="LastError">Чем сорвался последний опрос; удачный опрос его стирает.</param>
+/// <param name="LastReadUtc">Последний опрос, прочитавший хоть один журнал; <c>null</c> — ещё ни одного.</param>
+/// <param name="LastError">
+/// Чем сорвался последний опрос: имя исключения у Application, «журнал: имя» у остальных, через «; »; опрос без сбоев
+/// его стирает.
+/// </param>
 public sealed record WindowsEventsStatus(DateTime? LastReadUtc, string? LastError = null);
 
 /// <summary>

@@ -325,7 +325,39 @@ public sealed record EnvironmentFacts(
     DiskSpace? SystemDisk,
     DiskSpace? TempDisk,
     string? ProgramBuild = null,
-    string? Snapshot = null);
+    string? Snapshot = null,
+    ProcessorInfo? Processor = null,
+    BiosInfo? Bios = null);
+
+/// <summary>
+/// Процессор по реестру Windows (Э6.5). Ревизия микрокода отвечает, стоит ли исправление Intel для нестабильных
+/// процессоров 13-го и 14-го поколений: у машины монтажёра i7-14700KF с пониженным напряжением.
+/// </summary>
+/// <param name="Identifier">Семейство, модель и степпинг словами Windows.</param>
+/// <param name="Microcode">Ревизия микрокода сейчас — значение «Update Revision».</param>
+/// <param name="MicrocodeBefore">«Previous Update Revision» — ревизия до обновления микрокода Windows при загрузке.</param>
+public sealed record ProcessorInfo(string? Name, string? Identifier, string? Microcode, string? MicrocodeBefore)
+{
+    /// <summary>
+    /// Ревизия микрокода из двоичного значения реестра: восемь байт, у Intel ревизия — в старших четырёх, иначе — в
+    /// младших. Нет значения или ноль — <c>null</c>.
+    /// </summary>
+    public static string? Revision(byte[]? value)
+    {
+        if (value is null || value.Length < 4)
+        {
+            return null;
+        }
+        var low = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(value);
+        var high = value.Length >= 8 ? System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(value.AsSpan(4)) : 0;
+        var revision = high != 0 ? high : low;
+        return revision == 0 ? null : "0x" + revision.ToString("X", System.Globalization.CultureInfo.InvariantCulture);
+    }
+}
+
+/// <summary>BIOS и плата по реестру Windows (Э6.5): от версии BIOS зависят микрокод и напряжения.</summary>
+/// <param name="Board">Производитель и модель платы одной строкой.</param>
+public sealed record BiosInfo(string? Vendor, string? Version, string? ReleaseDate, string? Board);
 
 /// <param name="State">Слово состояния <c>productState</c> центра безопасности как есть.</param>
 public sealed record AntivirusProduct(string Name, int? State);
@@ -350,17 +382,28 @@ public interface IEnvironmentSnapshotReader
 }
 
 /// <summary>
-/// Кто умеет читать журнал Windows о программе для опроса наблюдателем (Э6.2, часть Г): запускатель на Windows — умеет,
-/// подмена в тестах — по желанию. Какие коды событий и чьи имена образов искать, решает источник.
+/// Кто умеет читать журналы Windows для опроса наблюдателем: падения куста программы (Э6.2, часть Г) и сбои машины (Э6.5).
+/// Запускатель на Windows — умеет, подмена в тестах — по желанию. Какие журналы, коды и имена образов искать, решает источник.
 /// </summary>
 public interface IWindowsEventSource
 {
+    /// <summary>Журналы опроса по порядку; у каждого своя закладка и свой файл событий.</summary>
+    IReadOnlyList<WindowsEventChannel> EventLogs { get; }
+
     /// <summary>
-    /// События с номером записи после закладки <paramref name="after"/>; без закладки — не старше <paramref name="since"/>.
-    /// Не бросает: сбой — поле ответа.
+    /// События журнала <paramref name="log"/> с номером записи после закладки <paramref name="after"/>; без закладки — не
+    /// старше <paramref name="since"/>. Не бросает: сбой — поле ответа.
     /// </summary>
-    WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since);
+    WindowsEventsBatch ReadEvents(string log, long? after, DateTimeOffset since);
 }
+
+/// <summary>Журнал Windows, который опрашивает наблюдатель.</summary>
+/// <param name="Log">Имя журнала: <c>Application</c>, <c>System</c>.</param>
+/// <param name="ToSession">
+/// Событие ложится фактом в живой сеанс; иначе — только в файл событий. Сбои машины в сеанс не идут: исправленные
+/// аппаратные ошибки бывают потоком в тысячи записей, а журнал сеанса не должен от них раздуваться (Э6.5).
+/// </param>
+public sealed record WindowsEventChannel(string Log, bool ToSession);
 
 /// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>
 public sealed record ProgramTarget(int ProcessId, DateTime StartedUtc, string Image);

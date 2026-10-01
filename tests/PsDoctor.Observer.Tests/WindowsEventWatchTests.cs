@@ -37,9 +37,15 @@ public sealed class WindowsEventWatchTests : IAsyncLifetime
     private static WindowsEvent Событие(long номер, DateTime когда, string образ = "proshow.exe") =>
         new(new DateTimeOffset(когда, TimeSpan.Zero), "Application", "Application Error", 1000, номер, [образ, "9.0.3797.0", "c0000005"]);
 
-    private string? Закладка()
+    /// <summary>Загрузка после выключения без завершения работы: синего экрана не было.</summary>
+    private static WindowsEvent Выключение(long номер, DateTime когда) =>
+        new(new DateTimeOffset(когда, TimeSpan.Zero), "System", "Microsoft-Windows-Kernel-Power", 41, номер, ["0", "0x0", "0x0", "0x0", "0x0", "0", "0"]);
+
+    private void ОбаЖурнала() => _запуск.EventLogs = [new("Application", ToSession: true), new("System", ToSession: false)];
+
+    private string? Закладка(string журнал = "Application")
     {
-        var путь = Path.Combine(_каталог, WindowsEventWatch.BookmarkFile);
+        var путь = Path.Combine(_каталог, WindowsEventWatch.BookmarkFileOf(журнал));
         return File.Exists(путь) ? File.ReadAllText(путь) : null;
     }
 
@@ -50,7 +56,8 @@ public sealed class WindowsEventWatchTests : IAsyncLifetime
 
         _опрос.Tick();
 
-        var (после, с) = Assert.Single(_запуск.EventReads);
+        var (журнал, после, с) = Assert.Single(_запуск.EventReads);
+        Assert.Equal("Application", журнал);
         Assert.Null(после);
         Assert.Equal(new DateTimeOffset(Сейчас - WindowsEventWatch.FirstLookBack, TimeSpan.Zero), с);
         Assert.Equal(40, Assert.Single(_опрос.Events()).RecordId);
@@ -152,6 +159,49 @@ public sealed class WindowsEventWatchTests : IAsyncLifetime
         Assert.Equal(WindowsEventWatch.FileLimit, new FileInfo(Path.Combine(_каталог, WindowsEventWatch.OldEventsFile)).Length);
         Assert.Single(File.ReadAllLines(путь));
         Assert.Equal([70L, 71L], _опрос.Events().Select(e => e.RecordId ?? 0));
+    }
+
+    [Fact]
+    public void Сбои_машины_со_своей_закладкой_и_файлом_и_не_фактом_в_сеанс()
+    {
+        ОбаЖурнала();
+        _запуск.Foreign = true;
+        var сеанс = _служба.Attach(SessionOrigins.Watch).Accepted!.Session;
+        _запуск.QueueEvents(new WindowsEventsBatch([Событие(51, Сейчас.AddSeconds(3))], 51));
+        _запуск.QueueEvents(new WindowsEventsBatch([Выключение(900, Сейчас.AddSeconds(5))], 905), "System");
+
+        _опрос.Tick();
+
+        Assert.Equal([("Application", (long?)null), ("System", (long?)null)], _запуск.EventReads.Select(r => (r.Log, r.After)));
+        Assert.Equal("51", Закладка());
+        Assert.Equal("905", Закладка("System"));
+        // Номер записи у каждого журнала свой, файл тоже: поток аппаратных ошибок не вытеснит падения программы.
+        Assert.DoesNotContain("Kernel-Power", File.ReadAllText(Path.Combine(_каталог, WindowsEventWatch.EventsFile)));
+        Assert.Contains("Kernel-Power", File.ReadAllText(Path.Combine(_каталог, WindowsEventWatch.EventsFileOf("System"))));
+        var факт = Assert.Single(_служба.Live(сеанс)!.After(0), f => f.Kind == ProgramFactKinds.WindowsEvent);
+        Assert.Equal(51, факт.Data.GetProperty("recordId").GetInt64());
+        Assert.Equal([51L, 900L], _опрос.Events().Select(e => e.RecordId ?? 0));
+    }
+
+    [Fact]
+    public void Сбой_журнала_System_не_мешает_Application_и_виден_в_статусе()
+    {
+        ОбаЖурнала();
+        _запуск.QueueEvents(new WindowsEventsBatch([Событие(9, Сейчас.AddDays(-1))], 10));
+        _запуск.QueueEvents(new WindowsEventsBatch([], null, "UnauthorizedAccessException"), "System");
+
+        _опрос.Tick();
+
+        Assert.Equal("10", Закладка());
+        Assert.Null(Закладка("System"));
+        Assert.Equal(new WindowsEventsStatus(Сейчас, "System: UnauthorizedAccessException"), _опрос.Status);
+
+        _запуск.QueueEvents(new WindowsEventsBatch([Выключение(6, Сейчас.AddDays(-2))], 7), "System");
+        _опрос.Tick();
+
+        Assert.Equal(new WindowsEventsStatus(Сейчас), _опрос.Status);
+        Assert.Equal("7", Закладка("System"));
+        Assert.Equal([6L, 9L], _опрос.Events().Select(e => e.RecordId ?? 0));
     }
 
     [Fact]

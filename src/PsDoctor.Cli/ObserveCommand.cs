@@ -326,7 +326,7 @@ public static class ObserveCommand
         writer.WriteLine("  stop [сеанс]                    прекратить наблюдение, программа не закрывается");
         writer.WriteLine("  incident [--note <текст>]       поставить метку инцидента, как кнопка «Решить проблему»");
         writer.WriteLine("  incidents                       метки инцидентов, строка на метку");
-        writer.WriteLine("  windows-events                  падения и зависания ProShow из журнала Windows, строка на событие");
+        writer.WriteLine("  windows-events                  падения ProShow и сбои машины из журналов Windows, строка на событие");
         writer.WriteLine("  environment [<слепок>]          слепок окружения машины наблюдателя: снятый сейчас или сохранённый");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");

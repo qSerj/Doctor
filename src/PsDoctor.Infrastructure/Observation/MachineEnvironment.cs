@@ -53,7 +53,50 @@ public static class MachineEnvironment
             free,
             Disk(Environment.SystemDirectory),
             Disk(Path.GetTempPath()),
-            ProgramBuild(programPath));
+            ProgramBuild(programPath),
+            Processor: Processor(),
+            Bios: Bios());
+    }
+
+    /// <summary>Первый процессор по реестру: у всех ядер имя и микрокод одни.</summary>
+    private static ProcessorInfo? Processor()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
+            return key is null
+                ? null
+                : new ProcessorInfo(
+                    (key.GetValue("ProcessorNameString") as string)?.Trim(),
+                    key.GetValue("Identifier") as string,
+                    ProcessorInfo.Revision(key.GetValue("Update Revision") as byte[]),
+                    ProcessorInfo.Revision(key.GetValue("Previous Update Revision") as byte[]));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
+    private static BiosInfo? Bios()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+            if (key is null)
+            {
+                return null;
+            }
+            var board = string.Join(" ", new[] { "BaseBoardManufacturer", "BaseBoardProduct" }
+                .Select(name => (key.GetValue(name) as string)?.Trim())
+                .Where(value => !string.IsNullOrEmpty(value)));
+            return new BiosInfo(key.GetValue("BIOSVendor") as string, key.GetValue("BIOSVersion") as string,
+                key.GetValue("BIOSReleaseDate") as string, board.Length > 0 ? board : null);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return null;
+        }
     }
 
     internal static (string? Build, string? Release) WindowsVersion()

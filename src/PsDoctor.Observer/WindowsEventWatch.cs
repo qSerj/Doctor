@@ -4,13 +4,16 @@ using PsDoctor.Core.Observation;
 namespace PsDoctor.Observer;
 
 /// <summary>
-/// Опрос журнала Windows (Э6.2, часть Г): при старте наблюдателя и раз в <see cref="Interval"/> — события падений куста
-/// ProShow после закладки. Новые события дописываются в <see cref="EventsFile"/> каталога сеансов и ложатся фактом в
-/// живой сеанс. Закладка — номер записи журнала в <see cref="BookmarkFile"/>: так переживаются перезапуск наблюдателя,
-/// перезагрузка и поздний отчёт 1001, а падение без сеанса находится при следующем опросе.
+/// Опрос журналов Windows при старте наблюдателя и раз в <see cref="Interval"/>: падения куста программы в Application
+/// (Э6.2, часть Г) и сбои машины в System (Э6.5) — какие журналы, решает источник. Новые события дописываются в файл
+/// событий журнала в каталоге сеансов; события журнала, помеченного <see cref="WindowsEventChannel.ToSession"/>, ложатся
+/// ещё и фактом в живой сеанс. Закладка — номер записи журнала в файле закладки: так переживаются перезапуск
+/// наблюдателя, перезагрузка и поздний отчёт 1001, а событие без сеанса находится при следующем опросе.
 /// </summary>
 /// <remarks>
-/// Закладка сдвигается после записи в файл: оборвись наблюдатель между ними, те же события придут ещё раз, но не
+/// У каждого журнала своя закладка и свой файл: номера записей у журналов свои, а поток исправленных аппаратных ошибок
+/// не должен вытеснить из файла историю падений программы. У Application имена файлов прежние — на машинах они уже
+/// лежат. Закладка сдвигается после записи в файл: оборвись наблюдатель между ними, те же события придут ещё раз, но не
 /// пропадут. Опрос идёт всегда, не только при дежурстве: падение, случившееся без записи, — тоже улика.
 /// </remarks>
 public sealed class WindowsEventWatch : IDisposable
@@ -23,11 +26,18 @@ public sealed class WindowsEventWatch : IDisposable
     /// <summary>Предел файла событий: больше — файл уходит в <see cref="OldEventsFile"/>, прежний ротированный пропадает.</summary>
     public const long FileLimit = 10L * 1024 * 1024;
 
+    /// <summary>Файл событий журнала Application; у других журналов имя журнала — в имени файла (<see cref="EventsFileOf"/>).</summary>
     public const string EventsFile = "windows-events.jsonl";
 
     public const string OldEventsFile = EventsFile + ".old";
 
     public const string BookmarkFile = "windows-events.bookmark";
+
+    private const string Application = "Application";
+
+    public static string EventsFileOf(string log) => log == Application ? EventsFile : $"windows-events.{log}.jsonl";
+
+    public static string BookmarkFileOf(string log) => log == Application ? BookmarkFile : $"windows-events.{log}.bookmark";
 
     /// <summary>Сколько остановка ждёт начатого опроса: чтение журнала за месяц — секунды.</summary>
     private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(10);
@@ -67,53 +77,54 @@ public sealed class WindowsEventWatch : IDisposable
     /// <summary>Первый опрос — сразу: падение, случившееся, пока наблюдателя не было, находится при старте.</summary>
     public void Start() => timer ??= new Timer(_ => Tick(), null, TimeSpan.Zero, Interval);
 
-    /// <summary>Один опрос. Опрос, начатый, пока идёт прежний, ничего не делает.</summary>
+    /// <summary>
+    /// Один опрос всех журналов. Сбой одного не мешает другим и виден в статусе: у Application — именем исключения, у
+    /// остальных — с именем журнала. Опрос, начатый, пока идёт прежний, ничего не делает.
+    /// </summary>
     public void Tick()
     {
         if (Interlocked.Exchange(ref ticking, 1) == 1)
         {
             return;
         }
-        string? error = null;
+        var errors = new List<string>();
+        var read = false;
         try
         {
             var since = new DateTimeOffset(utcNow() - FirstLookBack, TimeSpan.Zero);
-            var bookmark = ReadBookmark();
-            var batch = source.ReadEvents(bookmark, since);
-            if (batch.Error is null && batch.Newest < bookmark)
+            foreach (var channel in source.EventLogs)
             {
-                // Журнал очищен и нумерует записи заново: прежняя закладка пропустила бы всё новое.
-                batch = source.ReadEvents(null, since);
-            }
-            error = batch.Error;
-            if (error is null)
-            {
-                if (batch.Events.Count > 0)
+                string? error;
+                try
                 {
-                    Append(batch.Events);
-                    foreach (var found in batch.Events)
-                    {
-                        service.RecordWindowsEvent(found);
-                    }
+                    error = Poll(channel, since);
                 }
-                if (batch.Newest is { } newest && newest != bookmark)
+                catch (Exception e)
                 {
-                    WriteBookmark(newest);
+                    // Опрос идёт из таймера: необработанное исключение уронило бы наблюдатель. Закладка не сдвинута —
+                    // следующий опрос прочитает то же.
+                    error = e.GetType().Name;
+                }
+                if (error is null)
+                {
+                    read = true;
+                }
+                else
+                {
+                    errors.Add(channel.Log == Application ? error : $"{channel.Log}: {error}");
                 }
             }
         }
         catch (Exception e)
         {
-            // Опрос идёт из таймера: необработанное исключение уронило бы наблюдатель. Закладка не сдвинута —
-            // следующий опрос прочитает то же.
-            error = e.GetType().Name;
+            errors.Add(e.GetType().Name);
         }
         finally
         {
             lock (gate)
             {
-                lastError = error;
-                if (error is null)
+                lastError = errors.Count == 0 ? null : string.Join("; ", errors);
+                if (read)
                 {
                     lastReadUtc = utcNow();
                 }
@@ -122,7 +133,42 @@ public sealed class WindowsEventWatch : IDisposable
         }
     }
 
-    /// <summary>Все найденные события по порядку: сначала ротированный файл, потом нынешний. Нечитаемый файл — пусто.</summary>
+    /// <summary>Опрос одного журнала; сбой чтения — его имя, иначе <c>null</c>.</summary>
+    private string? Poll(WindowsEventChannel channel, DateTimeOffset since)
+    {
+        var bookmark = ReadBookmark(channel.Log);
+        var batch = source.ReadEvents(channel.Log, bookmark, since);
+        if (batch.Error is null && batch.Newest < bookmark)
+        {
+            // Журнал очищен и нумерует записи заново: прежняя закладка пропустила бы всё новое.
+            batch = source.ReadEvents(channel.Log, null, since);
+        }
+        if (batch.Error is not null)
+        {
+            return batch.Error;
+        }
+        if (batch.Events.Count > 0)
+        {
+            Append(channel.Log, batch.Events);
+            if (channel.ToSession)
+            {
+                foreach (var found in batch.Events)
+                {
+                    service.RecordWindowsEvent(found);
+                }
+            }
+        }
+        if (batch.Newest is { } newest && newest != bookmark)
+        {
+            WriteBookmark(channel.Log, newest);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Все найденные события всех журналов по времени; у журнала сначала ротированный файл, потом нынешний.
+    /// Нечитаемый файл — пусто.
+    /// </summary>
     public IReadOnlyList<WindowsEvent> Events()
     {
         try
@@ -131,8 +177,10 @@ public sealed class WindowsEventWatch : IDisposable
             {
                 return
                 [
-                    .. JsonLinesFile.Read<WindowsEvent>(Path.Combine(directory, OldEventsFile), Valid),
-                    .. JsonLinesFile.Read<WindowsEvent>(Path.Combine(directory, EventsFile), Valid),
+                    .. source.EventLogs
+                        .SelectMany(channel => new[] { EventsFileOf(channel.Log) + ".old", EventsFileOf(channel.Log) })
+                        .SelectMany(file => JsonLinesFile.Read<WindowsEvent>(Path.Combine(directory, file), Valid))
+                        .OrderBy(found => found.Time),
                 ];
             }
         }
@@ -151,24 +199,24 @@ public sealed class WindowsEventWatch : IDisposable
 
     private static bool Valid(WindowsEvent value) => value is { Log: not null, Provider: not null, Properties: not null };
 
-    private void Append(IReadOnlyList<WindowsEvent> events)
+    private void Append(string log, IReadOnlyList<WindowsEvent> events)
     {
         lock (files)
         {
-            var path = Path.Combine(directory, EventsFile);
+            var path = Path.Combine(directory, EventsFileOf(log));
             var file = new FileInfo(path);
             if (file.Exists && file.Length >= FileLimit)
             {
-                File.Move(path, Path.Combine(directory, OldEventsFile), overwrite: true);
+                File.Move(path, path + ".old", overwrite: true);
             }
             JsonLinesFile.Append(path, events);
         }
     }
 
     /// <summary>Номер записи из файла закладки; нет файла или он испорчен — <c>null</c>, и опрос смотрит на месяц назад.</summary>
-    private long? ReadBookmark()
+    private long? ReadBookmark(string log)
     {
-        var path = Path.Combine(directory, BookmarkFile);
+        var path = Path.Combine(directory, BookmarkFileOf(log));
         return File.Exists(path)
             && long.TryParse(File.ReadAllText(path).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var recordId)
             ? recordId
@@ -176,10 +224,10 @@ public sealed class WindowsEventWatch : IDisposable
     }
 
     /// <summary>Закладка подменяется целиком: оборванная запись не оставит полчисла.</summary>
-    private void WriteBookmark(long recordId)
+    private void WriteBookmark(string log, long recordId)
     {
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, BookmarkFile);
+        var path = Path.Combine(directory, BookmarkFileOf(log));
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, recordId.ToString(CultureInfo.InvariantCulture));
         File.Move(temporary, path, overwrite: true);

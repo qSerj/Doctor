@@ -398,7 +398,9 @@ public sealed class ObserveCommandTests : IAsyncLifetime
         public static WindowsEvent Падение { get; } = new(new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero), "Application",
             "Application Error", 1000, 42, ["proshow.exe", "9.0.3797.0", "c0000005"]);
 
-        public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since) =>
+        public IReadOnlyList<WindowsEventChannel> EventLogs { get; } = [new("Application", ToSession: true)];
+
+        public WindowsEventsBatch ReadEvents(string log, long? after, DateTimeOffset since) =>
             Interlocked.Increment(ref _опросов) == 1 ? new WindowsEventsBatch([Падение], 42) : new WindowsEventsBatch([], 42);
 
         /// <summary>Выполняется, когда сценарий дошёл до запуска программы.</summary>

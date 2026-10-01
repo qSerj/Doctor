@@ -8,20 +8,27 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironm
 {
     private readonly Lock gate = new();
     private readonly List<FakeRun> runs = [];
-    private readonly Queue<WindowsEventsBatch> events = new();
-    private readonly List<(long? After, DateTimeOffset Since)> eventReads = [];
+    private readonly Dictionary<string, Queue<WindowsEventsBatch>> events = [];
+    private readonly List<(string Log, long? After, DateTimeOffset Since)> eventReads = [];
+
+    /// <summary>Какие журналы опрашивает наблюдатель; по умолчанию — один Application с фактами в сеанс.</summary>
+    public IReadOnlyList<WindowsEventChannel> EventLogs { get; set; } = [new("Application", ToSession: true)];
 
     /// <summary>Следующий ответ журнала Windows; ответы кончились — журнал пуст.</summary>
-    public void QueueEvents(WindowsEventsBatch batch)
+    public void QueueEvents(WindowsEventsBatch batch, string log = "Application")
     {
         lock (gate)
         {
-            events.Enqueue(batch);
+            if (!events.TryGetValue(log, out var queue))
+            {
+                events[log] = queue = new Queue<WindowsEventsBatch>();
+            }
+            queue.Enqueue(batch);
         }
     }
 
-    /// <summary>С какой закладки и с какого времени журнал спрашивали, по порядку.</summary>
-    public IReadOnlyList<(long? After, DateTimeOffset Since)> EventReads
+    /// <summary>Какой журнал, с какой закладки и с какого времени спрашивали, по порядку.</summary>
+    public IReadOnlyList<(string Log, long? After, DateTimeOffset Since)> EventReads
     {
         get
         {
@@ -32,12 +39,12 @@ public sealed class FakeLauncher : IProgramLauncher, IProgramAttacher, IEnvironm
         }
     }
 
-    public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since)
+    public WindowsEventsBatch ReadEvents(string log, long? after, DateTimeOffset since)
     {
         lock (gate)
         {
-            eventReads.Add((after, since));
-            return events.TryDequeue(out var batch) ? batch : new WindowsEventsBatch([], null);
+            eventReads.Add((log, after, since));
+            return events.TryGetValue(log, out var queue) && queue.TryDequeue(out var batch) ? batch : new WindowsEventsBatch([], null);
         }
     }
 

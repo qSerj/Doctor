@@ -78,9 +78,19 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvir
 
     public EnvironmentSnapshot ReadSnapshot() => EnvironmentSnapshotReader.Read(ProgramPath);
 
-    /// <summary>Падения, отчёты и зависания куста ProShow в журнале Application — для опроса наблюдателем (Э6.2, часть Г).</summary>
-    public WindowsEventsBatch ReadEvents(long? after, DateTimeOffset since) =>
-        WindowsEventLog.ReadAfter(WindowsEventLog.Application, WindowsEventLog.CrashIds, ImageNames, after, since);
+    /// <summary>
+    /// Журнал Application — падения, отчёты и зависания куста ProShow (Э6.2, часть Г), фактом и в живой сеанс. Журнал
+    /// System — сбои машины (Э6.5), только в файл.
+    /// </summary>
+    public IReadOnlyList<WindowsEventChannel> EventLogs { get; } =
+        [new(WindowsEventLog.Application, ToSession: true), new(WindowsEventLog.SystemLog, ToSession: false)];
+
+    public WindowsEventsBatch ReadEvents(string log, long? after, DateTimeOffset since) => log switch
+    {
+        WindowsEventLog.Application => WindowsEventLog.ReadAfter(log, WindowsEventLog.CrashIds, ImageNames, after, since),
+        WindowsEventLog.SystemLog => WindowsEventLog.ReadAfter(log, WindowsEventLog.MachineSelector, null, after, since),
+        _ => new WindowsEventsBatch([], null, "unknown-log"),
+    };
 
     public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
     {
