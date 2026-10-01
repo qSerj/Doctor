@@ -16,7 +16,8 @@ public sealed class ModuleLoads
     /// <summary><c>true</c> — пара новая и записывается.</summary>
     public bool Add(string? image, int processId, string path) => seen.Add((Key(image, processId), path));
 
-    private static string Key(string? image, int processId) =>
+    /// <summary>Образ без расширения, неизвестный — номер процесса; тот же ключ у сводки файлов (<see cref="FileActivity"/>).</summary>
+    internal static string Key(string? image, int processId) =>
         string.IsNullOrEmpty(image) ? "#" + processId : System.IO.Path.GetFileNameWithoutExtension(image);
 
     private sealed class KeyComparer : IEqualityComparer<(string Image, string Path)>

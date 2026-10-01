@@ -306,9 +306,9 @@ public sealed class EtwBridge : IDisposable
                     else if (value.ProcessStart is not null)
                         facts.Record(ProgramFactKinds.EtwProcessStarted,
                             new { image = value.ProcessStart, commandLine = value.CommandLine,
-                                parentProcessId = value.ParentProcessId, timeUtc = value.SecondUtc }, value.ProcessId);
+                                parentProcessId = value.ParentProcessId, timeUtc = value.TimeUtc }, value.ProcessId);
                     else
-                        facts.Record(ProgramFactKinds.FileIo, value, value.ProcessId);
+                        RecordFiles(value);
                 }
                 catch (InvalidOperationException) { return; }
             }
@@ -330,8 +330,28 @@ public sealed class EtwBridge : IDisposable
         if (!modules.Add(value.Image, value.ProcessId, value.Module!)) return;
         if (!moduleFiles.TryGetValue(value.Module!, out var file))
             moduleFiles[value.Module!] = file = describeModule(value.Module!);
-        facts.Record(ProgramFactKinds.EtwImageLoaded, new { image = value.Image, timeUtc = value.SecondUtc, file }, value.ProcessId);
+        facts.Record(ProgramFactKinds.EtwImageLoaded, new { image = value.Image, timeUtc = value.TimeUtc, file }, value.ProcessId);
     }
+
+    /// <summary>
+    /// Факт <c>file-io</c>: операции образа с файлом за минуту (<see cref="FileActivity"/>). Строка без полей минуты —
+    /// от помощника прежней версии, секундная: она пишется как минута из одной секунды.
+    /// </summary>
+    private void RecordFiles(EtwSummary value) => facts.Record(ProgramFactKinds.FileIo, new
+    {
+        image = value.Image,
+        file = value.File,
+        fromUtc = value.TimeUtc,
+        toUtc = value.LastUtc ?? value.TimeUtc,
+        seconds = value.Seconds ?? 1,
+        processes = value.Processes ?? 1,
+        opens = value.Opens,
+        reads = value.Reads,
+        readBytes = value.ReadBytes,
+        writes = value.Writes,
+        writeBytes = value.WriteBytes,
+        sharingViolations = value.SharingViolations,
+    }, value.ProcessId);
 
     private void ReportStatus()
     {

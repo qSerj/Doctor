@@ -176,6 +176,39 @@ public sealed class EtwBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task Минутная_сводка_файлов_ложится_фактом_file_io()
+    {
+        using var мост = Открыть();
+        var начало = new DateTime(2026, 9, 30, 12, 0, 1, DateTimeKind.Utc);
+        await File.WriteAllLinesAsync(EtwFiles.Summary(_каталог, Сеанс),
+        [
+            JsonSerializer.Serialize(new EtwSummary(начало, 2000, @"C:\p\clip.mp4", 3, 2, 8192, 0, 0, 0, Image: "device-enc.dll",
+                LastUtc: начало.AddSeconds(40), Seconds: 12, Processes: 4), ObservationJson.Options),
+            // Строка помощника прежней версии — секундная, без полей минуты.
+            JsonSerializer.Serialize(new EtwSummary(начало, 2001, @"C:\p\a.jpg", 1, 0, 0, 0, 0, 0), ObservationJson.Options),
+        ]);
+
+        var факты = await Дождаться(() => _журнал.After(0).Where(f => f.Kind == ProgramFactKinds.FileIo).ToList() is { Count: 2 } x ? x : null);
+
+        var минута = факты[0].Data;
+        Assert.Equal(2000, факты[0].ProcessId);
+        Assert.Equal("device-enc.dll", минута.GetProperty("image").GetString());
+        Assert.Equal(@"C:\p\clip.mp4", минута.GetProperty("file").GetString());
+        Assert.Equal(начало, минута.GetProperty("fromUtc").GetDateTime());
+        Assert.Equal(начало.AddSeconds(40), минута.GetProperty("toUtc").GetDateTime());
+        Assert.Equal((12, 4, 3, 2, 8192L), (минута.GetProperty("seconds").GetInt32(), минута.GetProperty("processes").GetInt32(),
+            минута.GetProperty("opens").GetInt32(), минута.GetProperty("reads").GetInt32(), минута.GetProperty("readBytes").GetInt64()));
+        // Поля старта процесса и модуля в факт о файлах не идут.
+        Assert.False(минута.TryGetProperty("processStart", out _));
+        Assert.False(минута.TryGetProperty("module", out _));
+
+        var секунда = факты[1].Data;
+        Assert.Equal(секунда.GetProperty("fromUtc").GetDateTime(), секунда.GetProperty("toUtc").GetDateTime());
+        Assert.Equal((1, 1), (секунда.GetProperty("seconds").GetInt32(), секунда.GetProperty("processes").GetInt32()));
+        Assert.Equal(JsonValueKind.Null, секунда.GetProperty("image").ValueKind);
+    }
+
+    [Fact]
     public async Task Загрузка_модуля_один_факт_на_образ_и_путь_версия_один_раз_на_путь()
     {
         var описано = new List<string>();

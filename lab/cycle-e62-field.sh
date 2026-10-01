@@ -536,7 +536,8 @@ PS
   lost="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="failed" and d.get("error")=="helper-lost"' "$io" 30)"
   check "в журнале etw-state failed helper-lost" "$([ -n "$lost" ] && echo 1 || echo 0)"
   back="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="ready"' "${lost:-0}" 90)"
-  again="$([ -n "$back" ] && wait_fact "$session" 'f["kind"]=="file-io"' "$back" 90)"
+  # file-io сводится по минутам (Э6.4): факт приходит через 5 с после конца минуты, то есть до 65 с после операции.
+  again="$([ -n "$back" ] && wait_fact "$session" 'f["kind"]=="file-io"' "$back" 150)"
   check "снова etw-state ready, затем file-io" "$([ -n "$back" ] && [ -n "$again" ] && echo 1 || echo 0)"
   check "сеанс не прерывался" "$(is "$(summary "$session")" 'true false')"
   ;;
@@ -641,7 +642,7 @@ reset-before)
   # в etw-before.txt. Потом владелец сбрасывает ВМ и входит — шаг reset-after.
   require_watch_session
   ready="$(wait_fact "$session" 'f["kind"]=="etw-state" and d.get("state")=="ready"' 0 120)"
-  io="$(wait_fact "$session" 'f["kind"]=="file-io"' "${ready:-0}" 120)"
+  io="$(wait_fact "$session" 'f["kind"]=="file-io"' "${ready:-0}" 180)"
   check "сеанс дежурства пишет ETW (ready, file-io)" "$([ -n "$io" ] && echo 1 || echo 0)"
   echo "$session" > "$out/session.txt"
   script="${etw_hash_script//@SESSION@/$session}"

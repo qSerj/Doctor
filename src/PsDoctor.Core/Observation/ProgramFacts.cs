@@ -14,6 +14,11 @@ public static class ProgramFactKinds
     /// <summary>Наблюдение за уже работающим процессом началось; прошлые события недоступны.</summary>
     public const string ProgramAttached = "program-attached";
 
+    /// <summary>
+    /// Файловые операции куста по ETW за минуту: один факт на минуту, образ процесса и файл (Э6.4). Данные: образ, файл,
+    /// первая и последняя операция, в скольких секундах и сколькими процессами образа файл трогали, открытия, чтения и
+    /// записи с байтами, отказы совместного доступа. Процесс факта — первый из них. До Э6.4 факт был секундным на процесс.
+    /// </summary>
     public const string FileIo = "file-io";
     public const string EtwState = "etw-state";
     public const string EtwProcessStarted = "etw-process-started";

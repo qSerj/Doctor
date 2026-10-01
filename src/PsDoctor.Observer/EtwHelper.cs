@@ -16,12 +16,19 @@ public sealed record EtwCommand(string Id, string Session, string Action, int Ro
 /// </param>
 public sealed record EtwStatus(string State, string? Error = null, long LostEvents = 0, string? Command = null);
 public sealed record EtwRawEvent(DateTime TimeUtc, int ProcessId, string Operation, string? File, long Bytes, int? Status);
+/// <summary>Строка сводки помощника: старт процесса, загрузка модуля или файловые операции минуты (<see cref="FileActivity"/>).</summary>
+/// <param name="TimeUtc">Время события; у файловых операций — первой операции минуты.</param>
+/// <param name="ProcessId">Процесс события; у файловых операций — первый из процессов образа, трогавших файл в эту минуту.</param>
 /// <param name="CommandLine">Командная строка процесса из события старта: у воркера ProShow она называет входной файл.</param>
-/// <param name="Module">Процесс загрузил этот модуль (Э6.3, часть Г); время в <paramref name="SecondUtc"/> — точное.</param>
-/// <param name="Image">Имя образа процесса, загрузившего <paramref name="Module"/>.</param>
-public sealed record EtwSummary(DateTime SecondUtc, int ProcessId, string? File, int Opens, int Reads, long ReadBytes,
+/// <param name="Module">Процесс загрузил этот модуль (Э6.3, часть Г).</param>
+/// <param name="Image">Имя образа процесса, загрузившего <paramref name="Module"/> или трогавшего <paramref name="File"/>.</param>
+/// <param name="LastUtc">Файловые операции: время последней операции минуты.</param>
+/// <param name="Seconds">Файловые операции: в скольких секундах минуты файл трогали.</param>
+/// <param name="Processes">Файловые операции: сколько процессов образа трогали файл в эту минуту.</param>
+public sealed record EtwSummary(DateTime TimeUtc, int ProcessId, string? File, int Opens, int Reads, long ReadBytes,
     int Writes, long WriteBytes, int SharingViolations, string? ProcessStart = null, int? ParentProcessId = null,
-    string? CommandLine = null, string? Module = null, string? Image = null);
+    string? CommandLine = null, string? Module = null, string? Image = null, DateTime? LastUtc = null, int? Seconds = null,
+    int? Processes = null);
 
 /// <summary>Сердцебиение помощника: раз в секунду новое время. По его смене мост знает, что помощник жив.</summary>
 public sealed record EtwHeartbeat(int Pid, DateTime TimeUtc);
@@ -216,7 +223,7 @@ public static class EtwHelper
     }
 }
 
-/// <summary>Сырые файловые события и секундные агрегаты одного сеанса; загрузки модулей процессами куста.</summary>
+/// <summary>Сырые файловые события и минутная сводка одного сеанса; загрузки модулей процессами куста.</summary>
 internal sealed class EtwCapture : IDisposable
 {
     public const string SessionPrefix = "PsDoctor-";
@@ -226,7 +233,7 @@ internal sealed class EtwCapture : IDisposable
     private readonly HashSet<int> processes = [];
     private readonly Dictionary<string, (int Pid, string? File)> pending = [];
     private readonly Dictionary<string, string> fileObjects = [];
-    private readonly Dictionary<(DateTime Second, int Pid, string? File), MutableSummary> totals = [];
+    private readonly FileActivity files = new();
     private readonly Dictionary<int, string> images = [];
     private readonly ModuleLoads modules = new();
     private readonly Lock gate = new();
@@ -375,14 +382,7 @@ internal sealed class EtwCapture : IDisposable
         lock (gate)
         {
             if (disposed) return;
-            var now = DateTime.UtcNow;
-            foreach (var key in totals.Keys.Where(x => x.Second < now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond))).ToArray())
-            {
-                var value = totals[key];
-                WriteSummary(new EtwSummary(key.Second, key.Pid, key.File, value.Opens, value.Reads,
-                    value.ReadBytes, value.Writes, value.WriteBytes, value.SharingViolations));
-                totals.Remove(key);
-            }
+            foreach (var value in files.Due(DateTime.UtcNow)) WriteSummary(value);
             raw.Flush();
             summary.Flush();
             var lost = session?.EventsLost ?? 0;
@@ -400,16 +400,7 @@ internal sealed class EtwCapture : IDisposable
     private void Add(DateTime time, int pid, string? file, string operation, long bytes, int? status)
     {
         if (disposed) return;
-        var second = time.AddTicks(-(time.Ticks % TimeSpan.TicksPerSecond));
-        var key = (second, pid, file);
-        if (!totals.TryGetValue(key, out var total)) totals[key] = total = new MutableSummary();
-        switch (operation)
-        {
-            case "open": total.Opens++; break;
-            case "read": total.Reads++; total.ReadBytes += bytes; break;
-            case "write": total.Writes++; total.WriteBytes += bytes; break;
-            case "sharing-violation": total.SharingViolations++; break;
-        }
+        files.Add(time, pid, images.GetValueOrDefault(pid), file, operation, bytes);
         raw.WriteLine(JsonSerializer.Serialize(new EtwRawEvent(time, pid, operation, file, bytes, status), ObservationJson.Options));
         if (raw.BaseStream.Position >= EtwFiles.SegmentBytes) Rotate();
     }
@@ -448,24 +439,11 @@ internal sealed class EtwCapture : IDisposable
         lock (gate)
         {
             disposed = true;
-            foreach (var (key, value) in totals)
-                WriteSummary(new EtwSummary(key.Second, key.Pid, key.File, value.Opens, value.Reads,
-                    value.ReadBytes, value.Writes, value.WriteBytes, value.SharingViolations));
-            totals.Clear();
+            foreach (var value in files.All()) WriteSummary(value);
             raw.Dispose();
             summary.Dispose();
         }
         EtwFiles.WriteAtomically(EtwFiles.Status(sessions, command.Session),
             new EtwStatus("stopped", LostEvents: lastLost, Command: command.Id));
-    }
-
-    private sealed class MutableSummary
-    {
-        public int Opens;
-        public int Reads;
-        public long ReadBytes;
-        public int Writes;
-        public long WriteBytes;
-        public int SharingViolations;
     }
 }
