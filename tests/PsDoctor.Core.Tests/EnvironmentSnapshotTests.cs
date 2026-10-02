@@ -274,6 +274,44 @@ public sealed class EnvironmentSnapshotTests
         Assert.Null(ProShowConfig.Value([], ProShowConfig.DShowUseFfmpeg));
     }
 
+    [Fact]
+    public void Галка_меняется_на_месте_и_больше_ничего()
+    {
+        byte[] файл =
+        [
+            0x95, 0x07,
+            .. Encoding.ASCII.GetBytes("cpicName\0ProShow Producer\0prefDShowUseFFMPEG\00\0prefMemHeadroom\03099648\0"),
+        ];
+
+        var исправлен = ProShowConfig.WithValue(файл, ProShowConfig.DShowUseFfmpeg, "1");
+
+        Assert.NotNull(исправлен);
+        Assert.Equal(файл.Length, исправлен.Length);
+        Assert.Equal("1", ProShowConfig.Value(исправлен, ProShowConfig.DShowUseFfmpeg));
+        Assert.Equal(1, файл.Zip(исправлен).Count(пара => пара.First != пара.Second));
+        Assert.Equal("0", ProShowConfig.Value(файл, ProShowConfig.DShowUseFfmpeg));
+    }
+
+    [Theory]
+    [InlineData("10")]
+    [InlineData("")]
+    [InlineData("\0")]
+    public void Значение_другой_длины_не_пишется(string значение)
+    {
+        byte[] файл = [0x95, 0x07, .. Encoding.ASCII.GetBytes("prefDShowUseFFMPEG\00\0")];
+
+        Assert.Null(ProShowConfig.WithValue(файл, ProShowConfig.DShowUseFfmpeg, значение));
+    }
+
+    [Fact]
+    public void Без_настройки_нечего_менять()
+    {
+        byte[] файл = [0x95, 0x07, .. Encoding.ASCII.GetBytes("cpicName\0ProShow Producer\0")];
+
+        Assert.Null(ProShowConfig.WithValue(файл, ProShowConfig.DShowUseFfmpeg, "1"));
+        Assert.Null(ProShowConfig.WithValue(файл[..^1], "cpicName", "x"));
+    }
+
     [Theory]
     // UAC выключен — виртуализации нет, что бы ни было с процессом.
     [InlineData(0, true, false, false, false)]

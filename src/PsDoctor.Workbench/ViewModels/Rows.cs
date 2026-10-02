@@ -42,6 +42,9 @@ public sealed class FactRow
         }
     }
 
+    /// <summary>Эпизод детектора (Э4.4) — узнанная известная проблема: в ленте выделяется цветом.</summary>
+    public bool IsEpisode => Kind == ProgramFactKinds.Episode;
+
     /// <summary>Веха — факт о ходе опыта, а не отсчёт телеметрии: её видно во вкладке «Журнал» по умолчанию.</summary>
     public bool IsMilestone => Milestones.Contains(Kind);
 

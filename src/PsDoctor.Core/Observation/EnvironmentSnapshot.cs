@@ -412,7 +412,28 @@ public static class ProShowConfig
         && layers.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(RunAsAdminLayer, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Значение настройки; нет её или файл оборван на ней — <c>null</c>. Значения — байты как есть, по Latin-1.</summary>
-    public static string? Value(ReadOnlySpan<byte> content, string name)
+    public static string? Value(ReadOnlySpan<byte> content, string name) =>
+        Find(content, name) is (int start, int length) ? Encoding.Latin1.GetString(content.Slice(start, length)) : null;
+
+    /// <summary>
+    /// Файл с другим значением настройки той же длины — остальные байты не тронуты, файл не перестраивается: правится
+    /// только то, что разобрано (рецепт Э4.4, <c>0</c> → <c>1</c>). Нет настройки или длина другая — <c>null</c>.
+    /// </summary>
+    public static byte[]? WithValue(ReadOnlySpan<byte> content, string name, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var bytes = Encoding.Latin1.GetBytes(value);
+        if (Find(content, name) is not (int start, int length) || length != bytes.Length || Array.IndexOf(bytes, (byte)0) >= 0)
+        {
+            return null;
+        }
+        var changed = content.ToArray();
+        bytes.CopyTo(changed, start);
+        return changed;
+    }
+
+    /// <summary>Где лежит значение настройки: строка за именем, найденным целиком.</summary>
+    private static (int Start, int Length)? Find(ReadOnlySpan<byte> content, string name)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         var key = Encoding.ASCII.GetBytes(name);
@@ -425,12 +446,11 @@ public static class ProShowConfig
             {
                 return null;
             }
-            var token = content.Slice(position, end);
             if (matched)
             {
-                return Encoding.Latin1.GetString(token);
+                return (position, end);
             }
-            matched = token.SequenceEqual(key);
+            matched = content.Slice(position, end).SequenceEqual(key);
             position += end + 1;
         }
         return null;

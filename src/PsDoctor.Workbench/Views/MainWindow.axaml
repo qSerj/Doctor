@@ -57,6 +57,14 @@
       <Setter Property="Foreground" Value="#E8C35A" />
       <Setter Property="FontWeight" Value="Bold" />
     </Style>
+    <!-- Эпизод детектора в ленте: узнанная проблема видна среди сотен фактов. -->
+    <Style Selector="Grid.episode">
+      <Setter Property="Background" Value="#3A2F10" />
+    </Style>
+    <Style Selector="Grid.episode TextBlock">
+      <Setter Property="Foreground" Value="#E8C35A" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
     <Style Selector="TextBlock.instruction">
       <Setter Property="FontSize" Value="22" />
       <Setter Property="TextWrapping" Value="Wrap" />
@@ -273,7 +281,7 @@
             <ListBox ItemsSource="{Binding Tape}" SelectedItem="{Binding SelectedFact, Mode=TwoWay}" FontFamily="monospace">
               <ListBox.ItemTemplate>
                 <DataTemplate>
-                  <Grid ColumnDefinitions="52,84,170,52,*">
+                  <Grid ColumnDefinitions="52,84,170,52,*" Classes.episode="{Binding IsEpisode}">
                     <TextBlock Grid.Column="0" Classes="caption" Text="{Binding Number}" />
                     <TextBlock Grid.Column="1" Classes="caption" Text="{Binding Elapsed}" />
                     <TextBlock Grid.Column="2" Text="{Binding Kind}" />

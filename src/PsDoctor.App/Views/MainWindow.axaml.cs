@@ -35,6 +35,11 @@ public sealed partial class MainWindow : Window
     private DateTime diagnosticStarted;
     private readonly ProShowHangWatch hang = new();
     private bool wizardOpen;
+    private readonly ProShowVideoImportFix videoImport;
+    private Task? episodeWatch;
+    private string? episodeSession;
+    private long episodeAfter;
+    private bool videoAdvice;
 
     /// <summary>Сколько мастер ждёт наблюдателя с меткой, прежде чем записать её у себя и идти дальше.</summary>
     private static readonly TimeSpan IncidentTimeout = TimeSpan.FromSeconds(5);
@@ -43,6 +48,7 @@ public sealed partial class MainWindow : Window
     private static TimeSpan Now => TimeSpan.FromMilliseconds(Environment.TickCount64);
 
     public string TrayStatus => hang.NotResponding(Now) ? "ProShow не отвечает" :
+        videoAdvice ? "Есть совет" :
         diagnosticSession is not null ? "Наблюдение за ProShow" :
         analysis?.Findings.Count > 0 ? "Есть рекомендации" :
         cleaner.IsProgramRunning() ? "Всё нормально" : "ProShow не запущен";
@@ -50,6 +56,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+        videoImport = ProShowVideoImportFix.ForProgram(ProgramPath, cleaner.IsProgramRunning);
         Opened += (_, _) => RefreshStatus();
         Activated += (_, _) => RefreshStatus();
         Closed += (_, _) => diagnosticTimer?.Stop();
@@ -64,10 +71,16 @@ public sealed partial class MainWindow : Window
         catch { running = null; }
         var watching = diagnosticSession is not null;
         var hasFindings = analysis?.Findings.Count > 0;
+        // Галку отметили руками или другим путём — совет больше не нужен.
+        if (videoAdvice && videoImport.CurrentValue() == ProShowVideoImportFix.Checked)
+        {
+            videoAdvice = false;
+        }
 
         // Не отвечающий ProShow главнее всего: Оля видит, что это замечено, и знает, куда нажать.
         var (tone, icon, title, hint) =
             hang.NotResponding(Now) ? ("warn", "IconWarning", "ProShow не отвечает", "Бывает при загрузке больших файлов. Если не пройдёт — нажмите «Решить проблему».")
+            : videoAdvice ? ("warn", "IconWarning", "ProShow не показывает видео", "Doctor знает, как это исправить: нажмите «Исправить» ниже.")
             : watching ? ("watch", "IconWatch", "Идёт наблюдение", "Работайте в ProShow как обычно. Doctor записывает, что происходит.")
             : hasFindings ? ("warn", "IconWarning", "Есть рекомендации", "В проекте есть файлы, которые могут замедлять работу ProShow.")
             : running is null ? ("idle", "IconUnknown", "Состояние неизвестно", "Не удалось проверить, запущен ли ProShow.")
@@ -81,13 +94,14 @@ public sealed partial class MainWindow : Window
         Control<TextBlock>("ProgramStatus").Text = title;
         Control<TextBlock>("ProgramHint").Text = hint;
         Control<Button>("FinishButton").IsVisible = watching;
+        Control<Border>("VideoAdviceBorder").IsVisible = videoAdvice;
         UpdateNextStep();
     }
 
     /// <summary>Синей бывает одна карточка — следующий шаг: закончить наблюдение, открыть, проверить или показать рекомендации.</summary>
     private void UpdateNextStep()
     {
-        var free = diagnosticSession is null && !(analysis?.Findings.Count > 0);
+        var free = diagnosticSession is null && !(analysis?.Findings.Count > 0) && !videoAdvice;
         Control<Button>("OpenButton").Classes.Set("primary", free && (showPath is null || analysis is not null));
         Control<Button>("CheckButton").Classes.Set("primary", free && showPath is not null && analysis is null);
     }
@@ -873,6 +887,96 @@ public sealed partial class MainWindow : Window
         finally { diagnosticPolling = false; }
     }
     private async void РазобратьсяСПроблемой(object? sender, RoutedEventArgs args) => await ShowProblemAsync();
+
+    /// <summary>
+    /// Эпизоды живого сеанса наблюдателя — любого: дежурства, мастера, инженера (Э4.4). Поток отдаёт только факты
+    /// <c>episode</c>; кончается вместе с сеансом, обрыв подхватывает следующий тик с последнего номера.
+    /// </summary>
+    public void WatchEpisodes()
+    {
+        if (episodeWatch is { IsCompleted: false } || !HasObserverConfiguration()) return;
+        episodeWatch = Task.Run(ReadEpisodesAsync);
+    }
+
+    private async Task ReadEpisodesAsync()
+    {
+        try
+        {
+            using var observer = CreateObserver();
+            if ((await observer.HealthAsync()).Activity?.Session is not { } session) return;
+            if (session != episodeSession)
+            {
+                episodeSession = session;
+                episodeAfter = 0;
+            }
+            await foreach (var fact in observer.StreamAsync(session, episodeAfter, [ProgramFactKinds.Episode]))
+            {
+                episodeAfter = fact.Number;
+                if (fact.Data.TryGetProperty("pattern", out var pattern)
+                    && pattern.ValueKind == JsonValueKind.String
+                    && pattern.GetString() == RepeatedLaunchPattern.QuickTimeLoop.Name)
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(ShowVideoAdvice);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Наблюдатель молчит или связь оборвалась — следующий тик попробует снова.
+        }
+    }
+
+    /// <summary>
+    /// Совет по эпизоду <c>qtime-loop</c> — только при галке, не отмеченной в действующем файле: отмеченная галка
+    /// этим рецептом не объясняется. Файл неизвестен — совет есть, исправлять предложат руками.
+    /// </summary>
+    private void ShowVideoAdvice()
+    {
+        if (videoImport.CurrentValue() == ProShowVideoImportFix.Checked) return;
+        videoAdvice = true;
+        RefreshStatus();
+    }
+
+    private const string VideoManual =
+        "Сделайте это в ProShow: меню Edit → Preferences, раздел Playback, отметьте «Avoid using DirectShow when possible» " +
+        "и нажмите OK. Потом закройте ProShow и откройте проект снова.";
+
+    private async void ИсправитьВидео(object? sender, RoutedEventArgs args) => await FixVideoImportAsync();
+
+    /// <summary>Рецепт <c>qtime-loop</c>: при закрытом ProShow отметить галку в действующем <c>proshow.cfg</c>, копия — в папке Doctor.</summary>
+    public async Task FixVideoImportAsync()
+    {
+        while (true)
+        {
+            var answer = await AskAsync("Видео в ProShow",
+                "В настройках ProShow выбран способ открытия видео, которого на этом компьютере нет, поэтому вместо видео — " +
+                "белое или чёрное поле и мигающая надпись «Loading». Doctor включит обычный способ. Проект и видео не меняются.\n\n" +
+                "ProShow должен быть закрыт: сохраните работу, закройте ProShow и нажмите «Исправить».",
+                "Исправить", null, "IconMedia", "warn");
+            if (answer != 0) return;
+            var result = videoImport.Apply();
+            switch (result.Outcome)
+            {
+                case VideoImportFixOutcome.ProgramRunning:
+                    await ShowInfoAsync("ProShow ещё открыт", "Сохраните работу, закройте ProShow и нажмите «Исправить» ещё раз.",
+                        "IconWarning", "warn");
+                    continue;
+                case VideoImportFixOutcome.Fixed or VideoImportFixOutcome.AlreadySet:
+                    videoAdvice = false;
+                    RefreshStatus();
+                    SetResult("Настройка ProShow исправлена. Откройте проект снова — видео должно появиться.", "ok");
+                    await ShowInfoAsync("Готово", "Откройте проект в ProShow снова — видео должно появиться.", "IconOk", "ok");
+                    return;
+                default:
+                    if (result.Error is not null)
+                    {
+                        AppErrors.Write(new IOException(result.Error), "video-import-fix", handled: true);
+                    }
+                    await ShowInfoAsync("Исправьте настройку вручную", "Doctor не смог поменять настройку сам. " + VideoManual);
+                    return;
+            }
+        }
+    }
 
     private static bool HasObserverConfiguration() => ObserverAddress() is not null;
 

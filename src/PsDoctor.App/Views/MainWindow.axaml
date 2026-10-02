@@ -81,6 +81,16 @@
           </Grid>
         </Button>
 
+        <!-- Совет по эпизоду детектора (Э4.4): ProShow не может открыть видео. Держится, пока галка не отмечена. -->
+        <Border x:Name="VideoAdviceBorder" Classes="banner warn" IsVisible="False">
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+            <PathIcon Data="{DynamicResource IconMedia}" />
+            <TextBlock Grid.Column="1" Classes="body" VerticalAlignment="Center" TextWrapping="Wrap"
+                       Text="ProShow не может показать видео: в его настройках выбран способ, которого на этом компьютере нет." />
+            <Button Grid.Column="2" Classes="primary" Content="Исправить" Click="ИсправитьВидео" VerticalAlignment="Center" />
+          </Grid>
+        </Border>
+
         <!-- Итог проверки: появляется после неё. -->
         <Border x:Name="AdviceBorder" Classes="banner" IsVisible="False">
           <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">

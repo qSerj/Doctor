@@ -88,6 +88,7 @@ public sealed partial class App : Application
             statusTimer.Tick += async (_, _) =>
             {
                 await window.ProbeAsync();
+                window.WatchEpisodes();
                 window.RefreshStatus();
                 status.Header = window.TrayStatus;
             };

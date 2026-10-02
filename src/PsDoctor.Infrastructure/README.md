@@ -21,6 +21,7 @@
 | как читаются окна и диалоги | `Observation/WindowWatcher.cs`, нажатие — `Observation/UiAutomation.cs` |
 | что складывается в один сеанс | `Observation/ProgramRun.cs`, для пассивного сеанса `Observation/AttachedRun.cs` |
 | что за машина: факт `environment` и слепок окружения | `Observation/MachineEnvironment.cs`, `Observation/EnvironmentSnapshotReader.cs`; файл и его версия — `Observation/FileDescription.cs` |
+| рецепт эпизода `qtime-loop`: галка в `proshow.cfg` | `Observation/ProShowVideoImportFix.cs`; какой файл действует — `EnvironmentSnapshotReader.LocateConfig`, тот же выбор, что в слепке |
 
 ## Чего здесь нет
 

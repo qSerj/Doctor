@@ -9,6 +9,12 @@ namespace PsDoctor.Infrastructure.Observation;
 /// <summary>Найденный процесс программы: повышен ли его токен; <c>null</c> — токен не открылся или процессов несколько.</summary>
 public sealed record ProgramElevation(bool? Elevated);
 
+/// <summary>Файлы настроек ProShow и выбор действующего: <see cref="ProShowConfig.Virtualized"/>, <see cref="ProShowConfig.Effective"/>.</summary>
+/// <param name="Shortcuts">Ярлыки на программу: ключ записи слепка и галка «от имени администратора».</param>
+/// <param name="Effective">Файл, который программа читает; <c>null</c> — файлов нет или выбор неизвестен.</param>
+public sealed record ProShowConfigLocation(string? ProgramFile, string? VirtualStoreFile, bool RunAsAdmin,
+    IReadOnlyList<(string Key, bool RunAsAdmin)> Shortcuts, bool? Virtualized, string? Effective);
+
 /// <summary>
 /// Слепок окружения (Э6.3): декодеры и то, откуда они, в обоих видах реестра. ProShow 32-битный и видит только
 /// 32-битный вид, а наблюдатель 64-битный: без явного <see cref="RegistryView.Registry32"/> он прочёл бы не то, что
@@ -102,13 +108,8 @@ public static class EnvironmentSnapshotReader
     private static void ProShowEntries(List<EnvironmentEntry> entries, string programPath, ProgramElevation? running,
         Dictionary<string, EnvironmentFile> files)
     {
-        var (programFile, virtualStoreFile) = ProShowConfigFiles(programPath);
-        var runAsAdmin = RunAsAdmin(programPath);
-        var shortcuts = Shortcuts(programPath);
+        var (programFile, virtualStoreFile, runAsAdmin, shortcuts, virtualized, config) = LocateConfig(programPath, running);
         var shortcutRunAsAdmin = shortcuts.Any(shortcut => shortcut.RunAsAdmin);
-        var virtualized = ProShowConfig.Virtualized(MachineEnvironment.EnableLua(), running is not null, running?.Elevated,
-            runAsAdmin || shortcutRunAsAdmin);
-        var config = ProShowConfig.Effective(programFile, virtualStoreFile, virtualized);
         entries.Add(new(EnvironmentSections.ProShow, null, "program",
             Values(("build", MachineEnvironment.ProgramBuild(programPath)), ("config", config),
                 (ProShowConfig.DShowUseFfmpeg, config is null ? null : Setting(config)),
@@ -129,6 +130,23 @@ public static class EnvironmentSnapshotReader
                     Describe(path, files)));
             }
         }
+    }
+
+    /// <summary>
+    /// Какой <c>proshow.cfg</c> программа читает — тот же выбор, что в слепке, для рецепта App (Э4.4): правится ровно
+    /// тот файл, который слепок назвал действующим.
+    /// </summary>
+    /// <param name="running">Процесс программы, если он найден; у закрытой программы — <c>null</c>.</param>
+    public static ProShowConfigLocation LocateConfig(string programPath, ProgramElevation? running = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(programPath);
+        var (programFile, virtualStoreFile) = ProShowConfigFiles(programPath);
+        var runAsAdmin = RunAsAdmin(programPath);
+        var shortcuts = Shortcuts(programPath);
+        var virtualized = ProShowConfig.Virtualized(MachineEnvironment.EnableLua(), running is not null, running?.Elevated,
+            runAsAdmin || shortcuts.Any(shortcut => shortcut.RunAsAdmin));
+        return new(programFile, virtualStoreFile, runAsAdmin, shortcuts, virtualized,
+            ProShowConfig.Effective(programFile, virtualStoreFile, virtualized));
     }
 
     private static string? Setting(string config)
