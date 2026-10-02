@@ -204,6 +204,57 @@ public sealed class EnvironmentSnapshotTests
     }
 
     [Fact]
+    public void Путь_в_другом_регистре_не_изменение()
+    {
+        // Как у монтажёра против стенда: C:\WINDOWS против C:\Windows в пути файла и в регистрации.
+        var записи = Стенд();
+        записи[1] = записи[1] with
+        {
+            Values = new Dictionary<string, string?>(записи[1].Values) { ["inproc"] = @"C:\Windows\SysWOW64\LAV.ax" },
+        };
+        var другие = Стенд();
+        другие[1] = другие[1] with
+        {
+            Values = new Dictionary<string, string?>(другие[1].Values) { ["inproc"] = @"C:\WINDOWS\SysWOW64\lav.ax" },
+            File = другие[1].File! with { Path = другие[1].File!.Path.ToUpperInvariant() },
+        };
+
+        var разница = EnvironmentComparison.Compare(EnvironmentSnapshot.Create(Снят, 0, записи), EnvironmentSnapshot.Create(Снят, 0, другие));
+
+        Assert.True(разница.IsEmpty);
+    }
+
+    [Fact]
+    public void Регистр_имени_вне_пути_изменение()
+    {
+        var записи = Стенд();
+        записи[1] = записи[1] with { Values = new Dictionary<string, string?>(записи[1].Values) { ["name"] = "LAV VIDEO DECODER" } };
+
+        var разница = EnvironmentComparison.Compare(EnvironmentSnapshot.Create(Снят, 0, Стенд()), EnvironmentSnapshot.Create(Снят, 0, записи));
+
+        Assert.Equal(new EnvironmentFieldChange("name", "LAV Video Decoder", "LAV VIDEO DECODER"), Assert.Single(Assert.Single(разница.Changed).Fields));
+    }
+
+    [Fact]
+    public void Время_файла_между_машинами_не_сравнивается_а_на_одной_машине_изменение()
+    {
+        var до = EnvironmentSnapshot.Create(Снят, 0, Стенд());
+        var после = Стенд();
+        после[1] = после[1] with { File = после[1].File! with { Written = Собран.AddDays(200) } };
+        после[2] = после[2] with { File = после[2].File! with { Written = Собран.AddDays(200), Version = "1.2.3.5" } };
+        var другая = EnvironmentSnapshot.Create(Снят, 0, после);
+
+        var машины = EnvironmentComparison.Compare(до, другая, EnvironmentComparisonMode.Machines);
+        var одна = EnvironmentComparison.Compare(до, другая);
+
+        var версия = Assert.Single(машины.Changed);
+        Assert.Equal(после[2].Key, версия.Key);
+        Assert.Equal([new EnvironmentFieldChange("file.version", "1.2.3.4", "1.2.3.5")], версия.Fields);
+        Assert.Equal(2, одна.Changed.Count);
+        Assert.All(одна.Changed, изменение => Assert.Contains(изменение.Fields, поле => поле.Name == "file.written"));
+    }
+
+    [Fact]
     public void Настройка_ProShow_ищется_по_имени_целиком_а_не_парами()
     {
         // Как в proshow.cfg программы 9.0: два байта заголовка, строки через ноль, посреди — список, ломающий пары.
@@ -221,6 +272,51 @@ public sealed class EnvironmentSnapshotTests
         Assert.Null(ProShowConfig.Value(файл, "prefDShowUse"));
         Assert.Null(ProShowConfig.Value(файл[..^1], "prefMemHeadroom"));
         Assert.Null(ProShowConfig.Value([], ProShowConfig.DShowUseFfmpeg));
+    }
+
+    [Theory]
+    // UAC выключен — виртуализации нет, что бы ни было с процессом.
+    [InlineData(0, true, false, false, false)]
+    [InlineData(0, false, null, false, false)]
+    // Живой процесс говорит сам за себя, метка ему не указ: ярлык «от имени администратора» её не ставит.
+    [InlineData(1, true, true, false, false)]
+    [InlineData(1, true, false, true, true)]
+    [InlineData(null, true, false, false, true)]
+    [InlineData(1, true, null, false, null)]
+    // Программы нет — судим по метке.
+    [InlineData(1, false, null, true, false)]
+    [InlineData(1, false, null, false, true)]
+    public void Виртуализация_по_UAC_живому_процессу_или_метке(int? enableLua, bool запущена, bool? повышена, bool метка, bool? ожидается)
+    {
+        Assert.Equal(ожидается, ProShowConfig.Virtualized(enableLua, запущена, повышена, метка));
+    }
+
+    [Theory]
+    // Как у монтажёра: копия в VirtualStore есть, ProShow повышен — действует файл рядом с программой.
+    [InlineData("prog", "vs", false, "prog")]
+    [InlineData("prog", "vs", true, "vs")]
+    [InlineData("prog", "vs", null, null)]
+    [InlineData(null, "vs", false, null)]
+    [InlineData(null, "vs", true, "vs")]
+    // Копии нет — выбора нет.
+    [InlineData("prog", null, true, "prog")]
+    [InlineData("prog", null, null, "prog")]
+    [InlineData(null, null, null, null)]
+    public void Действующий_proshow_cfg_по_виртуализации(string? рядом, string? копия, bool? виртуализован, string? ожидается)
+    {
+        Assert.Equal(ожидается, ProShowConfig.Effective(рядом, копия, виртуализован));
+    }
+
+    [Theory]
+    [InlineData("~ RUNASADMIN", true)]
+    [InlineData("~ WIN7RTM RUNASADMIN HIGHDPIAWARE", true)]
+    [InlineData("runasadmin", true)]
+    [InlineData("~ WIN7RTM", false)]
+    [InlineData("~ RUNASADMINX", false)]
+    [InlineData(null, false)]
+    public void Метка_от_имени_администратора_среди_меток_совместимости(string? метки, bool есть)
+    {
+        Assert.Equal(есть, ProShowConfig.HasRunAsAdmin(метки));
     }
 
     [Fact]

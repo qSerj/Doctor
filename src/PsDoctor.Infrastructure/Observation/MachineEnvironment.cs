@@ -118,7 +118,7 @@ public static class MachineEnvironment
         }
     }
 
-    private static int? EnableLua()
+    internal static int? EnableLua()
     {
         try
         {
@@ -144,7 +144,7 @@ public static class MachineEnvironment
     }
 
     /// <summary>Токен процесса повышен; не открылся — <c>null</c>.</summary>
-    private static bool? Elevated(int processId)
+    internal static bool? Elevated(int processId)
     {
         var process = OpenProcess(ProcessQueryLimitedInformation, false, processId);
         if (process == IntPtr.Zero)

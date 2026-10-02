@@ -16,7 +16,7 @@ public static class EnvironmentExitCodes
 }
 
 /// <summary>
-/// <c>psdoctor environment diff &lt;a.json&gt; &lt;b.json&gt;</c> — чем две машины различаются для программы (Э6.3).
+/// <c>psdoctor environment diff &lt;a.json&gt; &lt;b.json&gt; [--machines]</c> — чем две машины различаются для программы (Э6.3).
 /// Работает без наблюдателя и на любой ОС: слепки — файлы, снятые <c>psdoctor observe environment --out</c> или
 /// лежащие в пакете сеанса. Вердиктов нет: разница, а не суждение.
 /// </summary>
@@ -29,7 +29,8 @@ public static class EnvironmentCommand
         ArgumentNullException.ThrowIfNull(stderr);
 
         var json = args.Contains("--json");
-        var files = args.Where(arg => arg != "--json").ToList();
+        var mode = args.Contains("--machines") ? EnvironmentComparisonMode.Machines : EnvironmentComparisonMode.SameMachine;
+        var files = args.Where(arg => arg is not ("--json" or "--machines")).ToList();
         if (files is ["--help" or "-h"])
         {
             WriteUsage(stdout);
@@ -45,7 +46,7 @@ public static class EnvironmentCommand
         {
             return EnvironmentExitCodes.Error;
         }
-        var diff = EnvironmentComparison.Compare(before, after);
+        var diff = EnvironmentComparison.Compare(before, after, mode);
         if (json)
         {
             stdout.WriteLine(JsonSerializer.Serialize(diff, ObservationJson.Options));
@@ -117,10 +118,12 @@ public static class EnvironmentCommand
 
     private static void WriteUsage(TextWriter writer)
     {
-        writer.WriteLine("psdoctor environment diff <a.json> <b.json> [--json]");
+        writer.WriteLine("psdoctor environment diff <a.json> <b.json> [--machines] [--json]");
         writer.WriteLine();
         writer.WriteLine("  Разница двух слепков окружения: + только во втором, - только в первом, ~ изменилось.");
-        writer.WriteLine("  --json    разница одной строкой JSON");
+        writer.WriteLine("  Регистр в путях не различается. Без --machines слепки — одна машина до и после.");
+        writer.WriteLine("  --machines  слепки двух машин: время записи файлов не сравнивается");
+        writer.WriteLine("  --json      разница одной строкой JSON");
         writer.WriteLine();
         writer.WriteLine($"Коды возврата: {EnvironmentExitCodes.Same} — одинаковы; {EnvironmentExitCodes.Different} — различаются; "
             + $"{EnvironmentExitCodes.Error} — ошибка.");

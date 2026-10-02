@@ -75,6 +75,21 @@ public sealed class EnvironmentCommandTests : IDisposable
     }
 
     [Fact]
+    public void Ключ_machines_не_сравнивает_время_файлов()
+    {
+        var фильтр = Фильтр("{AAA}", "LAV", "0x00800003");
+        var стенд = Файл("стенд.json", фильтр);
+        var ольга = Файл("ольга.json", фильтр with { File = фильтр.File! with { Written = Снят.AddDays(-400) } });
+
+        var (одна, _, _) = Run("diff", стенд, ольга);
+        var (машины, stdout, _) = Run("diff", "--machines", стенд, ольга);
+
+        Assert.Equal(EnvironmentExitCodes.Different, одна);
+        Assert.Equal(EnvironmentExitCodes.Same, машины);
+        Assert.Contains("изменено 0", Assert.Single(stdout), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Не_слепок_или_нет_файла_ошибка()
     {
         var мусор = Path.Combine(_каталог, "мусор.json");

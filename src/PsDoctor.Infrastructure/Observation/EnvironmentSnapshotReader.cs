@@ -6,6 +6,9 @@ using PsDoctor.Core.Observation;
 
 namespace PsDoctor.Infrastructure.Observation;
 
+/// <summary>Найденный процесс программы: повышен ли его токен; <c>null</c> — токен не открылся или процессов несколько.</summary>
+public sealed record ProgramElevation(bool? Elevated);
+
 /// <summary>
 /// Слепок окружения (Э6.3): декодеры и то, откуда они, в обоих видах реестра. ProShow 32-битный и видит только
 /// 32-битный вид, а наблюдатель 64-битный: без явного <see cref="RegistryView.Registry32"/> он прочёл бы не то, что
@@ -29,7 +32,8 @@ public static class EnvironmentSnapshotReader
     private const string StorePackages =
         @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
 
-    public static EnvironmentSnapshot Read(string programPath)
+    /// <param name="running">Процесс программы, если он найден: по нему видно, какой <c>proshow.cfg</c> она читает.</param>
+    public static EnvironmentSnapshot Read(string programPath, ProgramElevation? running = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(programPath);
         var watch = Stopwatch.StartNew();
@@ -37,7 +41,7 @@ public static class EnvironmentSnapshotReader
         var files = new Dictionary<string, EnvironmentFile>(StringComparer.OrdinalIgnoreCase);
         var entries = new List<EnvironmentEntry>();
         Section(entries, EnvironmentSections.System, null, list => list.Add(SystemEntry()));
-        Section(entries, EnvironmentSections.ProShow, null, list => list.Add(ProShowEntry(programPath, files)));
+        Section(entries, EnvironmentSections.ProShow, null, list => ProShowEntries(list, programPath, running, files));
         // На 32-битной Windows вид один: 64-битный повторил бы 32-битный под другим именем.
         var views = Environment.Is64BitOperatingSystem ? new[] { RegistryView.Registry32, RegistryView.Registry64 } : new[] { RegistryView.Registry32 };
         foreach (var view in views)
@@ -91,50 +95,161 @@ public static class EnvironmentSnapshotReader
 
     /// <summary>
     /// Программа, её сборка и настройки, от которых зависит путь декодирования: галка «Avoid using DirectShow» выбирает
-    /// между встроенным FFmpeg и QuickTime.
+    /// между встроенным FFmpeg и QuickTime. Файлов настроек может быть два — рядом с программой и в VirtualStore; какой из
+    /// них программа читает, решает виртуализация (<see cref="ProShowConfig.Virtualized"/>). Каждый найденный файл —
+    /// отдельная запись со своим значением и временем записи: устаревшая копия видна, даже когда действует другая.
     /// </summary>
-    private static EnvironmentEntry ProShowEntry(string programPath, Dictionary<string, EnvironmentFile> files)
+    private static void ProShowEntries(List<EnvironmentEntry> entries, string programPath, ProgramElevation? running,
+        Dictionary<string, EnvironmentFile> files)
     {
-        var config = ProShowConfigFile(programPath);
-        string? useFfmpeg = null;
-        if (config is not null)
+        var (programFile, virtualStoreFile) = ProShowConfigFiles(programPath);
+        var runAsAdmin = RunAsAdmin(programPath);
+        var shortcuts = Shortcuts(programPath);
+        var shortcutRunAsAdmin = shortcuts.Any(shortcut => shortcut.RunAsAdmin);
+        var virtualized = ProShowConfig.Virtualized(MachineEnvironment.EnableLua(), running is not null, running?.Elevated,
+            runAsAdmin || shortcutRunAsAdmin);
+        var config = ProShowConfig.Effective(programFile, virtualStoreFile, virtualized);
+        entries.Add(new(EnvironmentSections.ProShow, null, "program",
+            Values(("build", MachineEnvironment.ProgramBuild(programPath)), ("config", config),
+                (ProShowConfig.DShowUseFfmpeg, config is null ? null : Setting(config)),
+                ("runAsAdmin", runAsAdmin ? "true" : "false"),
+                ("shortcutRunAsAdmin", shortcutRunAsAdmin ? "true" : "false"),
+                ("virtualized", virtualized switch { true => "true", false => "false", null => null })),
+            Describe(programPath, files)));
+        foreach (var shortcut in shortcuts)
         {
-            try
+            entries.Add(new(EnvironmentSections.ProShow, null, $"shortcut/{shortcut.Key}",
+                Values(("runAsAdmin", shortcut.RunAsAdmin ? "true" : "false")), null));
+        }
+        foreach (var (key, path) in new[] { ("config/program", programFile), ("config/virtual-store", virtualStoreFile) })
+        {
+            if (path is not null)
             {
-                useFfmpeg = ProShowConfig.Value(File.ReadAllBytes(config), ProShowConfig.DShowUseFfmpeg);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                // Программа держит файл или его нет — настройка неизвестна, снятие не падает.
+                entries.Add(new(EnvironmentSections.ProShow, null, key, Values((ProShowConfig.DShowUseFfmpeg, Setting(path))),
+                    Describe(path, files)));
             }
         }
-        return new(EnvironmentSections.ProShow, null, "program",
-            Values(("build", MachineEnvironment.ProgramBuild(programPath)), ("config", config),
-                (ProShowConfig.DShowUseFfmpeg, useFfmpeg)),
-            Describe(programPath, files));
+    }
+
+    private static string? Setting(string config)
+    {
+        try
+        {
+            return ProShowConfig.Value(File.ReadAllBytes(config), ProShowConfig.DShowUseFfmpeg);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Программа держит файл или его нет — настройка неизвестна, снятие не падает.
+            return null;
+        }
     }
 
     /// <summary>
-    /// <c>proshow.cfg</c>, который видит программа. Она пишет его рядом с собой, но у пользователя без прав на Program Files
-    /// Windows уводит запись в <c>%LOCALAPPDATA%\VirtualStore</c>, и тогда программа читает оттуда. Нет ни там, ни там —
-    /// <c>null</c>.
+    /// <c>proshow.cfg</c> рядом с программой и его копия в <c>%LOCALAPPDATA%\VirtualStore</c> — туда Windows уводит запись
+    /// виртуализованной программы без прав на Program Files. VirtualStore — пользователя наблюдателя: он тот же, под кем
+    /// работает ProShow. Нет файла — <c>null</c>.
     /// </summary>
-    internal static string? ProShowConfigFile(string programPath)
+    internal static (string? Program, string? VirtualStore) ProShowConfigFiles(string programPath)
     {
         var directory = Path.GetDirectoryName(programPath);
         if (string.IsNullOrEmpty(directory))
         {
-            return null;
+            return (null, null);
         }
         var root = Path.GetPathRoot(directory);
-        var candidates = new List<string>();
-        if (!string.IsNullOrEmpty(root))
+        var program = Path.Combine(directory, ProShowConfig.FileName);
+        var virtualStore = string.IsNullOrEmpty(root)
+            ? null
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VirtualStore",
+                directory[root.Length..], ProShowConfig.FileName);
+        return (File.Exists(program) ? program : null, virtualStore is not null && File.Exists(virtualStore) ? virtualStore : null);
+    }
+
+    /// <summary>
+    /// Метка «от имени администратора» у программы в свойствах совместимости: у пользователя или у всех, в обоих видах
+    /// реестра. Имя значения — полный путь программы.
+    /// </summary>
+    private static bool RunAsAdmin(string programPath)
+    {
+        const string layers = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+        var program = Path.GetFullPath(programPath);
+        foreach (var (hive, view) in new[]
+                 {
+                     (RegistryHive.CurrentUser, RegistryView.Default),
+                     (RegistryHive.LocalMachine, RegistryView.Registry64),
+                     (RegistryHive.LocalMachine, RegistryView.Registry32),
+                 })
         {
-            candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VirtualStore",
-                directory[root.Length..], ProShowConfig.FileName));
+            try
+            {
+                using var root = RegistryKey.OpenBaseKey(hive, view);
+                using var key = root.OpenSubKey(layers);
+                if (key?.GetValueNames().FirstOrDefault(name => string.Equals(name, program, StringComparison.OrdinalIgnoreCase)) is { } name
+                    && ProShowConfig.HasRunAsAdmin(key.GetValue(name) as string))
+                {
+                    return true;
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                // Раздел не прочёлся — метки там для нас нет.
+            }
         }
-        candidates.Add(Path.Combine(directory, ProShowConfig.FileName));
-        return candidates.FirstOrDefault(File.Exists);
+        return false;
+    }
+
+    /// <summary>
+    /// Где лежат ярлыки, которыми запускают программу: рабочий стол, «Пуск» и закреплённые на панели задач — у
+    /// пользователя и у всех. Ключ записи — имя места и путь внутри него: имя пользователя в ключ не попадает, и ярлыки
+    /// двух машин сопоставляются.
+    /// </summary>
+    private static IEnumerable<(string Name, string Directory)> ShortcutPlaces() =>
+    [
+        ("desktop", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)),
+        ("common-desktop", Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)),
+        ("start-menu", Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)),
+        ("common-start-menu", Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)),
+        ("pinned", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            @"Microsoft\Internet Explorer\Quick Launch\User Pinned")),
+    ];
+
+    /// <summary>Самый большой ярлык, который читается: обычный — единицы килобайт.</summary>
+    private const long ShortcutLimit = 1 << 20;
+
+    /// <summary>
+    /// Ярлыки на программу и галка «от имени администратора» у каждого. Ярлык, который не прочёлся, пропускается: он
+    /// ничего не говорит о том, как запускают программу.
+    /// </summary>
+    private static List<(string Key, bool RunAsAdmin)> Shortcuts(string programPath)
+    {
+        var program = Path.GetFullPath(programPath);
+        var found = new List<(string Key, bool RunAsAdmin)>();
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        foreach (var (name, directory) in ShortcutPlaces())
+        {
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            {
+                continue;
+            }
+            foreach (var path in Directory.EnumerateFiles(directory, "*.lnk", options))
+            {
+                try
+                {
+                    if (new FileInfo(path).Length > ShortcutLimit
+                        || ShellLink.Parse(File.ReadAllBytes(path)) is not { Target: { } target } link
+                        || !string.Equals(Environment.ExpandEnvironmentVariables(target), program, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    found.Add(($"{name}/{Path.GetRelativePath(directory, path).Replace('\\', '/')}", link.RunAsAdmin));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Ярлык держат или закрыли — пропускаем.
+                }
+            }
+        }
+        return found;
     }
 
     /// <summary>Кодеки VfW и ACM: значения <c>vidc.*</c> и <c>msacm.*</c> раздела <c>Drivers32</c>.</summary>

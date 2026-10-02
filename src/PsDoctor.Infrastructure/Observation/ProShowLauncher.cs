@@ -76,7 +76,27 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvir
 
     public EnvironmentFacts ReadEnvironment(int? processId) => MachineEnvironment.Read(ProgramPath, processId);
 
-    public EnvironmentSnapshot ReadSnapshot() => EnvironmentSnapshotReader.Read(ProgramPath);
+    /// <summary>
+    /// Слепок с живым процессом, если он есть: повышен ли он, решает, какой <c>proshow.cfg</c> программа читает. Процессов
+    /// с тем же именем несколько или путь не сверился — процесс есть, но какой из них, неизвестно.
+    /// </summary>
+    public EnvironmentSnapshot ReadSnapshot() => EnvironmentSnapshotReader.Read(ProgramPath, Running());
+
+    private ProgramElevation? Running()
+    {
+        try
+        {
+            return new ProgramElevation(MachineEnvironment.Elevated(FindRunning().ProcessId));
+        }
+        catch (ProgramAttachException e) when (e.Reason == ObserverErrors.ProgramNotRunning)
+        {
+            return null;
+        }
+        catch (ProgramAttachException)
+        {
+            return new ProgramElevation(null);
+        }
+    }
 
     /// <summary>
     /// Журнал Application — падения, отчёты и зависания куста ProShow (Э6.2, часть Г), фактом и в живой сеанс. Журнал

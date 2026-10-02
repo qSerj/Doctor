@@ -13,7 +13,11 @@ public static class EnvironmentSections
     /// <summary>Сборка, выпуск и редакция Windows, кодовые страницы, язык интерфейса.</summary>
     public const string System = "system";
 
-    /// <summary>Путь, версия и сборка ProShow, его настройка «Avoid using DirectShow».</summary>
+    /// <summary>
+    /// Путь, версия и сборка ProShow, его настройка «Avoid using DirectShow» из действующего <c>proshow.cfg</c> (ключ
+    /// <c>program</c>) и каждый найденный <c>proshow.cfg</c> отдельно: <c>config/program</c> и <c>config/virtual-store</c>;
+    /// ярлыки на программу — <c>shortcut/место/путь</c> с галкой «от имени администратора».
+    /// </summary>
     public const string ProShow = "proshow";
 
     /// <summary>Кодеки Video for Windows и ACM из <c>Drivers32</c>: ключ — имя значения, например <c>vidc.xvid</c>.</summary>
@@ -212,10 +216,34 @@ public sealed record EnvironmentDiff(
     public bool IsEmpty => Added.Count == 0 && Removed.Count == 0 && Changed.Count == 0;
 }
 
+/// <summary>Что сравниваются: два состояния одной машины или две машины.</summary>
+public enum EnvironmentComparisonMode
+{
+    /// <summary>До и после на одной машине: новое время записи файла — файл заменили.</summary>
+    SameMachine,
+
+    /// <summary>
+    /// Две машины: время записи файла не сравнивается — оно говорит, когда файл поставили, а не какой он, и между
+    /// машинами различается почти у каждого (Э6.3, критерий 6).
+    /// </summary>
+    Machines,
+}
+
 public static class EnvironmentComparison
 {
+    /// <summary>
+    /// Поля, где лежит путь: Windows регистра в пути не различает, поэтому <c>C:\Windows</c> и <c>C:\WINDOWS</c> —
+    /// один файл, а не изменение.
+    /// </summary>
+    private static readonly HashSet<string> PathFields = ["file.path", "inproc", "driver", "config"];
+
+    private const string FileWritten = "file.written";
+
     /// <summary>Разница слепков: записи сопоставляются по разделу, виду и ключу, порядок записей в слепках не важен.</summary>
-    public static EnvironmentDiff Compare(EnvironmentSnapshot before, EnvironmentSnapshot after)
+    public static EnvironmentDiff Compare(
+        EnvironmentSnapshot before,
+        EnvironmentSnapshot after,
+        EnvironmentComparisonMode mode = EnvironmentComparisonMode.SameMachine)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
@@ -239,7 +267,7 @@ public static class EnvironmentComparison
             }
             else
             {
-                var fields = CompareFields(was[i], now[j]);
+                var fields = CompareFields(was[i], now[j], mode);
                 if (fields.Count > 0)
                 {
                     changed.Add(new EnvironmentEntryChange(now[j].Section, now[j].View, now[j].Key, fields));
@@ -251,14 +279,14 @@ public static class EnvironmentComparison
         return new EnvironmentDiff(before.Id, after.Id, added, removed, changed);
     }
 
-    private static List<EnvironmentFieldChange> CompareFields(EnvironmentEntry before, EnvironmentEntry after)
+    private static List<EnvironmentFieldChange> CompareFields(EnvironmentEntry before, EnvironmentEntry after, EnvironmentComparisonMode mode)
     {
         var fields = new List<EnvironmentFieldChange>();
         foreach (var name in before.Values.Keys.Union(after.Values.Keys).Order(StringComparer.Ordinal))
         {
             var was = before.Values.GetValueOrDefault(name);
             var now = after.Values.GetValueOrDefault(name);
-            if (was != now || before.Values.ContainsKey(name) != after.Values.ContainsKey(name))
+            if (!Same(name, was, now) || before.Values.ContainsKey(name) != after.Values.ContainsKey(name))
             {
                 fields.Add(new EnvironmentFieldChange(name, was, now));
             }
@@ -267,14 +295,21 @@ public static class EnvironmentComparison
         var nowFile = FileFields(after.File);
         foreach (var (name, value) in wasFile)
         {
+            if (name == FileWritten && mode == EnvironmentComparisonMode.Machines)
+            {
+                continue;
+            }
             var other = nowFile.First(pair => pair.Name == name).Value;
-            if (value != other)
+            if (!Same(name, value, other))
             {
                 fields.Add(new EnvironmentFieldChange(name, value, other));
             }
         }
         return fields;
     }
+
+    private static bool Same(string name, string? before, string? after) =>
+        string.Equals(before, after, PathFields.Contains(name) ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>Поля файла строками; нет файла — все <c>null</c>, и появление файла видно по каждому полю.</summary>
     private static (string Name, string? Value)[] FileFields(EnvironmentFile? file) =>
@@ -338,6 +373,43 @@ public static class ProShowConfig
     public const string DShowUseFfmpeg = "prefDShowUseFFMPEG";
 
     private const int HeaderLength = 2;
+
+    /// <summary>Метка совместимости «Запускать от имени администратора» в <c>AppCompatFlags\Layers</c>.</summary>
+    public const string RunAsAdminLayer = "RUNASADMIN";
+
+    /// <summary>
+    /// Уводит ли Windows запись программы в Program Files в VirtualStore пользователя. Без UAC виртуализации нет ни у кого;
+    /// у повышенного процесса — тоже. Живой процесс говорит сам за себя; токен не открылся — неизвестно. Программа не
+    /// запущена — судим по метке <see cref="RunAsAdminLayer"/> и галкам ярлыков (<see cref="ShellLink"/>); запуск правой
+    /// кнопкой «от имени администратора» не виден ничему, кроме живого процесса.
+    /// </summary>
+    /// <param name="enableLua">Значение <c>EnableLUA</c>; <c>0</c> — UAC выключен. Нет значения — UAC по умолчанию включён.</param>
+    /// <param name="running">Процесс программы найден.</param>
+    /// <param name="elevated">Его токен повышен; <c>null</c> — не открылся или процессов несколько.</param>
+    /// <param name="runAsAdmin">Метка совместимости или галка хотя бы одного ярлыка на программу.</param>
+    public static bool? Virtualized(int? enableLua, bool running, bool? elevated, bool runAsAdmin) =>
+        enableLua == 0 ? false : running ? !elevated : !runAsAdmin;
+
+    /// <summary>
+    /// Файл, который программа читает. Копии в VirtualStore нет — выбора нет: файл рядом с программой или ничего.
+    /// Копия есть — она действует только у виртуализованного процесса; повышенный её не видит и читает файл рядом с собой,
+    /// даже устаревший, а нет его — работает без настроек. Виртуализация неизвестна — неизвестен и файл (<c>null</c>):
+    /// оба лежат в слепке отдельными записями, и выбор делает инженер.
+    /// </summary>
+    public static string? Effective(string? programFile, string? virtualStoreFile, bool? virtualized) =>
+        virtualStoreFile is null
+            ? programFile
+            : virtualized switch
+            {
+                true => virtualStoreFile,
+                false => programFile,
+                null => null,
+            };
+
+    /// <summary>Данные значения <c>AppCompatFlags\Layers</c>: метки через пробел, первой бывает <c>~</c>.</summary>
+    public static bool HasRunAsAdmin(string? layers) =>
+        layers is not null
+        && layers.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(RunAsAdminLayer, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Значение настройки; нет её или файл оборван на ней — <c>null</c>. Значения — байты как есть, по Latin-1.</summary>
     public static string? Value(ReadOnlySpan<byte> content, string name)

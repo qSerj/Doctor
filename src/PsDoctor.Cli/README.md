@@ -12,7 +12,7 @@
 
 `psdoctor <файл.psh>` (`Runner.cs`): 0 — разобран, находок нет; 1 — есть находки, прошедшие порог; 2 — не файл шоу; 3 — сбой окружения. Код 1 сегодня недостижим, потому что порогов нет ни у одного правила.
 
-`psdoctor environment diff <a.json> <b.json> [--json]` (`EnvironmentCommand.cs`): 0 — одинаковы; 1 — различаются; 3 — ошибка. Слепки снимает `observe environment --out`, они же лежат в пакете сеанса Workbench.
+`psdoctor environment diff <a.json> <b.json> [--machines] [--json]` (`EnvironmentCommand.cs`): 0 — одинаковы; 1 — различаются; 3 — ошибка. Слепки снимает `observe environment --out`, они же лежат в пакете сеанса Workbench. `--machines` — слепки двух машин: время записи файлов не сравнивается, между машинами оно шум; регистр в путях не различается всегда.
 
 `psdoctor observe <команда>` (`ObserveCommand.cs`): 0 — выполнено; 1 — сценарий не выполнен; 2 — отказ наблюдателя; 3 — сбой окружения. Адрес и ключ — `PSDOCTOR_OBSERVER_URL` и `PSDOCTOR_OBSERVER_KEY_FILE` или ключи командной строки.
 
