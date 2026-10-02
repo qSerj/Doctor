@@ -88,8 +88,8 @@ public static class ProgramFactKinds
     public const string WindowsEvent = "windows-event";
 
     /// <summary>
-    /// Детектор узнал известное повторение. Детекторов пока нет (Э4.4), но имя закреплено уже сейчас:
-    /// сеанс с таким фактом хранится дольше обычного, см. <see cref="Retention"/>.
+    /// Детектор узнал известное повторение; данные — <see cref="EpisodeFound"/> (Э4.4). Не вердикт: называет
+    /// повторение, а не причину. Сеанс с таким фактом хранится дольше обычного, см. <see cref="Retention"/>.
     /// </summary>
     public const string Episode = "episode";
 

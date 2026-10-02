@@ -19,6 +19,7 @@
 | что такое факт наблюдения | `Observation/Fact.cs` и `Observation/FactLog.cs` |
 | как выполняется сценарий | `Scenarios/ScenarioExecutor.cs` |
 | чем машины различаются для программы (Э6.3) | `Observation/EnvironmentSnapshot.cs`: слепок, его идентификатор и сравнение |
+| какое повторение узнаётся эпизодом (Э4.4) | `Observation/RepeatedLaunch.cs`: паттерн с порогом — данные, детектор — по фактам `etw-process-started` |
 | когда мастер App просит ждать, а когда предлагает завершить ProShow | `Observation/ProShowHang.cs`; его пороги — решение владельца для мастера, а не правило приёмки |
 
 ## Чего здесь нет

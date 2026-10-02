@@ -45,7 +45,8 @@ public sealed class ObservationSession : IProgramEvents
         this.onFinished = onFinished;
         showDirectory = string.IsNullOrWhiteSpace(showPath) ? null : Path.GetDirectoryName(showPath);
         mp4Before = SnapshotMp4(showDirectory);
-        Log = new FactLog(new FactJournalWriter(file, id, () => clock.Elapsed));
+        Log = new FactLog(new FactJournalWriter(file, id, () => clock.Elapsed),
+            [new RepeatedLaunchDetector(RepeatedLaunchPattern.QuickTimeLoop)]);
         ticker = new Timer(_ => Send(new TimeTick(clock.Elapsed)), null, TickInterval, TickInterval);
     }
 

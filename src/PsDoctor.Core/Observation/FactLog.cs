@@ -13,19 +13,24 @@ namespace PsDoctor.Core.Observation;
 /// гигабайт, Windows сочла наблюдатель утекающим; со сводкой файлов по минутам (Э6.4) от того дня осталось бы около
 /// 330 тысяч фактов из 2,17 миллиона.
 /// Держать в памяти только хвост — следующий шаг, если день и после сводки окажется тяжёл.
+/// Детекторы (Э4.4) видят каждый факт под тем же замком, что и номер: эпизод ложится в журнал сразу за фактом,
+/// на котором узнан, и порядок их у всех читателей один.
 /// </remarks>
 public sealed class FactLog : IFactRecorder
 {
     private readonly IFactRecorder inner;
+    private readonly IReadOnlyList<RepeatedLaunchDetector> detectors;
     private readonly List<Fact> facts = [];
     private readonly Lock gate = new();
     private TaskCompletionSource changed = NewSignal();
     private bool completed;
 
-    public FactLog(IFactRecorder inner)
+    /// <param name="detectors">Детекторы эпизодов этого сеанса; у каждого сеанса свои экземпляры.</param>
+    public FactLog(IFactRecorder inner, IReadOnlyList<RepeatedLaunchDetector>? detectors = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         this.inner = inner;
+        this.detectors = detectors ?? [];
     }
 
     public long LastNumber
@@ -61,16 +66,29 @@ public sealed class FactLog : IFactRecorder
             {
                 throw new InvalidOperationException("сеанс закрыт, факт записать некуда");
             }
-            fact = inner.Record(kind, processId, data);
-            if (fact.Number != facts.Count + 1)
+            fact = Append(kind, processId, data);
+            foreach (var detector in detectors)
             {
-                throw new InvalidOperationException($"номер факта {fact.Number} не следует за {facts.Count}");
+                if (detector.Observe(fact) is { } episode)
+                {
+                    Append(ProgramFactKinds.Episode, episode.ParentProcessId, ObservationJson.ToElement(episode));
+                }
             }
-            facts.Add(fact);
             wake = changed;
             changed = NewSignal();
         }
         wake.TrySetResult();
+        return fact;
+    }
+
+    private Fact Append(string kind, int? processId, JsonElement data)
+    {
+        var fact = inner.Record(kind, processId, data);
+        if (fact.Number != facts.Count + 1)
+        {
+            throw new InvalidOperationException($"номер факта {fact.Number} не следует за {facts.Count}");
+        }
+        facts.Add(fact);
         return fact;
     }
 

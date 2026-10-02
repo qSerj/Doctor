@@ -68,4 +68,37 @@ public sealed class FactLogTests
         Assert.Equal(Enumerable.Range(1, 300).Select(n => (long)n), log.After(0).Select(f => f.Number));
         Assert.Equal(300, FactJournalReader.ReadAfter(new StringReader(disk.ToString()), 0).Count());
     }
+
+    [Fact]
+    public void Эпизод_ложится_сразу_за_фактом_на_котором_узнан()
+    {
+        var disk = new StringWriter();
+        var log = new FactLog(new FactJournalWriter(disk, "s", () => TimeSpan.Zero),
+            [new RepeatedLaunchDetector(RepeatedLaunchPattern.QuickTimeLoop)]);
+        log.Record("k", new { });
+        for (var i = 0; i < 25; i++)
+        {
+            log.Record(ProgramFactKinds.EtwProcessStarted, new { image = "qtime.exe", parentProcessId = 6812 }, 7000 + i);
+        }
+
+        var facts = log.After(0);
+        var episode = Assert.Single(facts, f => f.Kind == ProgramFactKinds.Episode);
+        Assert.Equal(22, episode.Number);
+        Assert.Equal(ProgramFactKinds.EtwProcessStarted, facts[20].Kind);
+        Assert.Equal(6812, episode.ProcessId);
+        Assert.Equal(27, log.LastNumber);
+        Assert.Equal(log.After(0).Select(f => f.Number), FactJournalReader.ReadAfter(new StringReader(disk.ToString()), 0).Select(f => f.Number));
+    }
+
+    [Fact]
+    public void Без_детекторов_эпизодов_нет()
+    {
+        var (log, _) = NewLog();
+        for (var i = 0; i < 25; i++)
+        {
+            log.Record(ProgramFactKinds.EtwProcessStarted, new { image = "qtime.exe", parentProcessId = 6812 });
+        }
+
+        Assert.DoesNotContain(log.After(0), f => f.Kind == ProgramFactKinds.Episode);
+    }
 }
