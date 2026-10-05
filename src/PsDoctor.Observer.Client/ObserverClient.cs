@@ -117,6 +117,26 @@ public sealed class ObserverClient : IDisposable
         return await ReadAsync<EnvironmentSnapshot>(response, timeout.Token).ConfigureAwait(false);
     }
 
+    /// <summary>Сохранённые сводки дней (Э6.6) с дня <paramref name="from"/>; без него — все. Сегодняшней среди них нет.</summary>
+    public async Task<IReadOnlyList<DailySummary>> SummariesAsync(DateOnly? from = null, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        var path = from is { } day
+            ? $"{ObserverRoutes.Summaries}?from={day.ToString(ObserverRoutes.DayFormat, CultureInfo.InvariantCulture)}"
+            : ObserverRoutes.Summaries;
+        using var response = await http.GetAsync(path, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<List<DailySummary>>(response, timeout.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>Сводка дня; без <paramref name="day"/> — сегодняшняя, построенная сейчас по местному времени машины наблюдателя.</summary>
+    public async Task<DailySummary> SummaryAsync(DateOnly? day = null, CancellationToken cancellationToken = default)
+    {
+        using var timeout = Limit(cancellationToken);
+        var path = ObserverRoutes.Summary(day?.ToString(ObserverRoutes.DayFormat, CultureInfo.InvariantCulture) ?? ObserverRoutes.Today);
+        using var response = await http.GetAsync(path, timeout.Token).ConfigureAwait(false);
+        return await ReadAsync<DailySummary>(response, timeout.Token).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> SessionsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = Limit(cancellationToken);

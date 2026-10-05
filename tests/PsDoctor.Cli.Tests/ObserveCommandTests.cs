@@ -204,6 +204,71 @@ public sealed class ObserveCommandTests : IAsyncLifetime
         Assert.Contains(ObserverErrors.NoEnvironment, Assert.Single(stdout), StringComparison.Ordinal);
     }
 
+    private static DateOnly Сегодня => DateOnly.FromDateTime(DateTime.Now);
+
+    [Fact]
+    public async Task Summary_без_аргументов_сегодняшняя_сводка_словами()
+    {
+        var (code, stdout, _) = await Observe("summary");
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        Assert.StartsWith(Сегодня.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + " — день идёт", stdout[0], StringComparison.Ordinal);
+        Assert.StartsWith("Главное: ", stdout[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Summary_json_строка_на_день()
+    {
+        var (code, stdout, _) = await Observe("summary", "today", "--json");
+
+        Assert.Equal(ObserveExitCodes.Done, code);
+        var сводка = DailySummaryJson.Deserialize(Assert.Single(stdout));
+        Assert.Equal(Сегодня, сводка.Day);
+        Assert.False(сводка.Complete);
+    }
+
+    [Fact]
+    public async Task Summary_from_отдаёт_сохранённые_дни_и_сегодняшний_последним()
+    {
+        var с = Сегодня.AddDays(-DailySummaryKeeper.FirstDays);
+        string[] stdout = [];
+        // Прошлые дни строит первый проход хранителя в фоне сразу после старта наблюдателя.
+        for (var попытка = 0; попытка < 100 && stdout.Length < DailySummaryKeeper.FirstDays + 1; попытка++)
+        {
+            (_, stdout, _) = await Observe("summary", "--from", с.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), "--json");
+            if (stdout.Length < DailySummaryKeeper.FirstDays + 1)
+            {
+                await Task.Delay(50);
+            }
+        }
+
+        var дни = stdout.Select(DailySummaryJson.Deserialize).ToList();
+        Assert.Equal(DailySummaryKeeper.FirstDays + 1, дни.Count);
+        Assert.Equal(с, дни[0].Day);
+        Assert.Equal(Сегодня, дни[^1].Day);
+        Assert.False(дни[^1].Complete);
+        Assert.True(дни[^2].Complete);
+    }
+
+    [Fact]
+    public async Task Summary_дня_без_сводки_отказ_no_summary()
+    {
+        var (code, stdout, _) = await Observe("summary", "2020-01-01");
+
+        Assert.Equal(ObserveExitCodes.Refused, code);
+        Assert.Contains(ObserverErrors.NoSummary, Assert.Single(stdout), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Summary_с_негодной_датой_сбой_окружения()
+    {
+        var (code, stdout, stderr) = await Observe("summary", "--from", "05.10.2026");
+
+        Assert.Equal(ObserveExitCodes.Environment, code);
+        Assert.Empty(stdout);
+        Assert.Contains("ГГГГ-ММ-ДД", stderr, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Чужой_ключ_сбой_окружения()
     {

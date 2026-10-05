@@ -75,6 +75,24 @@ public static class ObserverRoutes
 
     /// <summary>GET: сохранённый слепок по идентификатору из факта <c>environment</c>; незнакомый — <see cref="ObserverErrors.NoEnvironment"/>.</summary>
     public static string StoredEnvironment(string id) => $"/environment/{Uri.EscapeDataString(id)}";
+
+    /// <summary>
+    /// GET: сохранённые сводки дней (Э6.6), <see cref="DailySummary"/>, по порядку дней; <c>?from=ГГГГ-ММ-ДД</c> — с этого
+    /// дня. Сегодняшней среди них нет: она неполная и строится по запросу <see cref="Summary"/>.
+    /// </summary>
+    public const string Summaries = "/summaries";
+
+    /// <summary>Слово вместо даты: сводка сегодняшнего дня, построенная сейчас.</summary>
+    public const string Today = "today";
+
+    /// <summary>
+    /// GET: сводка одного дня — <c>ГГГГ-ММ-ДД</c> или <see cref="Today"/>. Сегодняшняя строится сейчас и не сохраняется;
+    /// прошлый день без сохранённой сводки — <see cref="ObserverErrors.NoSummary"/>.
+    /// </summary>
+    public static string Summary(string day) => $"/summaries/{Uri.EscapeDataString(day)}";
+
+    /// <summary>Дата в маршрутах сводок.</summary>
+    public const string DayFormat = "yyyy-MM-dd";
 }
 
 /// <summary>Устойчивые имена отказов API, не фразы.</summary>
@@ -103,6 +121,9 @@ public static class ObserverErrors
 
     /// <summary>Слепка окружения нет: наблюдатель не умеет его снимать или такой идентификатор ему незнаком.</summary>
     public const string NoEnvironment = "no-environment";
+
+    /// <summary>Сводки этого дня нет: он старше построенных или ещё не кончился достаточно давно.</summary>
+    public const string NoSummary = "no-summary";
     public const string NoArtifacts = "no-artifacts";
     public const string ProgramNotRunning = "program-not-running";
     public const string AmbiguousProgram = "ambiguous-program";

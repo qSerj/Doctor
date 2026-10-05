@@ -71,7 +71,7 @@ public static class ObserverHost
             app.Lifetime.ApplicationStopping.Register(events.Dispose);
         }
         // Дневные сводки (Э6.6) — всегда, как опрос журнала: копятся на машине, даже если инженер не заходит месяц.
-        var summaries = new DailySummaryKeeper(service, events is { } poll ? () => poll.Events() : null,WatchdogLogBeside(service.DataDirectory));
+        var summaries = new DailySummaryKeeper(service, events is { } poll ? () => poll.Events() : null, WatchdogLogBeside(service.DataDirectory));
         app.Lifetime.ApplicationStarted.Register(summaries.Start);
         app.Lifetime.ApplicationStopping.Register(summaries.Dispose);
         var stopping = app.Lifetime.ApplicationStopping;
@@ -171,6 +171,35 @@ public static class ObserverHost
 
         app.MapGet("/environment/{id}", (string id) => EnvironmentResult(service.StoredEnvironment(id)));
 
+        app.MapGet(ObserverRoutes.Summaries, (HttpContext context) =>
+        {
+            var text = context.Request.Query["from"].ToString();
+            var from = DateOnly.MinValue;
+            if (text.Length > 0 && !TryParseDay(text, out from))
+            {
+                return Results.Json(new ObserverError(ObserverErrors.BadRequest), ObservationJson.Options, statusCode: StatusCodes.Status400BadRequest);
+            }
+            return Results.Json(summaries.StoredFrom(from), ObservationJson.Options);
+        });
+
+        app.MapGet("/summaries/{day}", (string day) =>
+        {
+            var today = summaries.Today();
+            DateOnly parsed;
+            if (day == ObserverRoutes.Today)
+            {
+                parsed = today;
+            }
+            else if (!TryParseDay(day, out parsed))
+            {
+                return Results.Json(new ObserverError(ObserverErrors.BadRequest), ObservationJson.Options, statusCode: StatusCodes.Status400BadRequest);
+            }
+            var summary = parsed == today ? summaries.Build(today) : summaries.Stored(parsed);
+            return summary is not null
+                ? Results.Json(summary, ObservationJson.Options)
+                : Results.Json(new ObserverError(ObserverErrors.NoSummary), ObservationJson.Options, statusCode: StatusCodes.Status404NotFound);
+        });
+
         app.MapGet(ObserverRoutes.Sessions, () => Results.Json(service.Sessions(), ObservationJson.Options));
 
         app.MapPost("/sessions/{id}/stop", async (string id) =>
@@ -223,6 +252,9 @@ public static class ObserverHost
 
         return app;
     }
+
+    private static bool TryParseDay(string text, out DateOnly day) =>
+        DateOnly.TryParseExact(text, ObserverRoutes.DayFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out day);
 
     /// <summary>Слепок окружения или отказ <see cref="ObserverErrors.NoEnvironment"/>, 404.</summary>
     private static IResult EnvironmentResult(EnvironmentSnapshot? snapshot) =>

@@ -107,6 +107,7 @@ public static class ObserveCommand
                 "incidents" => output.Lines(await client.IncidentsAsync(cancellationToken).ConfigureAwait(false)),
                 "windows-events" => output.Lines(await client.WindowsEventsAsync(cancellationToken).ConfigureAwait(false)),
                 "environment" => await EnvironmentAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
+                "summary" => await SummaryAsync(client, options, output, stdout, cancellationToken).ConfigureAwait(false),
                 "cancel" => output.Json(await client.CancelAsync(cancellationToken).ConfigureAwait(false)),
                 "confirm" => output.Json(await client.ConfirmAsync(cancellationToken).ConfigureAwait(false)),
                 "stop" => await StopAsync(client, options, output, stderr, cancellationToken).ConfigureAwait(false),
@@ -274,6 +275,52 @@ public static class ObserveCommand
         return ObserveExitCodes.Done;
     }
 
+    /// <summary>
+    /// Сводки дней (Э6.6): без аргументов — сегодняшняя; день <c>ГГГГ-ММ-ДД</c> — сохранённая; <c>--from</c> — сохранённые с
+    /// этого дня и сегодняшняя последней. Текстом — день на экран, главное первым; с <c>--json</c> — строка на день.
+    /// </summary>
+    private static async Task<int> SummaryAsync(ObserverClient client, Options options, Output output, TextWriter stdout,
+        CancellationToken cancellationToken)
+    {
+        if (options.Arguments.Count > 1 || (options.Arguments.Count == 1 && options.From is not null))
+        {
+            throw new ArgumentException("summary: один день или --from, не оба.");
+        }
+        List<DailySummary> days;
+        if (options.From is { } from)
+        {
+            days = [.. await client.SummariesAsync(from, cancellationToken).ConfigureAwait(false)];
+            var today = await client.SummaryAsync(null, cancellationToken).ConfigureAwait(false);
+            if (today.Day >= from && days.TrueForAll(day => day.Day != today.Day))
+            {
+                days.Add(today);
+            }
+        }
+        else
+        {
+            DateOnly? day = options.Arguments is [var text] && text != ObserverRoutes.Today ? ParseDay(text, "summary") : null;
+            days = [await client.SummaryAsync(day, cancellationToken).ConfigureAwait(false)];
+        }
+        if (options.Json)
+        {
+            return output.Lines(days);
+        }
+        for (var i = 0; i < days.Count; i++)
+        {
+            if (i > 0)
+            {
+                stdout.WriteLine();
+            }
+            SummaryText.Write(days[i], stdout);
+        }
+        return ObserveExitCodes.Done;
+    }
+
+    private static DateOnly ParseDay(string text, string what) =>
+        DateOnly.TryParseExact(text, ObserverRoutes.DayFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
+            ? day
+            : throw new ArgumentException($"{what}: ожидается дата ГГГГ-ММ-ДД, получено «{text}».");
+
     private static async Task<int> StopAsync(ObserverClient client, Options options, Output output, TextWriter stderr, CancellationToken cancellationToken)
     {
         var session = await SessionAsync(client, options, cancellationToken).ConfigureAwait(false);
@@ -328,6 +375,7 @@ public static class ObserveCommand
         writer.WriteLine("  incidents                       метки инцидентов, строка на метку");
         writer.WriteLine("  windows-events                  падения ProShow и сбои машины из журналов Windows, строка на событие");
         writer.WriteLine("  environment [<слепок>]          слепок окружения машины наблюдателя: снятый сейчас или сохранённый");
+        writer.WriteLine("  summary [<день>|--from <день>]  сводка дня словами: сегодняшняя, сохранённая или все с дня и сегодняшняя");
         writer.WriteLine();
         writer.WriteLine($"  --url <адрес>                   адрес наблюдателя, иначе {UrlVariable}");
         writer.WriteLine($"  --key-file <файл>               ключ Bearer, иначе {KeyFileVariable}");
@@ -336,6 +384,8 @@ public static class ObserveCommand
         writer.WriteLine("  --kind <вид,вид>                facts: только эти виды");
         writer.WriteLine("  --note <текст>                  incident: пояснение к метке");
         writer.WriteLine("  --out <файл>                    environment: слепок в файл, с отступами");
+        writer.WriteLine("  --from <ГГГГ-ММ-ДД>             summary: сводки с этого дня");
+        writer.WriteLine("  --json                          summary: строка JSON на день вместо текста");
         writer.WriteLine();
         writer.WriteLine($"Коды возврата: {ObserveExitCodes.Done} — выполнено; {ObserveExitCodes.ScenarioNotCompleted} — сценарий не выполнен; "
             + $"{ObserveExitCodes.Refused} — отказ наблюдателя; {ObserveExitCodes.Environment} — сбой окружения.");
@@ -391,6 +441,10 @@ public static class ObserveCommand
 
         public string? Out { get; private set; }
 
+        public DateOnly? From { get; private set; }
+
+        public bool Json { get; private set; }
+
         public static Options Parse(IReadOnlyList<string> args)
         {
             var options = new Options();
@@ -425,6 +479,12 @@ public static class ObserveCommand
                         break;
                     case "--out":
                         options.Out = Value();
+                        break;
+                    case "--from":
+                        options.From = ParseDay(Value(), "--from");
+                        break;
+                    case "--json":
+                        options.Json = true;
                         break;
                     case "--help" or "-h":
                         options.Command = "help";
