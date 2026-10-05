@@ -403,7 +403,11 @@ public interface IWindowsEventSource
 /// Событие ложится фактом в живой сеанс; иначе — только в файл событий. Сбои машины в сеанс не идут: исправленные
 /// аппаратные ошибки бывают потоком в тысячи записей, а журнал сеанса не должен от них раздуваться (Э6.5).
 /// </param>
-public sealed record WindowsEventChannel(string Log, bool ToSession);
+/// <param name="SessionImages">
+/// Фактом в сеанс ложится только событие, в параметрах которого есть одно из этих имён; <c>null</c> — любое. В файл
+/// идут все: падение After Effects нужно дневной сводке, но не журналу сеанса ProShow (Э6.6).
+/// </param>
+public sealed record WindowsEventChannel(string Log, bool ToSession, IReadOnlyList<string>? SessionImages = null);
 
 /// <summary>Личность уже работающего процесса: PID один не защищает от его повторного использования.</summary>
 public sealed record ProgramTarget(int ProcessId, DateTime StartedUtc, string Image);

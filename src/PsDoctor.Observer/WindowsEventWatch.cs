@@ -4,8 +4,8 @@ using PsDoctor.Core.Observation;
 namespace PsDoctor.Observer;
 
 /// <summary>
-/// Опрос журналов Windows при старте наблюдателя и раз в <see cref="Interval"/>: падения куста программы в Application
-/// (Э6.2, часть Г) и сбои машины в System (Э6.5) — какие журналы, решает источник. Новые события дописываются в файл
+/// Опрос журналов Windows при старте наблюдателя и раз в <see cref="Interval"/>: падения программ в Application
+/// (Э6.2, часть Г; Э6.6) и сбои машины в System (Э6.5) — какие журналы, решает источник. Новые события дописываются в файл
 /// событий журнала в каталоге сеансов; события журнала, помеченного <see cref="WindowsEventChannel.ToSession"/>, ложатся
 /// ещё и фактом в живой сеанс. Закладка — номер записи журнала в файле закладки: так переживаются перезапуск
 /// наблюдателя, перезагрузка и поздний отчёт 1001, а событие без сеанса находится при следующем опросе.
@@ -154,7 +154,10 @@ public sealed class WindowsEventWatch : IDisposable
             {
                 foreach (var found in batch.Events)
                 {
-                    service.RecordWindowsEvent(found);
+                    if (channel.SessionImages is null || WindowsEvent.Mentions(found.Properties, channel.SessionImages))
+                    {
+                        service.RecordWindowsEvent(found);
+                    }
                 }
             }
         }

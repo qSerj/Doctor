@@ -373,8 +373,10 @@ public static class DailySummaries
 
     private static ProShowDay ProShow(DailySummaryInput input, DateTimeOffset start, DateTimeOffset end)
     {
-        // Сеанс принадлежит дню, если идёт в нём хоть миг; мгновенный сеанс — если начат в нём.
+        // Сеанс принадлежит дню, если идёт в нём хоть миг; мгновенный сеанс — если начат в нём. Сеанс, кончившийся
+        // no-program, программы не видел — это отказ запуска или подключения, а не наблюдение.
         var sessions = input.Sessions
+            .Where(s => s.EndReason != SessionEndReasons.NoProgram)
             .Where(s => Overlap(s, start, end) > TimeSpan.Zero || (s.Started >= start && s.Started < end))
             .ToList();
         var hours = Math.Round(sessions.Sum(s => Overlap(s, start, end).TotalHours), 2);

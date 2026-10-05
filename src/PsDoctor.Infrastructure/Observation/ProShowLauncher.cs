@@ -99,18 +99,22 @@ public sealed class ProShowLauncher : IProgramLauncher, IProgramAttacher, IEnvir
     }
 
     /// <summary>
-    /// Журнал Application — падения, отчёты и зависания куста ProShow (Э6.2, часть Г), фактом и в живой сеанс. Журнал
-    /// System — сбои машины (Э6.5), только в файл.
+    /// Журнал Application — падения и зависания любой программы и отчёты о кусте ProShow (Э6.2, часть Г; Э6.6); фактом в
+    /// живой сеанс — только события куста. Журнал System — сбои машины (Э6.5), только в файл.
     /// </summary>
     public IReadOnlyList<WindowsEventChannel> EventLogs { get; } =
-        [new(WindowsEventLog.Application, ToSession: true), new(WindowsEventLog.SystemLog, ToSession: false)];
+        [new(WindowsEventLog.Application, ToSession: true, SessionImages: ImageNames), new(WindowsEventLog.SystemLog, ToSession: false)];
 
     public WindowsEventsBatch ReadEvents(string log, long? after, DateTimeOffset since) => log switch
     {
-        WindowsEventLog.Application => WindowsEventLog.ReadAfter(log, WindowsEventLog.CrashIds, ImageNames, after, since),
+        WindowsEventLog.Application => Crashes(WindowsEventLog.ReadAfter(log, ApplicationCrashEvents.Ids, null, after, since)),
         WindowsEventLog.SystemLog => WindowsEventLog.ReadAfter(log, WindowsEventLog.MachineSelector, null, after, since),
         _ => new WindowsEventsBatch([], null, "unknown-log"),
     };
+
+    /// <summary>Отчёты Windows Error Reporting — только о кусте; закладка ответа не меняется.</summary>
+    private static WindowsEventsBatch Crashes(WindowsEventsBatch batch) =>
+        batch with { Events = [.. batch.Events.Where(found => ApplicationCrashEvents.Keep(found, ImageNames))] };
 
     public IProgramRun Attach(ProgramTarget target, IFactRecorder facts, IProgramEvents events)
     {

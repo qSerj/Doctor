@@ -667,18 +667,197 @@ public sealed class ObservationService : IAsyncDisposable
 
     private void OnFinished(ObservationSession session)
     {
+        bool rejected;
         lock (gate)
         {
             if (current == session)
             {
                 current = null;
             }
+            rejected = discarded.Contains(session.Id);
+        }
+        // Краткая запись — до прохода хранения: журнал может уйти, а запись для дневной сводки остаётся (Э6.6).
+        if (!rejected && SessionBrief.FromFacts(session.Id, session.Log.After(0)) is { } brief)
+        {
+            WriteBrief(brief);
         }
         if (retention is not null)
         {
             _ = Task.Run(Sweep);
         }
     }
+
+    /// <summary>Краткая запись сеанса рядом с журналом: <c>&lt;сеанс&gt;.brief.json</c>. Хранение журналов её не удаляет.</summary>
+    public const string BriefExtension = ".brief.json";
+
+    private string BriefPath(string id) => Path.Combine(directory, id + BriefExtension);
+
+    /// <summary>Сколько журнал без <c>session-finished</c> должен не расти, чтобы считаться оборванным, а не открывающимся.</summary>
+    private static readonly TimeSpan UnfinishedQuiet = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Краткие записи сеансов, начатых в отрезке времени, — для дневной сводки. Сеанс без записи — старый или оборванный —
+    /// читается из журнала один раз, и запись ложится рядом; у сеанса, удалённого хранением, остаётся запись.
+    /// Отвергнутый сеанс не попадает.
+    /// </summary>
+    public IReadOnlyList<SessionBrief> Briefs(DateTime fromUtc, DateTime toUtc)
+    {
+        HashSet<string> hidden;
+        lock (gate)
+        {
+            hidden = [.. discarded];
+        }
+        IEnumerable<string> names;
+        try
+        {
+            names = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Concat(Directory.EnumerateFiles(directory, "*" + BriefExtension)
+                        .Select(path => Path.GetFileName(path)[..^BriefExtension.Length]))
+                    .OfType<string>()
+                    .ToList()
+                : [];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+        var briefs = new List<SessionBrief>();
+        foreach (var id in names.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            if (!hidden.Contains(id) && SessionIds.StartedUtc(id) is { } started && started >= fromUtc && started < toUtc
+                && Brief(id) is { } brief)
+            {
+                briefs.Add(brief);
+            }
+        }
+        return briefs;
+    }
+
+    /// <summary>Краткая запись одного сеанса; живой сеанс — по журналу в памяти и без файла: он ещё не кончился.</summary>
+    public SessionBrief? Brief(string id)
+    {
+        if (!SessionIds.IsValid(id))
+        {
+            return null;
+        }
+        if (Live(id) is { } live)
+        {
+            return SessionBrief.FromFacts(id, live.After(0));
+        }
+        var path = BriefPath(id);
+        try
+        {
+            if (File.Exists(path))
+            {
+                return DailySummaryJson.DeserializeBrief(File.ReadAllText(path));
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Испорченная запись собирается заново из журнала, если он ещё есть.
+        }
+        if (JournalPath(id) is not { } journal)
+        {
+            return null;
+        }
+        SessionBrief? brief;
+        try
+        {
+            using var reader = new StreamReader(new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), Encoding.UTF8);
+            // Потоком, а не списком: журнал дня дежурства — гигабайт, в памяти наблюдателя ему не место.
+            brief = SessionBrief.FromFacts(id, FactJournalReader.ReadAfter(reader, 0));
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        // Оборванный сеанс записывается, только когда журнал давно не рос: иначе это сеанс, который открывается прямо
+        // сейчас и ещё не стал живым, и запись с его началом осталась бы навсегда.
+        if (brief is not null && (brief.EndReason is not null || File.GetLastWriteTimeUtc(journal) < utcNow() - UnfinishedQuiet))
+        {
+            WriteBrief(brief);
+        }
+        return brief;
+    }
+
+    /// <summary>Запись подменяется целиком: оборванная запись не оставит половину файла.</summary>
+    private void WriteBrief(SessionBrief brief)
+    {
+        var path = BriefPath(brief.Id);
+        var temporary = path + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, DailySummaryJson.Serialize(brief));
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Не легла — соберётся из журнала при следующей сводке, пока журнал жив.
+        }
+    }
+
+    /// <summary>Удаляет краткие записи сеансов, начатых раньше <paramref name="beforeUtc"/>: их сводки уже не строятся.</summary>
+    public void DeleteBriefs(DateTime beforeUtc)
+    {
+        try
+        {
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+            foreach (var path in Directory.EnumerateFiles(directory, "*" + BriefExtension))
+            {
+                if (SessionIds.StartedUtc(Path.GetFileName(path)[..^BriefExtension.Length]) is { } started && started < beforeUtc)
+                {
+                    File.Delete(path);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>Время начала самого старого сеанса, чей журнал ещё на диске; журналов нет — <c>null</c>.</summary>
+    public DateTime? OldestJournalUtc()
+    {
+        try
+        {
+            return Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension)
+                    .Select(path => SessionIds.StartedUtc(Path.GetFileNameWithoutExtension(path)))
+                    .Where(started => started is not null)
+                    .Min()
+                : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Объём журналов и файлов ETW на диске.</summary>
+    public long JournalBytes()
+    {
+        try
+        {
+            var etw = EtwFiles.Directory(directory);
+            return (Directory.Exists(directory) ? Directory.EnumerateFiles(directory, "*" + SessionIds.JournalExtension).Sum(Size) : 0)
+                + (Directory.Exists(etw) ? Directory.EnumerateFiles(etw).Sum(Size) : 0);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Окружение машины без сеанса — для ежедневного замера сводки (Э6.6): место на дисках и слепок, который ложится рядом с
+    /// журналами, как у сеанса. <c>null</c> — запускатель окружения не читает.
+    /// </summary>
+    public EnvironmentFacts? ReadEnvironmentNow() => ReadEnvironment(null);
 
     /// <summary>
     /// Удаляет сеансы сверх пределов хранения: журнал и файлы ETW. Живой и отвергнутый сеансы не трогает.

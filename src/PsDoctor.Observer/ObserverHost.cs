@@ -70,6 +70,10 @@ public static class ObserverHost
             app.Lifetime.ApplicationStarted.Register(events.Start);
             app.Lifetime.ApplicationStopping.Register(events.Dispose);
         }
+        // Дневные сводки (Э6.6) — всегда, как опрос журнала: копятся на машине, даже если инженер не заходит месяц.
+        var summaries = new DailySummaryKeeper(service, events is { } poll ? () => poll.Events() : null,WatchdogLogBeside(service.DataDirectory));
+        app.Lifetime.ApplicationStarted.Register(summaries.Start);
+        app.Lifetime.ApplicationStopping.Register(summaries.Dispose);
         var stopping = app.Lifetime.ApplicationStopping;
         // Остановка наблюдателя закрывает сеанс, но не программу.
         app.Lifetime.ApplicationStopped.Register(() => service.DisposeAsync().AsTask().GetAwaiter().GetResult());
@@ -225,6 +229,13 @@ public static class ObserverHost
         snapshot is not null
             ? Results.Json(snapshot, ObservationJson.Options)
             : Results.Json(new ObserverError(ObserverErrors.NoEnvironment), ObservationJson.Options, statusCode: StatusCodes.Status404NotFound);
+
+    /// <summary>
+    /// Журнал сторожа лежит рядом с каталогом сеансов: <c>observer\watchdog.jsonl</c> и <c>observer\sessions</c>
+    /// (<c>InstalledLayout</c>). На стенде без установщика файла нет, и перезапусков сводка не видит — их там и не было.
+    /// </summary>
+    private static string? WatchdogLogBeside(string sessions) =>
+        Path.GetDirectoryName(Path.GetFullPath(sessions)) is { } observer ? Path.Combine(observer, "watchdog.jsonl") : null;
 
     /// <summary>Сторож всегда передаёт <c>--program</c>; без него — тот же поиск, что у сторожа, но без настроек машины.</summary>
     private static IProgramLauncher DefaultLauncher(ObserverOptions options) =>

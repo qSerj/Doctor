@@ -25,12 +25,13 @@ public static class WindowsEventLog
     /// ошибка процессора, памяти или шины, исправленная или нет. Kernel-Power 41 — загрузка после выключения без
     /// завершения работы: первый параметр — код синего экрана (0 — его не было), седьмой — время нажатия кнопки питания.
     /// EventLog 6008 — последняя отметка «жив» перед неожиданным выключением: на клиентской Windows она редкая и бывает
-    /// временем загрузки, а не сбоя. 1001 от WER-SystemErrorReporting — отчёт о синем экране.
+    /// временем загрузки, а не сбоя. 1001 от WER-SystemErrorReporting — отчёт о синем экране. EventLog 6005 и 6006 —
+    /// запуск и остановка журнала событий, то есть загрузка и обычное завершение работы: их считает дневная сводка (Э6.6).
     /// </summary>
     public const string MachineSelector =
         "Provider[@Name='Microsoft-Windows-WHEA-Logger']"
         + " or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41)"
-        + " or (Provider[@Name='EventLog'] and EventID=6008)"
+        + " or (Provider[@Name='EventLog'] and (EventID=6008 or EventID=6005 or EventID=6006))"
         + " or (Provider[@Name='Microsoft-Windows-WER-SystemErrorReporting'] and EventID=1001)";
 
     /// <summary>События за отрезок времени — итог сеанса запуска.</summary>
@@ -72,10 +73,10 @@ public static class WindowsEventLog
     /// события с номером после <paramref name="after"/> и не больше него: событие, записанное между двумя чтениями,
     /// достанется следующему опросу, а не пропадёт. Без закладки — события не старше <paramref name="since"/>.
     /// </summary>
-    public static WindowsEventsBatch ReadAfter(string log, IReadOnlyList<int> ids, IReadOnlyList<string> names, long? after, DateTimeOffset since)
+    /// <param name="names">Имена образов, одно из которых должно быть в параметрах; <c>null</c> — без отбора по имени.</param>
+    public static WindowsEventsBatch ReadAfter(string log, IReadOnlyList<int> ids, IReadOnlyList<string>? names, long? after, DateTimeOffset since)
     {
         ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(names);
         return ReadAfter(log, IdFilter(ids), names, after, since);
     }
 

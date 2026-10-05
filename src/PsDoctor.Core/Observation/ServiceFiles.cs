@@ -89,6 +89,27 @@ public sealed record WindowsEvent(DateTimeOffset Time, string Log, string Provid
     }
 }
 
+/// <summary>
+/// Какие события журнала Application хранит наблюдатель (Э6.6): падение (1000) и зависание (1002) любой программы — их
+/// считает дневная сводка, After Effects в том числе; отчёт Windows Error Reporting (1001) — только о программах из
+/// списка: отчётов у Windows много, и почти все — не о том.
+/// </summary>
+public static class ApplicationCrashEvents
+{
+    public const int Crash = 1000;
+    public const int Report = 1001;
+    public const int Hang = 1002;
+
+    public static IReadOnlyList<int> Ids { get; } = [Crash, Report, Hang];
+
+    public static bool Keep(WindowsEvent found, IReadOnlyList<string> programImages)
+    {
+        ArgumentNullException.ThrowIfNull(found);
+        ArgumentNullException.ThrowIfNull(programImages);
+        return found.Id != Report || WindowsEvent.Mentions(found.Properties, programImages);
+    }
+}
+
 /// <summary>Ответ опроса журнала Windows по закладке.</summary>
 /// <param name="Events">Найденные события в порядке записи.</param>
 /// <param name="Newest">

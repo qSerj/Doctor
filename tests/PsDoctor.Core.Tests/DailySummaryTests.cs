@@ -173,6 +173,16 @@ public sealed class DailySummaryTests
     }
 
     [Fact]
+    public void Сеанс_без_программы_не_считается()
+    {
+        var отказ = Сеанс("отказ", В(10), В(10, 1), причина: SessionEndReasons.NoProgram);
+
+        var сводка = DailySummaries.Build(Вход(сеансы: [отказ]));
+
+        Assert.Equal(0, сводка.ProShow.Sessions);
+    }
+
+    [Fact]
     public void Жалобы_дня_со_временем_и_источником()
     {
         var утром = new IncidentRecord(new DateTime(2026, 10, 5, 7, 0, 0, DateTimeKind.Utc), IncidentSources.Wizard, null, null, null, null, "hung", null);
